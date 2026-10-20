@@ -1,0 +1,18 @@
+# Official Hex-Rays IDA MCP server (HexRaysSA/ida-mcp) over stdio via uvx.
+# Requirements: uv/uvx + Git in PATH, IDA 9.4+ with idalib activated,
+# Python 3.11+. serverName "ida" exposes tools as mcp__ida__*.
+# failOnStartupError is false so a slow first run (uvx resolve / IDALib
+# worker warm-up) cannot break Harness startup; verify tools after install.
+- insert:
+    - id: mcp-ida
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: ida
+        transport: stdio
+        command: /Users/bemly/.local/bin/uvx
+        args:
+          - --exclude-newer=1s
+          - ida-mcp
+          - stdio
+          - --agent=dsh
+        failOnStartupError: false

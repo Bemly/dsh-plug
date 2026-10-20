@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "JADX MCP (Android)",
+    "description": "Connects the headless JADX MCP server (0.7.1, runs on the bundled JDK 21) so the agent can load APK/DEX files, read decompiled classes and methods, query xrefs, strings and resources."
+  }
+}

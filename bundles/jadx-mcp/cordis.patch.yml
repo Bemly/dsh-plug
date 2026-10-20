@@ -1,0 +1,19 @@
+# JADX headless MCP (Android APK static analysis), rescued from the REA
+# bundle's vendor dir before its removal. Backend files were copied to
+# ~/.dsh/tools (jdk 21 + jadx-headless-mcp 0.7.1 jar); the system Java is
+# 1.8 and cannot run it. serverName "jadx" exposes tools as mcp__jadx__*
+# (status / load_apk / get_class_source / get_method_body / xrefs / ...).
+# failOnStartupError is false so JVM warm-up cannot break Harness startup.
+- insert:
+    - id: mcp-jadx
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: jadx
+        transport: stdio
+        command: /Users/bemly/.dsh/tools/jdk/bin/java
+        args:
+          - -jar
+          - /Users/bemly/.dsh/tools/jadx/jadx-headless-mcp-0.7.1-all.jar
+          - --transport
+          - stdio
+        failOnStartupError: false

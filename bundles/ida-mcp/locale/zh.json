@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "IDA MCP（官方）",
+    "description": "通过 uvx 连接 Hex-Rays 官方 IDA MCP 服务（需 IDA 9.4+ 与 idalib），让 agent 可以 headless 打开二进制、反编译、反汇编并查询 IDA 数据库。"
+  }
+}

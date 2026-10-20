@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "IDA MCP (Official)",
+    "description": "Connects the official Hex-Rays IDA MCP server (ida-mcp via uvx, requires IDA 9.4+ with idalib) so the agent can open binaries, decompile, disassemble and query IDA databases headlessly."
+  }
+}

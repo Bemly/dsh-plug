@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "JADX MCP（安卓）",
+    "description": "连接无头 JADX MCP 服务（0.7.1，自带 JDK 21 运行），让 agent 可以加载 APK/DEX、读反编译类与方法、查引用、字符串与资源。"
+  }
+}
