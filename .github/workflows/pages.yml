@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - index.json
+      - icons/**
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -25,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: mkdir -p public && cp index.json public/ && echo "dsh.bemly.moe" > public/CNAME
+      - run: mkdir -p public && cp index.json public/ && cp -R icons public/ && echo "dsh.bemly.moe" > public/CNAME
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
