@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "浏览器 + Mac 桌面控制",
+    "description": "启用官方实验性 Browser Use（Playwright MCP，Chrome 启动）和 Computer Use（macOS 原生 CUA）。需要已安装 Chrome，并在 macOS 设置中授予辅助功能与屏幕录制权限。"
+  }
+}

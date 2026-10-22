@@ -1,0 +1,6 @@
+# whale-tail-plug bundle patch — adds the client-only decoration entry to the roster.
+# Extracts a single feature from dsh-moe-lite (KurosawaGeeker): the whale-tail
+# plugin-button icon plus the stacked maid crest. No theme CSS, no skin attr.
+- insert:
+    - id: whale-tail-plug
+      name: '@local/whale-tail-plug'

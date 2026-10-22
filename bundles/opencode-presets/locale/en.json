@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "OpenCode Presets (NSFW + Unrestricted)",
+    "description": "One plugin with two agent presets ported from Bemly/opencode: nsfw (adult-fiction executor, blue) and unrestricted (security-research executor, red). Both reuse the full standard tool surface with the opencode system prompts and boost context folded into the persona."
+  }
+}

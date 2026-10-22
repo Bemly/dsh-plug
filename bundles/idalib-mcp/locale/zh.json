@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "IDA Pro MCP (idalib)",
+    "description": "通过 IDALib（无头 IDA）连接 IDA Pro MCP 服务（mrexodia 的 ida-pro-mcp 2.0.0），让 agent 可以直接枚举函数、反编译代码、查看交叉引用与类型信息、操作 IDA 数据库。"
+  }
+}

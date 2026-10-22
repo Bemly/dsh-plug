@@ -1,0 +1,18 @@
+# Port of the opencode "idalib" MCP entry (mrexodia's ida-pro-mcp 2.0.0,
+# IDALib/headless mode) into DSH, so the agent gets mcp__idalib__* tools.
+#
+# The command points at the DSH-managed install under ~/.dsh/tools/ida-mcp
+# (same ida-pro-mcp 2.0.0 as the opencode entry, which runs the codex plugin
+# cache copy). failOnStartupError is false, mirroring the working mcp-rea row
+# in this profile: the IDALib worker needs a slow first start, and a startup
+# failure should not break the whole Harness session.
+- insert:
+    - id: mcp-idalib
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: idalib
+        transport: stdio
+        command: /Users/bemly/.dsh/tools/ida-mcp/.venv/bin/idalib-mcp
+        args:
+          - --stdio
+        failOnStartupError: false

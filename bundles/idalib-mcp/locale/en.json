@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "IDA Pro MCP (idalib)",
+    "description": "Connects the IDA Pro MCP server in headless IDALib mode (mrexodia's ida-pro-mcp 2.0.0), so the agent can enumerate functions, decompile code, inspect xrefs and types, and work with IDA databases directly."
+  }
+}

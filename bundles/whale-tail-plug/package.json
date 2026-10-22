@@ -1,0 +1,36 @@
+{
+  "name": "@local/whale-tail-plug",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Single-feature extract from dsh-moe-lite: whale-tail plugin-button icon (still + hover wiggle) and the stacked maid crest. No theme, coexists with other skins.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "assets/whale-tail-wiggle.gif",
+    "assets/whale-tail-first.webp",
+    "assets/deepseek-harness-maid-stacked.svg",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

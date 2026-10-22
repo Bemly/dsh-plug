@@ -1,0 +1,16 @@
+# 启用官方实验性 Browser Use（Playwright MCP launch）+ Computer Use（macOS CUA）。
+# Browser 同一时间只能挂一个 provider，这里选 Playwright（无需额外模型 Key）。
+# Computer 同一时间只能挂一个 provider，这里选 macOS 原生 CUA。
+- insert:
+    - id: browser-use-service
+      name: '@deepseek-ai/dsh-browser-use'
+    - id: browser-use-playwright
+      name: '@deepseek-ai/dsh-experimental-browser-use-playwright-mcp'
+      config:
+        mode: launch
+        headless: true
+        executablePath: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+    - id: computer-use-service
+      name: '@deepseek-ai/dsh-computer-use'
+    - id: computer-use-mac
+      name: '@deepseek-ai/dsh-experimental-cua-macos'

@@ -1,0 +1,15 @@
+{
+  "name": "@local/enable-browser-computer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { "./locale/*.json": "./locale/*.json", "./icon": "./icon.svg" },
+  "files": ["cordis.patch.yml", "locale/*.json", "icon.svg"],
+  "dependencies": {
+    "@deepseek-ai/dsh-browser-use": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-computer-use": "0.2.1-rc.1",
+    "@deepseek-ai/dsh-experimental-cua-macos": "0.2.1-rc.1"
+  },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Browser + Mac Computer Use",
+    "description": "Enables official experimental Browser Use (Playwright MCP, Chrome launch) and Computer Use (macOS CUA). Requires Chrome installed and macOS Accessibility + Screen Recording permissions."
+  }
+}

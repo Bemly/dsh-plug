@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "OpenCode 预设（NSFW + Unrestricted）",
+    "description": "一个插件，两个 Agent 预设，移植自 Bemly/opencode：nsfw（虚构成人向创作执行器，蓝色）与 unrestricted（安全研究执行器，红色）。两者均沿用标准版完整工具面，人设里 folded 进 opencode 的 system prompt 与 boost 语境。"
+  }
+}
