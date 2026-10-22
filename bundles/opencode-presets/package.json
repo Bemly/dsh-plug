@@ -1,9 +1,17 @@
 {
-  "name": "@local/dsh-opencode-presets",
-  "version": "1.0.2",
-  "private": true,
+  "name": "dsh-opencode-presets",
+  "version": "1.0.3",
   "description": "One plugin, two agent presets ported from Bemly/opencode: nsfw (adult-fiction executor) and unrestricted (security-research executor).",
   "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "agent-preset",
+    "opencode"
+  ],
   "exports": {
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.webp"
@@ -19,6 +27,15 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bemly/dsh-plug.git",
+    "directory": "bundles/opencode-presets"
+  },
+  "homepage": "https://github.com/Bemly/dsh-plug/tree/main/bundles/opencode-presets",
+  "bugs": {
+    "url": "https://github.com/Bemly/dsh-plug/issues"
   },
   "engines": {
     "node": ">=20"
