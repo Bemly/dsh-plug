@@ -1,6 +1,7 @@
 {
-  "name": "dsh-opencode-presets",
+  "name": "@local/dsh-opencode-presets",
   "version": "1.0.2",
+  "private": true,
   "description": "One plugin, two agent presets ported from Bemly/opencode: nsfw (adult-fiction executor) and unrestricted (security-research executor).",
   "type": "module",
   "exports": {

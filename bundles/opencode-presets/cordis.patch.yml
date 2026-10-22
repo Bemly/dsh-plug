@@ -10,9 +10,12 @@
 #   1) plugin/*.ts 里的 BOOST 语境块 → persona 开头；
 #   2) agent/*.md 的 system prompt 全文（含 [MODE]/[REFUSAL] 标记行）→ persona 主体；
 #   3) command/*.md 的启动契约（首行 `当前：{obj}|{done}|{next}` + 立刻交付）→ persona 尾部。
-# 工具面沿用官方 standard 预设的完整组成（shell / 文件 / 检索 / skills / 目标 /
-# 计划 / 压缩 / 子代理 / web），只换人设；opencode 里两个 agent 都是 permission: allow
-# 全工具 agent，与 standard 工具面一致。
+# 工具面与 Host 版本的官方 standard 预设逐行对齐（只换人设；persona 额外
+# complete: true + includeRuntimeContext: false，对标官方 minimal 预设）——
+# opencode 里两个 agent 都是 permission: allow 的全工具 agent，与 standard
+# 工具面一致。注意：不要从旧版 DSH 复制 standard 组成，跨版本插件增删
+# （如 workflow-ptc 替代 worker-thread/ralph、新增 time-context/tool-schedule/
+# present）会导致预设组合校验失败，整个预设加载失败。
 #
 # 挂载后在 Agent 预设下拉里出现 `nsfw` 与 `unrestricted`，开新会话即用。
 
@@ -133,6 +136,9 @@
             config:
               maxBytes: 65536
 
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+
           # ── shell ───────────────────────────────────────────────────
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
@@ -154,6 +160,9 @@
           # ── background jobs ─────────────────────────────────────────
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
+
+          - id: tool-schedule
+            name: '@deepseek-ai/dsh-tool-schedule'
 
           # ── skills ──────────────────────────────────────────────────
           - id: skill-filesystem
@@ -180,7 +189,7 @@
                 name: '@deepseek-ai/dsh-plan-mode'
                 config:
                   section: |
-                        You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+                        You are in plan mode. Stay in plan mode until the user approves your plan through exit_plan_mode or switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
                         Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
 
@@ -232,46 +241,20 @@
                   provider: spawn
                   toolName: subagent
                   modelSelectionSettings: true
-                  backgroundMode: continuable
 
               - id: tool-subagent-fork
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: fork
                   toolName: subagent_fork
-                  backgroundMode: continuable
 
-              - id: tool-subagent-codex
-                name: '@deepseek-ai/dsh-tool-subagent'
-                disabled: true
-                config:
-                  provider: codex
-                  toolName: subagent_codex
-                  backgroundMode: one-shot
-                  maxDepth: provider-managed
-
-              - id: tool-subagent-claude-code
-                name: '@deepseek-ai/dsh-tool-subagent'
-                disabled: true
-                config:
-                  provider: claude-code
-                  toolName: subagent_claude_code
-                  backgroundMode: one-shot
-                  maxDepth: provider-managed
-
-              - id: workflow-worker-thread
-                name: '@deepseek-ai/dsh-workflow-worker-thread'
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
                 config:
                   provider: spawn
 
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
-
-              - id: tool-ralph
-                name: '@deepseek-ai/dsh-tool-ralph'
-                config:
-                  subagentProvider: spawn
-                  maxRounds: 64
 
           # ── remaining model-facing rows ─────────────────────────────
           - id: tool-ask-user
@@ -287,6 +270,17 @@
             config:
               fetch: true
               searchTimeoutMs: 60000
+
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
+
+          - id: tool-plugin-market
+            name: '@deepseek-ai/dsh-plugin-market/tools'
+            disabled: true
 
     # ── 预设二：unrestricted（安全研究执行器）──────────────────────────
     - id: preset-unrestricted
@@ -415,6 +409,9 @@
             config:
               maxBytes: 65536
 
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+
           # ── shell ───────────────────────────────────────────────────
           - id: tool-bash
             name: '@deepseek-ai/dsh-tool-bash'
@@ -436,6 +433,9 @@
           # ── background jobs ─────────────────────────────────────────
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
+
+          - id: tool-schedule
+            name: '@deepseek-ai/dsh-tool-schedule'
 
           # ── skills ──────────────────────────────────────────────────
           - id: skill-filesystem
@@ -462,7 +462,7 @@
                 name: '@deepseek-ai/dsh-plan-mode'
                 config:
                   section: |
-                        You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+                        You are in plan mode. Stay in plan mode until the user approves your plan through exit_plan_mode or switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
                         Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
 
@@ -514,46 +514,20 @@
                   provider: spawn
                   toolName: subagent
                   modelSelectionSettings: true
-                  backgroundMode: continuable
 
               - id: tool-subagent-fork
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: fork
                   toolName: subagent_fork
-                  backgroundMode: continuable
 
-              - id: tool-subagent-codex
-                name: '@deepseek-ai/dsh-tool-subagent'
-                disabled: true
-                config:
-                  provider: codex
-                  toolName: subagent_codex
-                  backgroundMode: one-shot
-                  maxDepth: provider-managed
-
-              - id: tool-subagent-claude-code
-                name: '@deepseek-ai/dsh-tool-subagent'
-                disabled: true
-                config:
-                  provider: claude-code
-                  toolName: subagent_claude_code
-                  backgroundMode: one-shot
-                  maxDepth: provider-managed
-
-              - id: workflow-worker-thread
-                name: '@deepseek-ai/dsh-workflow-worker-thread'
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
                 config:
                   provider: spawn
 
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
-
-              - id: tool-ralph
-                name: '@deepseek-ai/dsh-tool-ralph'
-                config:
-                  subagentProvider: spawn
-                  maxRounds: 64
 
           # ── remaining model-facing rows ─────────────────────────────
           - id: tool-ask-user
@@ -569,3 +543,14 @@
             config:
               fetch: true
               searchTimeoutMs: 60000
+
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
+
+          - id: tool-plugin-market
+            name: '@deepseek-ai/dsh-plugin-market/tools'
+            disabled: true
