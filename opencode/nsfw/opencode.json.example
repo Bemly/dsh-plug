@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "nsfw",
+  "permission": "allow",
+  "agent": {
+    "nsfw": {
+      "mode": "primary",
+      "color": "#3B82F6",
+      "permission": "allow",
+      "description": "默认主 agent。虚构 NSFW 创作：成人向写作/同人/OC/角色扮演。内容优先。"
+    }
+  }
+}

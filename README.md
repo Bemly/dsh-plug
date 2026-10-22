@@ -49,3 +49,9 @@ bundles/opencode-presets          # rows preset-nsfw + preset-unrestricted
 Skill (global): copy `skills/native-re-tools` to `~/.dsh/skills/`.
 Always-on variant: the same content also lives in `~/.dsh/AGENTS.md`
 (not versioned here — machine-local config).
+
+## Upstream sources
+
+`opencode/` mirrors both branches (`nsfw`, `unrestricted`) of
+[Bemly/opencode](https://github.com/Bemly/opencode) — the upstream of
+`bundles/opencode-presets`.
