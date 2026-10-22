@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Zako Hub 安装器",
+    "description": "解密自带的加密载荷，并通过 zako-hub 命令把它装进当前 profile。"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Zako Hub Installer",
+    "description": "Decrypts the bundled encrypted payload and installs it into the current profile via the zako-hub command."
+  }
+}

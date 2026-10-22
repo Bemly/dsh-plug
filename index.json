@@ -874,9 +874,10 @@
         "zh": "加密载荷安装器：解密自带加密载荷并装进当前 profile。"
       },
       "author": "bemly-moe",
-      "homepage": "https://github.com/Bemly/dsh-zako-hub",
+      "homepage": "https://github.com/Bemly/dsh-plug/tree/main/bundles/zako-hub",
       "repository": {
-        "url": "https://github.com/Bemly/dsh-zako-hub"
+        "url": "https://github.com/Bemly/dsh-plug",
+        "directory": "bundles/zako-hub"
       },
       "metadata": {
         "category": "我🌿别人的",

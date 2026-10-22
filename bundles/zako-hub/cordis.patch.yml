@@ -1,0 +1,6 @@
+# dsh-zako-hub bundle patch — registers the installer bundle itself.
+# The encrypted payload this bundle carries is decrypted and installed
+# on demand via the `zako-hub install` command (see README.md).
+- insert:
+    - id: dsh-zako-hub
+      name: dsh-zako-hub
