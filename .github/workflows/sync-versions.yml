@@ -1,0 +1,55 @@
+name: Sync market versions from npm
+
+on:
+  schedule:
+    - cron: 0 2 * * *
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save @deepseek-ai/dsh-plugin-market-index
+      - id: sync
+        run: |
+          node scripts/sync-versions.mjs | tee sync.log
+          node scripts/validate-index.mjs
+          if git status --porcelain index.json | grep -q .; then
+            echo changed=true >> $GITHUB_OUTPUT
+          else
+            echo changed=false >> $GITHUB_OUTPUT
+          fi
+      - if: steps.sync.outputs.changed == 'true'
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add index.json
+          git commit -m 'Sync market versions from npm' -m "$(grep -E '^(added|would add): ' sync.log || true)"
+          git push
+      - if: steps.sync.outputs.changed == 'true'
+        run: mkdir -p public && cp index.json public/ && cp -R icons public/ && echo dsh.bemly.moe > public/CNAME
+      - if: steps.sync.outputs.changed == 'true'
+        uses: actions/configure-pages@v5
+      - if: steps.sync.outputs.changed == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deployment
+        if: steps.sync.outputs.changed == 'true'
+        uses: actions/deploy-pages@v5
