@@ -53,7 +53,7 @@ for (const p of idx.plugins) {
 if (added.length === 0) {
   console.log('up to date');
 } else {
-  if (!CHECK) writeFileSync(INDEX, JSON.stringify(idx));
+  if (!CHECK) writeFileSync(INDEX, JSON.stringify(idx, null, 2) + '\n');
   console.log((CHECK ? 'would add: ' : 'added: ') + added.join(', '));
 }
 process.exitCode = CHECK && added.length > 0 ? 1 : 0;
