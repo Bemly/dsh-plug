@@ -925,6 +925,22 @@
       },
       "versions": [
         {
+          "version": "0.1.81",
+          "publishTimestamp": 1792702322,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.80",
+          "publishTimestamp": 1792698680,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
           "version": "0.1.79",
           "publishTimestamp": 1792625419,
           "source": {
