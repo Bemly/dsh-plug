@@ -208,6 +208,14 @@
       },
       "versions": [
         {
+          "version": "1.0.1",
+          "publishTimestamp": 1793005105,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
           "version": "1.0.0",
           "publishTimestamp": 1792638868,
           "source": {
