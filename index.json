@@ -565,6 +565,35 @@
       "icon": "icons/opencode-session.webp"
     },
     {
+      "name": "dsh-prompt-hardener",
+      "title": "Prompt Hardener",
+      "description": "硬邦邦提示词改写：发送前把需求改成肌肉集团风格，自动/审查两档，轻/中/重/丧心病狂四档强度",
+      "author": "ffyfox",
+      "homepage": "https://github.com/ffyfox/dsh-prompt-hardener#readme",
+      "repository": {
+        "url": "https://github.com/ffyfox/dsh-prompt-hardener.git"
+      },
+      "metadata": {
+        "category": "蓝莓智选大💊",
+        "keywords": [],
+        "labels": [
+          "蓝莓智选大💊"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.4.0",
+          "publishTimestamp": 1791730754,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ],
+      "icon": "icons/prompt-hardener.webp"
+    },
+    {
       "name": "dsh-status-rotator",
       "description": "Turn the DSH Web status line into a 1317-phrase meme machine: phase-aware phrases, typewriter, rainbow gradient, danmaku and 14 theme packs, all editable from the settings page.",
       "author": "01Virex",
