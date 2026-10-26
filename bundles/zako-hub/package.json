@@ -1,6 +1,6 @@
 {
   "name": "dsh-zako-hub",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "description": "Encrypted-payload installer bundle for DSH: decrypts the bundled payload and installs it into the current profile.",
   "bin": {
