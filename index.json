@@ -1006,6 +1006,14 @@
       },
       "versions": [
         {
+          "version": "1.0.3",
+          "publishTimestamp": 1793005847,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
           "version": "1.0.2",
           "publishTimestamp": 1792690793,
           "source": {
