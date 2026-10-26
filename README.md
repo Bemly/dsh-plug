@@ -11,7 +11,7 @@ Plug collection for [DeepSeek Harness](https://github.com/DeepSeek-AI/DeepSeek-H
 | `bundles/enable-browser-computer` | Enables official experimental Browser Use (Playwright MCP, Chrome launch) + Computer Use (macOS CUA) | browser + CUA rows |
 | `bundles/whale-tail-plug` | Whale-tail plugin-button icon (still + hover wiggle) + stacked maid crest, no theme | UI decoration (client) |
 | `bundles/opencode-presets` | Two agent presets ported from Bemly/opencode: `nsfw` + `unrestricted` | agent presets |
-| `bundles/zako-hub` | Encrypted-payload installer (ex-WorkBuddy hub): decrypts bundled payload and installs it into the current profile | installer bundle |
+| `bundles/zako-hub` | Encrypted-payload installer (bundled bridge): decrypts the bundled payload and installs it into the current profile | installer bundle |
 | `skills/native-re-tools` | Shell recipes: kuna, Ghidra headless, ilspycmd, Hopper CLI | skill (on demand) |
 
 ## Status
