@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-	id: "@local/whale-tail-plug",
+	id: "dsh-whale-tail-plug",
 	factory: () => {
 		var module = { exports: {} };
 		var exports = module.exports;

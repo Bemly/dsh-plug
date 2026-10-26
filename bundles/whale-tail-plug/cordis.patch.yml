@@ -3,4 +3,4 @@
 # plugin-button icon plus the stacked maid crest. No theme CSS, no skin attr.
 - insert:
     - id: whale-tail-plug
-      name: '@local/whale-tail-plug'
+      name: 'dsh-whale-tail-plug'

@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-tail-plug",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "Single-feature extract from dsh-moe-lite: whale-tail plugin-button icon (still + hover wiggle) and the stacked maid crest. No theme, coexists with other skins.",
   "exports": {

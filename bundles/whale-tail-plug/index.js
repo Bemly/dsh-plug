@@ -4,7 +4,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const name = "@local/whale-tail-plug";
+export const name = "dsh-whale-tail-plug";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS_DIR = path.join(HERE, "assets");
