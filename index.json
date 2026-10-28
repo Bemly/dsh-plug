@@ -1058,6 +1058,22 @@
       },
       "versions": [
         {
+          "version": "0.1.86",
+          "publishTimestamp": 1793143778,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.85",
+          "publishTimestamp": 1793139577,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
           "version": "0.1.84",
           "publishTimestamp": 1792951492,
           "source": {
