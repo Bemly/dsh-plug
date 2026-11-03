@@ -4060,6 +4060,40 @@
           "engines": {}
         }
       ]
+    },
+    {
+      "name": "dsh-codebuddy-link",
+      "icon": "icons/dsh-codebuddy-link.webp",
+      "title": "CodeBuddy Link",
+      "description": {
+        "en": "Bridge the Tencent CodeBuddy CLI into DSH: expose codebuddy/* models as a provider, multi-account pool with per-session affinity, ACP stdio native execution, standalone codebuddy_ask delegation, and /codebuddy commands with a settings page.",
+        "zh": "把腾讯 CodeBuddy CLI 接进 DSH：以 codebuddy/* 模型作为 provider，支持多账户池与会话内固定账号、ACP stdio 原生执行、独立委派 codebuddy_ask，以及 /codebuddy 命令与设置页诊断。"
+      },
+      "author": "liubaicai",
+      "homepage": "https://github.com/liubaicai/dsh-codebuddy-link",
+      "repository": {
+        "url": "https://github.com/liubaicai/dsh-codebuddy-link.git"
+      },
+      "metadata": {
+        "category": "蓝莓智选大💊",
+        "keywords": [],
+        "labels": [
+          "蓝莓智选大💊"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.3.30",
+          "publishTimestamp": 1793615923,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/liubaicai/dsh-codebuddy-link",
+            "commit": "ad58f1fc09252025d84a9ef7c62a5073e7f2ec24"
+          },
+          "engines": {}
+        }
+      ]
     }
   ]
 }
