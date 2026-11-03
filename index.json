@@ -1440,6 +1440,470 @@
           "engines": {}
         }
       ]
+    },
+    {
+      "name": "dsh-plugin-weixin",
+      "icon": "icons/dsh-plugin-weixin.webp",
+      "title": "Weixin Channel",
+      "description": {
+        "en": "Weixin (personal WeChat, iLink Bot API) channel for DeepSeek Harness: command a DSH agent from WeChat, with images, files and voice-note transcription.",
+        "zh": "微信（个人微信，iLink Bot API）通道：在微信里直接指挥 DSH agent 跑任务，支持图片、文件与语音转写。"
+      },
+      "author": "panqing0313",
+      "homepage": "https://github.com/panqing0313/dsh-plugin-weixin",
+      "repository": {
+        "url": "https://github.com/panqing0313/dsh-plugin-weixin.git"
+      },
+      "metadata": {
+        "category": "蓝莓智选大💊",
+        "keywords": [],
+        "labels": [
+          "蓝莓智选大💊"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "1.4.5",
+          "publishTimestamp": 1793723144,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.4.4",
+          "publishTimestamp": 1793721832,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.4.3",
+          "publishTimestamp": 1793682424,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.4.2",
+          "publishTimestamp": 1793679614,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.4.1",
+          "publishTimestamp": 1793674881,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.4.0",
+          "publishTimestamp": 1793672702,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.3.1",
+          "publishTimestamp": 1793638686,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.3.0",
+          "publishTimestamp": 1793637456,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.2.1",
+          "publishTimestamp": 1793628827,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.2.0",
+          "publishTimestamp": 1793507964,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.1.0",
+          "publishTimestamp": 1793496659,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.0.0",
+          "publishTimestamp": 1793461457,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.20",
+          "publishTimestamp": 1793454185,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.19",
+          "publishTimestamp": 1793440857,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.18",
+          "publishTimestamp": 1793431885,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.17",
+          "publishTimestamp": 1793419437,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.16",
+          "publishTimestamp": 1793415616,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.15",
+          "publishTimestamp": 1793414674,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.14",
+          "publishTimestamp": 1793206706,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.13",
+          "publishTimestamp": 1793187358,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.12",
+          "publishTimestamp": 1793157869,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.11",
+          "publishTimestamp": 1793147915,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.10",
+          "publishTimestamp": 1793111052,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.9",
+          "publishTimestamp": 1793109443,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.8",
+          "publishTimestamp": 1793059215,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.7",
+          "publishTimestamp": 1793028038,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.6",
+          "publishTimestamp": 1793025466,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.5",
+          "publishTimestamp": 1793022470,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.4",
+          "publishTimestamp": 1793018309,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.3",
+          "publishTimestamp": 1792770797,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.2",
+          "publishTimestamp": 1792420731,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.1",
+          "publishTimestamp": 1792419409,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.9.0",
+          "publishTimestamp": 1792372684,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.8.0",
+          "publishTimestamp": 1792317223,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.7.0",
+          "publishTimestamp": 1792305857,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.6.0",
+          "publishTimestamp": 1792257313,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.5.0",
+          "publishTimestamp": 1792165246,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.4.0",
+          "publishTimestamp": 1792140073,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.3.0",
+          "publishTimestamp": 1792115519,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.2.0",
+          "publishTimestamp": 1792080964,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.1",
+          "publishTimestamp": 1792048699,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1792040281,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
+    },
+    {
+      "name": "@tencent-connect/dsh-qqbot",
+      "icon": "icons/dsh-qqbot.webp",
+      "title": "QQ Bot Channel",
+      "description": {
+        "en": "Chat with DeepSeek Harness in QQ private and group chats, built on the official QQ Bot API.",
+        "zh": "在 QQ 私聊和群聊里直接对话 DeepSeek Harness，基于腾讯官方 QQ 机器人。"
+      },
+      "author": "tencent-connect",
+      "homepage": "https://github.com/tencent-connect/dsh-qqbot",
+      "repository": {
+        "url": "https://github.com/tencent-connect/dsh-qqbot.git"
+      },
+      "metadata": {
+        "category": "蓝莓智选大💊",
+        "keywords": [],
+        "labels": [
+          "蓝莓智选大💊"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.5.5",
+          "publishTimestamp": 1793375955,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.5.4",
+          "publishTimestamp": 1793371661,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.5.3",
+          "publishTimestamp": 1793084009,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.5.2",
+          "publishTimestamp": 1791788671,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.5.1",
+          "publishTimestamp": 1791779688,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.5.0",
+          "publishTimestamp": 1788880635,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.4.0",
+          "publishTimestamp": 1786845901,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.3.0",
+          "publishTimestamp": 1786738900,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.2.0",
+          "publishTimestamp": 1786722376,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1786715091,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
     }
   ]
 }
