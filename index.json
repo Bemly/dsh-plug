@@ -1349,6 +1349,61 @@
           "engines": {}
         }
       ]
+    },
+    {
+      "name": "@leaf233/dsh-llm-rate-limiter",
+      "title": "LLM Rate Limiter",
+      "description": {
+        "en": "Per-model LLM call rate limiter for DeepSeek Harness: independent concurrency, RPM and burst limits per provider/model, token-bucket or sliding-window, queue or reject, with a live status panel and hot reload.",
+        "zh": "给 DSH 按模型限速：每个 provider/model 独立并发、RPM 与突发上限，令牌桶或滑动窗口两种算法，可排队或直接拒绝，带实时状态面板与热更新。"
+      },
+      "author": "Leafyezi233",
+      "homepage": "https://github.com/Leafyezi233/dsh-llm-rate-limiter",
+      "repository": {
+        "url": "https://github.com/Leafyezi233/dsh-llm-rate-limiter.git"
+      },
+      "metadata": {
+        "category": "🔗友链🍚",
+        "keywords": [],
+        "labels": [
+          "🔗友链🍚"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.3.0",
+          "publishTimestamp": 1790611941,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.2.1",
+          "publishTimestamp": 1790301496,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.2.0",
+          "publishTimestamp": 1789297783,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.1",
+          "publishTimestamp": 1789292323,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
     }
   ]
 }
