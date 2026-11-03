@@ -1297,7 +1297,7 @@
     },
     {
       "name": "@leaf233/dsh-model-gateway",
-      "icon": "icons/model-gateway.webp",
+      "icon": "icons/model-gateway.webp?v=2",
       "title": "Model Gateway",
       "description": {
         "en": "OpenAI-compatible /v1 relay for any model provider registered in DSH (e.g. CodeBuddy), so other projects can call it with a standard OpenAI client; manage endpoints, groups and API keys from Settings.",
@@ -1353,7 +1353,7 @@
     },
     {
       "name": "@leaf233/dsh-llm-rate-limiter",
-      "icon": "icons/llm-rate-limiter.webp",
+      "icon": "icons/llm-rate-limiter.webp?v=2",
       "title": "LLM Rate Limiter",
       "description": {
         "en": "Per-model LLM call rate limiter for DeepSeek Harness: independent concurrency, RPM and burst limits per provider/model, token-bucket or sliding-window, queue or reject, with a live status panel and hot reload.",
