@@ -26,13 +26,12 @@ Renamed from `dsh-re-toolkit` to `dsh-plug` on 2026-10-22; old name redirects on
 `enable-browser-computer`, `whale-tail-plug`, `opencode-presets` were folded in from
 the author's current `Documents/Dsh` workdir on the same day.
 
-Roadmap before npm publishing:
+Roadmap (npm packages are already published; the items below still apply):
 
 - [ ] Resolve tool paths portably (`!!js` + `DSH_HOME`-relative, no hardcoded home dirs)
 - [ ] `setup` downloader for Temurin JDK 21 + `jadx-headless-mcp` jar (never ship binaries in npm)
 - [ ] Prereq checks (uvx, IDA 9.4 + idalib activation)
 - [ ] Parameterize skill paths (`~/.dsh/tools`, `$JAVA_HOME`)
-- [ ] `npm publish` `dsh-ida-mcp`, `dsh-jadx-mcp` (names verified free); LICENSE (MIT planned)
 
 ## Use (author's machine)
 
@@ -57,3 +56,10 @@ Always-on variant: the same content also lives in `~/.dsh/AGENTS.md`
 `opencode/` mirrors both branches (`nsfw`, `unrestricted`) of
 [Bemly/opencode](https://github.com/Bemly/opencode) — the upstream of
 `bundles/opencode-presets`.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Every bundle carries its own `LICENSE` and declares
+`"license": "MIT"` in `package.json`. `bundles/opencode-presets` redistributes prompts
+whose copyright is held by kzheart (see its `LICENSE`), and bundles that shell out to
+third-party tools keep those tools' upstream terms.

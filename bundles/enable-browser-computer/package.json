@@ -2,6 +2,7 @@
   "name": "dsh-enable-browser-computer",
   "version": "1.0.0",
   "type": "module",
+  "license": "MIT",
   "exports": {
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
@@ -9,7 +10,8 @@
   "files": [
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "LICENSE"
   ],
   "dependencies": {
     "@deepseek-ai/dsh-browser-use": "0.2.1-rc.1",

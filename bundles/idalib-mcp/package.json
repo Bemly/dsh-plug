@@ -2,6 +2,7 @@
   "name": "dsh-idalib-mcp",
   "version": "1.0.0",
   "type": "module",
+  "license": "MIT",
   "exports": {
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
@@ -9,7 +10,8 @@
   "files": [
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
