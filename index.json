@@ -1406,6 +1406,40 @@
           "engines": {}
         }
       ]
+    },
+    {
+      "name": "managed-agents",
+      "icon": "icons/sandbase-harness.webp",
+      "title": "SandBase Harness",
+      "description": {
+        "en": "Run SandBase Harness as a DSH MCP bridge: the bundle launches managed-agents-mcp over stdio, exposing sandboxed agents, sessions, streamed turns, artifacts and cancellation. Git install only, needs a running SandBase runtime (MANAGED_AGENTS_URL); the 0.3.8 patch expects a profile named 'web'.",
+        "zh": "把 SandBase Harness 作为 MCP 桥接进 DSH：stdio 拉起 managed-agents-mcp，提供沙箱 agent、会话、流式回合、产物与取消。仅支持 git 安装，需自建并运行 SandBase runtime（MANAGED_AGENTS_URL）；0.3.8 的 patch 固定要求 profile 名为 web。"
+      },
+      "author": "sandbaseai",
+      "homepage": "https://github.com/sandbaseai/sandbase-harness",
+      "repository": {
+        "url": "https://github.com/sandbaseai/sandbase-harness"
+      },
+      "metadata": {
+        "category": "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件",
+        "keywords": [],
+        "labels": [
+          "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.3.8",
+          "publishTimestamp": 1793634397,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/sandbaseai/sandbase-harness",
+            "commit": "fdd7ea5e91442dbd5ca111209a15ec71a0837b01"
+          },
+          "engines": {}
+        }
+      ]
     }
   ]
 }
