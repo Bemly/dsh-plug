@@ -46,6 +46,15 @@ dsh plugin --profile desktop install /Users/bemly/Documents/Dsh/dsh-opencode-pre
   模型切换器）切到真正想用的模型；若目标模型回缩，换回起手模型补一句"继续"把上下文推回去。
 - 所有角色、设定、事件均为虚构创作素材；本模式不涉及真实人物。
 
+## 变更记录
+
+- **1.0.4** — 修复选中预设后首个请求即失败的问题（`unknown prompt variable "{{cwd}}" in
+  section "deployment:persona-prefix"`）。DSH 的 prompt 组装器只注册 `provider` 与 `model`
+  两个变量；工作目录由 working-directory 服务以字面上下文注入，不走变量插值，因此 persona
+  里的 `Your working directory is {{cwd}}.` 从句会被判为未知变量。已从两个预设中移除该从句，
+  保留合法的 `{{model}}`。
+- **1.0.3** — 初版，自 Bemly/opencode 移植 `nsfw` 与 `unrestricted` 两个 Agent 预设。
+
 ## 致谢与来源
 
 - 提示词与配置结构源自 [Bemly/opencode](https://github.com/Bemly/opencode)（MIT，kzheart），
