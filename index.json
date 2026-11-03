@@ -27,6 +27,12 @@
           "en": "Deepseek🔞Tail Plug",
           "zh": "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件"
         }
+      },
+      "🔗友链🍚": {
+        "title": {
+          "en": "Friendly Links🍚",
+          "zh": "🔗友链🍚"
+        }
       }
     },
     "labels": {
@@ -46,6 +52,12 @@
         "title": {
           "en": "Deepseek🔞Tail Plug",
           "zh": "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件"
+        }
+      },
+      "🔗友链🍚": {
+        "title": {
+          "en": "Friendly Links🍚",
+          "zh": "🔗友链🍚"
         }
       }
     },
@@ -1268,6 +1280,61 @@
         {
           "version": "0.1.79",
           "publishTimestamp": 1792625419,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
+    },
+    {
+      "name": "@leaf233/dsh-model-gateway",
+      "title": "Model Gateway",
+      "description": {
+        "en": "OpenAI-compatible /v1 relay for any model provider registered in DSH (e.g. CodeBuddy), so other projects can call it with a standard OpenAI client; manage endpoints, groups and API keys from Settings.",
+        "zh": "把 DSH 里已注册的模型（如 CodeBuddy）开放成 OpenAI 兼容的 /v1 接口，其他项目用标准 OpenAI 客户端即可调用；设置页可管理接口地址、分组与 API 密钥。"
+      },
+      "author": "Leafyezi233",
+      "homepage": "https://github.com/Leafyezi233/dsh-model-gateway",
+      "repository": {
+        "url": "https://github.com/Leafyezi233/dsh-model-gateway.git"
+      },
+      "metadata": {
+        "category": "🔗友链🍚",
+        "keywords": [],
+        "labels": [
+          "🔗友链🍚"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "1.2.1",
+          "publishTimestamp": 1790918114,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.2.0",
+          "publishTimestamp": 1790892995,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.1.0",
+          "publishTimestamp": 1790867466,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "1.0.0",
+          "publishTimestamp": 1790815790,
           "source": {
             "type": "npm"
           },
