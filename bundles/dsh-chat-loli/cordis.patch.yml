@@ -12,6 +12,26 @@
 #
 # 预设 id: dsh-chat-loli，显示名: 鲸鱼娘捆绑模式，order: 8。
 # 安装后在 Agent 预设下拉里出现，开新会话即用。
+#
+# ── 工具收窄守卫（lib/guard.js）──────────────────────────────────────────────
+#
+# 预设只控制「agent 平面」的 23 个工具行；宿主进程级的全局工具
+# （terminal_* / browser_* / cua_* / lan_gateway / *_mcp_resource 等）不在预设
+# 管辖范围，任何会话都继承。对一个对外承诺「没有 shell、没有文件读写」的预设
+# 来说，那条 terminal_* 就是完整 shell。
+#
+# 这个宿主级行补上剩下的那一半：agent 创建时判定它绑的预设，命中就把当前
+# 全局工具集合整体 deny 掉（agent.ctx.tools.restrict，只对那一个 agent 生效）。
+# 遮罩只作用于全局层，本预设自己 scoped 注册的 web_search / web_fetch 不受影响。
+
+- insert:
+    - id: chat-loli-guard
+      name: 'dsh-chat-loli/guard'
+      config:
+        # 要收窄的预设 id。本包只服务一个预设，保持默认即可。
+        preset: dsh-chat-loli
+        # 想额外保留的全局工具名（宿主级）。留空 = 全部隐藏。
+        keep: []
 
 - insert:
     - id: preset-dsh-chat-loli

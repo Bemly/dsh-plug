@@ -1,8 +1,9 @@
 {
   "name": "dsh-chat-loli",
-  "version": "1.0.0",
-  "description": "DSH agent preset 「鲸鱼娘捆绑模式」：鲸鱼娘人设 + 仅 web_search / web_fetch，无 shell、无文件读写、无 glob/grep、无记忆写入（persona 来自 dsh-whale-loli，MIT）。",
+  "version": "1.1.0",
+  "description": "DSH agent preset 「鲸鱼娘捆绑模式」：鲸鱼娘人设 + 仅 web_search / web_fetch，并用 ctx.tools.restrict 收窄该预设继承的宿主级全局工具（shell / 文件读写 / glob/grep / 记忆写入 一个都不挂，宿主层的 terminal_* / cua_* / browser_* 等也一并隐藏）。人设来自 dsh-whale-loli，MIT。",
   "type": "module",
+  "main": "lib/guard.js",
   "license": "MIT",
   "keywords": [
     "deepseek-harness",
@@ -11,12 +12,18 @@
     "cordis",
     "agent-preset",
     "chat",
-    "persona"
+    "persona",
+    "tool-restriction"
   ],
   "exports": {
-    "./icon": "./icon.webp"
+    ".": "./lib/guard.js",
+    "./guard": "./lib/guard.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./icon": "./icon.webp",
+    "./package.json": "./package.json"
   },
   "files": [
+    "lib",
     "cordis.patch.yml",
     "icon.webp",
     "README.md",
