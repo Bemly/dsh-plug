@@ -1904,6 +1904,81 @@
           "engines": {}
         }
       ]
+    },
+    {
+      "name": "@tnnevol/dsh-fnos",
+      "icon": "icons/dsh-fnos.webp",
+      "title": "fnOS Integrations",
+      "description": {
+        "en": "fnOS (FeiNiu NAS) integrations for DeepSeek Harness: theme, file access, and session log export.",
+        "zh": "飞牛 fnOS 集成：主题、文件访问与会话日志导出。"
+      },
+      "author": "tnnevol",
+      "homepage": "https://fndsh-doc.tnnevol.cn/plugins/dsh-fnos",
+      "repository": {
+        "url": "https://github.com/FNOSP/fnos-dsh",
+        "directory": "plugins/dsh-fnos-plugin"
+      },
+      "metadata": {
+        "category": "🔗友链🍚",
+        "keywords": [],
+        "labels": [
+          "🔗友链🍚"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "7.0.2",
+          "publishTimestamp": 1793347371,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.1-rc.5"
+          }
+        },
+        {
+          "version": "7.0.1",
+          "publishTimestamp": 1793331221,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.1-rc.5"
+          }
+        },
+        {
+          "version": "6.1.15",
+          "publishTimestamp": 1793269130,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.1-rc.3"
+          }
+        },
+        {
+          "version": "6.0.6",
+          "publishTimestamp": 1793010690,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.1-rc.3"
+          }
+        },
+        {
+          "version": "6.0.0",
+          "publishTimestamp": 1792937350,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.1-rc.3"
+          }
+        }
+      ]
     }
   ]
 }
