@@ -1,7 +1,7 @@
 {
   "name": "dsh-chat-loli",
-  "version": "1.1.1",
-  "description": "DSH agent preset 「鲸鱼娘捆绑模式」：鲸鱼娘人设 + 仅 web_search / web_fetch + 会话压缩（compaction-basic / /compact / 工具结果修剪），并用 ctx.tools.restrict 收窄该预设继承的宿主级全局工具（shell / 文件读写 / glob/grep / 记忆写入 一个都不挂，宿主层的 terminal_* / cua_* / browser_* 等也一并隐藏）。人设来自 dsh-whale-loli，MIT。",
+  "version": "1.1.2",
+  "description": "DSH agent preset 「鲸鱼娘捆绑模式」：鲸鱼娘人设 + 仅 web_search / web_fetch + 会话压缩（compaction-basic / /compact / 工具结果修剪）+ 能力边界（明确无 shell/文件能力，禁止假装执行），并用 ctx.tools.restrict 收窄该预设继承的宿主级全局工具（shell / 文件读写 / glob/grep / 记忆写入 一个都不挂，宿主层的 terminal_* / cua_* / browser_* 等也一并隐藏）。人设来自 dsh-whale-loli，MIT。",
   "type": "module",
   "main": "lib/guard.js",
   "license": "MIT",

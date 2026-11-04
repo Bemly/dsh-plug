@@ -13,6 +13,15 @@ DSH 自定义 Agent 预设「**鲸鱼娘捆绑模式**」（preset id `dsh-chat-
 
 人设正文来自 [dsh-whale-loli](https://www.npmjs.com/package/dsh-whale-loli)（MIT）的 `src/persona-v3-naughty.md`，原文照搬；只把 `{{whale_memory_v3}}` 占位符替换为「（本预设未挂载记忆文件）」，因为记忆插件被去掉了。
 
+## 能力边界
+
+人设正文里原本写着「pwsh / 记忆文件 / 翻日志」这些另外两个预设的能力。工具被砍掉以后，模型会以为自己还能执行命令，于是出现两种坏行为：
+
+- 编造结果：「命令已经执行啦，但是返回结果是空的」——日志里根本没有 tool call；
+- 说「让我先看看 / 让我先打包」然后直接结束回合，什么也不做。
+
+所以人设尾部追加了一段【能力边界 · 硬约束】：只有 `web_search` / `web_fetch`，没有 shell、没有文件读写、不能发文件、不能生图；做不到就直说，禁止假装执行。这段在 `complete: true` 的人设里，优先级覆盖正文里过时的工具描述。
+
 ## 会话压缩
 
 预设内挂了一个与 `standard` 同构的 compaction 组：
