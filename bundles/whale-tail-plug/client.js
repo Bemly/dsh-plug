@@ -14,17 +14,16 @@ window.__ModuleLoader__.load({
 			/* ---------- stacked brand: one crest replaces wordmark + HARNESS badge ---------- */
 			div[class*="_logoRow"] {
 				position: relative;
-				height: 80px !important;
 				align-items: center;
 			}
-			button[class*="_brand"] [class*="brandIdentity"] {
+			/* The lockup sits in the brandIdentity span; the wrapper around it is
+			   a <button> on the Web UI but a <span> in the desktop shell, so the
+			   rule may not hang off a tag. */
+			[class*="brandIdentity"] {
 				display: none !important;
 			}
-			button[class*="_brand"] {
-				position: static !important;
-				overflow: visible;
-				min-height: 64px;
-			}
+			/* No wrapper rule here: the crest is hosted by the logo row and the
+			   wrapper's position is set inline by installStackedBrand. */
 			img.dsh-moe-stacked-brand {
 				position: absolute;
 				left: 50%;
@@ -35,19 +34,21 @@ window.__ModuleLoader__.load({
 				width: auto;
 				max-width: none;
 				user-select: none;
+				pointer-events: none;
 			}
-			/* The collapsed rail swaps back to DSH's native whale mark. The crest
-			   is the only lockup now, so the whale goes away in both states. */
-			svg[viewBox="0 0 23.16 17.04"] {
+			/* 0.2.2's collapsed rail rests as DSH's whale mark and only reveals
+			   the panel icon on hover, so the mark has to stay: hide the copy
+			   that lives inside the brand lockup only, not the rail's. */
+			[class*="_brand"] svg[viewBox="0 0 23.16 17.04"] {
 				display: none !important;
 			}
 			/* ---------- brand wordmark in DeepSeek blue ---------- */
-			button[class*="brand"],
+			[class*="_brand"],
 			svg[viewBox="26 0 156 24"],
 			svg[viewBox="0 0 23.16 17.04"] {
 				color: #2f6bf0 !important;
 			}
-			html body[data-ds-dark-theme] button[class*="brand"],
+			html body[data-ds-dark-theme] [class*="_brand"],
 			html body[data-ds-dark-theme] svg[viewBox="26 0 156 24"],
 			html body[data-ds-dark-theme] svg[viewBox="0 0 23.16 17.04"] {
 				color: #9cc2ff !important;
@@ -102,7 +103,7 @@ window.__ModuleLoader__.load({
 			if (button.dataset.moePlugHover === "1") return;
 			button.dataset.moePlugHover = "1";
 			button.addEventListener("pointerenter", () => {
-				const currentSvg = button.querySelector("svg");
+				const currentSvg = findPluginGlyph(button) || button.querySelector("svg");
 				if (!currentSvg) return;
 				let anim = button.querySelector(".dsh-moe-plug-anim");
 				if (!anim) {
@@ -131,11 +132,44 @@ window.__ModuleLoader__.load({
 			});
 		}
 
-		function installStackedBrand(svg) {
-			const host = svg.closest("button") || svg.parentElement;
+		/* The Plugins panel row. Its label is localized, so it is only a last
+		   resort; the pinwheel glyph below identifies the row in any locale. */
+		const PLUGIN_LABEL = /^(插件|扩展|扩展程序|外挂|擴充|外掛|Plugins?|Extensions?|プラグイン|Complementos|Erweiterungen|Расширения)$/i;
+
+		/* The pinwheel glyph of the Plugins panel row. Since 0.2.2 product icons
+		   are sprite references carrying only `data-icon`, so the artwork is no
+		   longer identifiable by its viewBox; older builds inline a 16×16 svg. */
+		function findPluginGlyph(button) {
+			for (const svg of button.querySelectorAll("svg")) {
+				const dataIcon = svg.getAttribute("data-icon") || "";
+				if (/^dsw-icon-plugin-pinwheel/i.test(dataIcon)) return svg;
+			}
+			return null;
+		}
+
+		function installStackedBrand(anchor) {
+			/* The lockup is a brandIdentity span inside a wrapper that is a
+			   <button> on the Web UI but a <span> in the macOS desktop shell,
+			   so neither the tag nor `closest("button")` identifies the surface.
+			   Anchor the crest on the logo row (present in every build) and
+			   hide only the identity element: hiding the row's other children
+			   would take the sidebar toggle with it. 0.2.2 renders the brand as
+			   text, so the wordmark svg is only the legacy anchor. */
+			const identity = anchor.closest('[class*="brandIdentity"]') || anchor.closest('[class*="_brand"]') || anchor;
+			const host = identity.closest('div[class*="_logoRow"]') || identity.parentElement;
 			if (!host) return;
+
+			const hidden = identity;
+			if (!hidden.hasAttribute("data-moe-brand-hidden")) {
+				hidden.dataset.moeBrandHidden = hidden.style.display || "";
+			}
+			hidden.style.display = "none";
+
 			host.style.position = "relative";
 			host.style.overflow = "visible";
+			/* The lockup is 64px tall; expand the 60px row while the crest is
+			   mounted only, so the collapsed rail keeps its own 36px height. */
+			host.style.height = "80px";
 			host.querySelectorAll(":scope > .dsh-moe-harness-banner").forEach((img) => img.remove());
 			let img = host.querySelector(":scope > .dsh-moe-stacked-brand");
 			if (!img) {
@@ -148,31 +182,59 @@ window.__ModuleLoader__.load({
 				img.addEventListener("error", () => {
 					img.remove();
 					host.removeAttribute("data-moe-stacked-brand");
-					restoreHiddenBrandChildren(host);
+					host.style.height = "";
+					hidden.style.display = hidden.dataset.moeBrandHidden || "";
+					delete hidden.dataset.moeBrandHidden;
 				}, { once: true });
 				host.append(img);
 			}
 			host.dataset.moeStackedBrand = "1";
-			/* Inline-hide every other child, not only the known identity class:
-			   a re-render or a different DSH build must never leave the old
-			   wordmark behind the crest. */
-			for (const child of [...host.children]) {
-				if (child === img) continue;
-				if (!child.hasAttribute("data-moe-brand-hidden")) {
-					child.dataset.moeBrandHidden = child.style.display || "";
-				}
-				child.style.display = "none";
+		}
+
+		/* The crest belongs to the expanded lockup: collapsing the sidebar
+		   unmounts the brand wrapper but leaves the logo row (and anything we
+		   appended to it) in place, so drop the crest and the row height we
+		   raised; the rail's own 36px layout then applies again. */
+		function pruneStackedBrand() {
+			document.querySelectorAll("img.dsh-moe-stacked-brand").forEach((img) => {
+				const host = img.parentElement;
+				if (host && (host.querySelector('[class*="brandIdentity"]') || host.querySelector('[class*="_brand"]') || host.querySelector('svg[viewBox="26 0 156 24"]'))) return;
+				img.remove();
+				if (!host) return;
+				host.removeAttribute("data-moe-stacked-brand");
+				host.style.height = "";
+			});
+		}
+
+		/* The brand lockup moved between builds: 0.2.1 drew the DSH wordmark as
+		   an inline svg, 0.2.2 renders text inside a `brandIdentity` span. Scan
+		   the logo row for either and fall back to the wordmark selector. */
+		function installBrandCrests() {
+			const rows = document.querySelectorAll('div[class*="_logoRow"]');
+			if (rows.length === 0) {
+				document.querySelectorAll('svg[viewBox="26 0 156 24"]').forEach((svg) => installStackedBrand(svg));
+				return;
 			}
+			rows.forEach((row) => {
+				const identity = row.querySelector('[class*="brandIdentity"]') || row.querySelector('[class*="_brand"]');
+				if (identity) installStackedBrand(identity);
+			});
 		}
 
 		function decorateIcons() {
+			pruneStackedBrand();
 			document.querySelectorAll("button").forEach((button) => {
-				if (!/^(插件|Plugins?)$/i.test(button.getAttribute("aria-label") || "")) return;
-				const svg = button.querySelector("svg");
-				if (!svg || svg.getAttribute("viewBox") !== "0 0 16 16") return;
+				const label = (button.getAttribute("aria-label") || "").trim();
+				const glyph = findPluginGlyph(button);
+				/* 0.2.2 ships the pinwheel as a sprite reference (`data-icon`, no
+				   viewBox); 0.2.1 and older inline it as a 16×16 svg. Accept
+				   either, and keep the localized label as the last resort. */
+				if (!glyph && !PLUGIN_LABEL.test(label)) return;
+				const svg = glyph || button.querySelector('svg[viewBox="0 0 16 16"]') || button.querySelector("svg");
+				if (!svg) return;
 				installPlugIcon(button, svg);
 			});
-			document.querySelectorAll('svg[viewBox="26 0 156 24"]').forEach((svg) => installStackedBrand(svg));
+			installBrandCrests();
 		}
 
 		function apply(ctx) {
@@ -205,11 +267,15 @@ window.__ModuleLoader__.load({
 					document.querySelectorAll("button[data-moe-plug-hover]").forEach((button) => {
 						delete button.dataset.moePlugHover;
 						delete button.dataset.moePlugActive;
-						const svg = button.querySelector("svg");
-						if (svg) svg.style.visibility = "";
+						button.querySelectorAll("svg").forEach((svg) => {
+							svg.style.visibility = "";
+						});
 					});
 					document.querySelectorAll(".dsh-moe-stacked-brand").forEach((img) => img.remove());
-					document.querySelectorAll("[data-moe-stacked-brand]").forEach((host) => host.removeAttribute("data-moe-stacked-brand"));
+					document.querySelectorAll("[data-moe-stacked-brand]").forEach((host) => {
+						host.removeAttribute("data-moe-stacked-brand");
+						host.style.height = "";
+					});
 					restoreHiddenBrandChildren();
 					style.remove();
 				};
