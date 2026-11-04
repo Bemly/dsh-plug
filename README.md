@@ -63,3 +63,5 @@ MIT — see [LICENSE](LICENSE). Every bundle carries its own `LICENSE` and decla
 `"license": "MIT"` in `package.json`. `bundles/opencode-presets` redistributes prompts
 whose copyright is held by kzheart (see its `LICENSE`), and bundles that shell out to
 third-party tools keep those tools' upstream terms.
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
