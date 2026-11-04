@@ -13,6 +13,20 @@ DSH 自定义 Agent 预设「**鲸鱼娘捆绑模式**」（preset id `dsh-chat-
 
 人设正文来自 [dsh-whale-loli](https://www.npmjs.com/package/dsh-whale-loli)（MIT）的 `src/persona-v3-naughty.md`，原文照搬；只把 `{{whale_memory_v3}}` 占位符替换为「（本预设未挂载记忆文件）」，因为记忆插件被去掉了。
 
+## 会话压缩
+
+预设内挂了一个与 `standard` 同构的 compaction 组：
+
+| 行 | 作用 |
+|---|---|
+| `compaction-basic` | 压缩服务本体；QQ bot 的 `/compact` 也是按「会话 preset 的 compaction 服务 → 宿主全局」两级回落来找它 |
+| `command-compact` | 会话里的 `/compact` 命令 |
+| `tool-result-pruner` | 压缩前修剪超大工具结果（`thresholdChars: 8192`） |
+
+三者放在 `isolate: { compaction: true, toolResultPruner: true }` 的组里，服务只属于本预设，不会漏到别的会话。
+
+> 压缩能力在**新会话**生效；已开始的会话保持创建时的 preset revision，需要 `/new`。
+
 ## 宿主级工具收窄（`lib/guard.js`）
 
 上面那张表只覆盖**预设管得着的那一半**。DSH 的 Web 界面在 `dsh-web-app` 这一层只把 23 个「agent 平面」的工具行交给预设；**不在这份名单里的行留在宿主平面**，注册进进程级全局工具层，任何预设的会话都继承。
