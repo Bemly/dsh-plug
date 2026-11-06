@@ -1,6 +1,8 @@
 # dsh-chat-loli
 
-DSH 自定义 Agent 预设「**鲸鱼娘捆绑模式**」（preset id `dsh-chat-loli`）：鲸鱼娘人设 + **只有搜索/抓取**，没有 shell、没有文件读写、没有 glob/grep、没有记忆写入工具。
+DSH 自定义 Agent 预设「**鲸鱼娘捆绑模式**」（preset id `dsh-chat-loli`）和「**妈妈捆绑模式**」（preset id `dsh-chat-mama`）：鲸鱼娘 / 软糯大肥鱼妈妈人设 + **只有搜索/抓取**，没有 shell、没有文件读写、没有 glob/grep、没有记忆写入工具。
+
+两个预设的工具面、压缩组、守卫机制完全一致，只有人设正文不同；守卫模块 `lib/guard.js` 被复用为两行（`chat-loli-guard` / `chat-mama-guard`），各自用 `preset` 配置指向自己的预设。
 
 ## 工具面
 
@@ -12,6 +14,24 @@ DSH 自定义 Agent 预设「**鲸鱼娘捆绑模式**」（preset id `dsh-chat-
 | | `whale_memory_v3_add`（whale-memory） |
 
 人设正文来自 [dsh-whale-loli](https://www.npmjs.com/package/dsh-whale-loli)（MIT）的 `src/persona-v3-naughty.md`，原文照搬；只把 `{{whale_memory_v3}}` 占位符替换为「（本预设未挂载记忆文件）」，因为记忆插件被去掉了。
+
+## 妈妈捆绑模式（`dsh-chat-mama`）
+
+1.2.0 新增。工具面与鲸鱼娘捆绑模式逐项相同（`web_search` / `web_fetch` + compaction 组 + guard 收窄），差别只在人设：
+
+- 正文是一份「软糯大肥鱼·妈妈版·小鲸鱼」人设（嘴软心软的妈妈芯 + 奶声奶气大肥鱼壳 + 微擦边尺度），原文照搬；
+- 头部加了与鲸鱼娘版同款的【每轮先看 · 当前会话上下文】和【思维链语言 · 强制】框架段；
+- 尾部同样有【能力边界 · 硬约束】，额外声明正文里 `send_message` / `send_poke` / `get_message_images` / `replyToMessageId` 这些 QQ 群能力在本预设**不存在**，禁止假装执行。
+
+守卫另起一行，复用同一个模块：
+
+```yaml
+- id: chat-mama-guard
+  name: 'dsh-chat-loli/guard'
+  config:
+    preset: dsh-chat-mama
+    keep: []
+```
 
 ## 能力边界
 
@@ -82,7 +102,7 @@ DSH 自定义 Agent 预设「**鲸鱼娘捆绑模式**」（preset id `dsh-chat-
 
 在 DSH 里把本包作为 bundle 安装（profile 级），或在插件市场里点安装。
 
-安装后在 Agent 预设下拉里出现「鲸鱼娘捆绑模式」，开新会话或 `/new` 后生效；已有会话保持原预设（started 锁定）。
+安装后在 Agent 预设下拉里出现「鲸鱼娘捆绑模式」和「妈妈捆绑模式」，开新会话或 `/new` 后生效；已有会话保持原预设（started 锁定）。
 
 ## License
 

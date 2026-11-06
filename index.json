@@ -1101,10 +1101,10 @@
     {
       "name": "dsh-chat-loli",
       "icon": "icons/dsh-chat-loli.webp",
-      "title": "鲸鱼娘捆绑模式",
+      "title": "鲸鱼娘 / 妈妈捆绑模式",
       "description": {
-        "en": "Chat-only agent preset: whale-girl persona with web_search / web_fetch only — no shell, no file read/write, no glob/grep, no memory writes.",
-        "zh": "纯聊天 Agent 预设：鲸鱼娘人设 + 仅 web_search / web_fetch；无 shell、无文件读写、无 glob/grep、无记忆写入工具。"
+        "en": "Chat-only agent presets: whale-girl and whale-mama personas with web_search / web_fetch only — no shell, no file read/write, no glob/grep, no memory writes.",
+        "zh": "纯聊天 Agent 预设（两个）：鲸鱼娘 / 软糯大肥鱼妈妈人设 + 仅 web_search / web_fetch；无 shell、无文件读写、无 glob/grep、无记忆写入工具。"
       },
       "author": "bemly-moe",
       "homepage": "https://www.npmjs.com/package/dsh-chat-loli",
