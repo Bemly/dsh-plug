@@ -18,6 +18,11 @@
 # present）会导致预设组合校验失败，整个预设加载失败。
 #
 # 挂载后在 Agent 预设下拉里出现 `nsfw` 与 `unrestricted`，开新会话即用。
+#
+# v1.0.5 多版本兼容：
+# - 移除 tool-subagent-control/list-agents（0.2.2 已不存在该子模块）
+# - subagent config 同时包含 modelSelectionSettings (0.2.1) 和
+#   modelSelection + modelDiscovery (0.2.2)，两边均透传未知键
 
 - insert:
     # ── 预设一：nsfw（虚构成人向创作执行器）─────────────────────────────
@@ -30,8 +35,6 @@
         order: 11
         plugins:
           # ── identity ────────────────────────────────────────────────
-          # 人设即 opencode 的 system prompt + boost，上游原文见本包 README。
-          # complete: true —— persona 就是完整的 system prompt（对标 minimal 预设做法）。
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
@@ -232,14 +235,13 @@
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
 
-              - id: tool-subagent-list-agents
-                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
-
               - id: tool-subagent
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: spawn
                   toolName: subagent
+                  modelSelection: true
+                  modelDiscovery: true
                   modelSelectionSettings: true
 
               - id: tool-subagent-fork
@@ -292,8 +294,6 @@
         order: 12
         plugins:
           # ── identity ────────────────────────────────────────────────
-          # 人设即 opencode 的 system prompt + boost，上游原文见本包 README。
-          # complete: true —— persona 就是完整的 system prompt（对标 minimal 预设做法）。
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
@@ -505,14 +505,13 @@
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
 
-              - id: tool-subagent-list-agents
-                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
-
               - id: tool-subagent
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: spawn
                   toolName: subagent
+                  modelSelection: true
+                  modelDiscovery: true
                   modelSelectionSettings: true
 
               - id: tool-subagent-fork
