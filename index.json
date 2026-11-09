@@ -33,6 +33,12 @@
           "en": "Friendly Links🍚",
           "zh": "🔗友链🍚"
         }
+      },
+      "D神开播了🐋": {
+        "title": {
+          "en": "D神开播了🐋",
+          "zh": "D神开播了🐋"
+        }
       }
     },
     "labels": {
@@ -58,6 +64,12 @@
         "title": {
           "en": "Friendly Links🍚",
           "zh": "🔗友链🍚"
+        }
+      },
+      "D神开播了🐋": {
+        "title": {
+          "en": "D神开播了🐋",
+          "zh": "D神开播了🐋"
         }
       }
     },
@@ -4506,6 +4518,238 @@
             "type": "git",
             "url": "https://github.com/liubaicai/dsh-codebuddy-link",
             "commit": "ad58f1fc09252025d84a9ef7c62a5073e7f2ec24"
+          },
+          "engines": {}
+        }
+      ]
+    },
+    {
+      "name": "dsh-media-desk",
+      "icon": "icons/dsh-media-desk.webp",
+      "title": "Media Desk",
+      "description": {
+        "en": "DeepSeek Harness plugin. One sentence to capture inspiration, one click to generate: scripts, titles, video covers, illustrations and storyboard sketches.",
+        "zh": "DeepSeek Harness 插件。一句话记灵感，一键成稿：口播脚本、标题、视频封面、配图和黑白线稿分镜。"
+      },
+      "author": "fkingary",
+      "homepage": "https://github.com/woniuniuniu/dsh-media-desk",
+      "repository": {
+        "url": "https://github.com/woniuniuniu/dsh-media-desk.git"
+      },
+      "metadata": {
+        "category": "D神开播了🐋",
+        "keywords": [],
+        "labels": [
+          "D神开播了🐋"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "2.6.2",
+          "publishTimestamp": 1794111213,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "2.6.1",
+          "publishTimestamp": 1793875365,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "2.6.0",
+          "publishTimestamp": 1793857763,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "2.5.4",
+          "publishTimestamp": 1793815285,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "2.5.3",
+          "publishTimestamp": 1793797268,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
+    },
+    {
+      "name": "dsh-guizang-design",
+      "icon": "icons/dsh-guizang-design.webp",
+      "title": "歸藏设计",
+      "description": {
+        "en": "Guizang Design · DeepSeek Harness plugin: web PPT, image-text cards, web layout, de-AI-ize four skills, one design system; gallery collects official examples and your past works, one-click to create the next in the same style.",
+        "zh": "歸藏设计 · DeepSeek Harness 插件：网页 PPT、图文卡片、网页排版、去 AI 味四个 skill，一套设计系统；展示库收着官方示例和你做过的作品，一键做同风格的下一份。"
+      },
+      "author": "op7418",
+      "homepage": "https://github.com/op7418/dsh-guizang-design",
+      "repository": {
+        "url": "https://github.com/op7418/dsh-guizang-design.git"
+      },
+      "metadata": {
+        "category": "D神开播了🐋",
+        "keywords": [],
+        "labels": [
+          "D神开播了🐋"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.1.4",
+          "publishTimestamp": 1793866001,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.3",
+          "publishTimestamp": 1793422921,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.2",
+          "publishTimestamp": 1793422242,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.1",
+          "publishTimestamp": 1793418851,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1793377095,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
+    },
+    {
+      "name": "dsh-context",
+      "icon": "icons/dsh-context.webp",
+      "title": "DSH Context",
+      "description": {
+        "en": "A DeepSeek Harness plugin for context insight and management, with context dashboard and context command, for understanding how the context is made of, and how it evolves.",
+        "zh": "DeepSeek Harness 上下文洞察与管理插件：上下文仪表盘与上下文命令，理解上下文组成与演进。"
+      },
+      "author": "bowenliang123",
+      "homepage": "https://github.com/bowenliang123/dsh-context",
+      "repository": {
+        "url": "https://github.com/bowenliang123/dsh-context.git"
+      },
+      "metadata": {
+        "category": "D神开播了🐋",
+        "keywords": [],
+        "labels": [
+          "D神开播了🐋"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.83.0",
+          "publishTimestamp": 1794159997,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.82.2",
+          "publishTimestamp": 1794050963,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.82.1",
+          "publishTimestamp": 1793957493,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.82.0",
+          "publishTimestamp": 1793872142,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
+    },
+    {
+      "name": "agentero-dsh",
+      "icon": "icons/agentero-dsh.webp",
+      "title": "Agentero",
+      "description": {
+        "en": "DeepSeek Harness bundle that connects Agentero to DSH: literature library, PDF reading, note-taking, and desktop app integration.",
+        "zh": "DeepSeek Harness 插件，将 Agentero 连接到 DSH：文献库、PDF 阅读、笔记和桌面应用集成。"
+      },
+      "author": "philfan",
+      "homepage": "https://github.com/poco-ai/Agentero",
+      "repository": {
+        "url": "https://github.com/poco-ai/agentero-dsh-plugin.git"
+      },
+      "metadata": {
+        "category": "D神开播了🐋",
+        "keywords": [],
+        "labels": [
+          "D神开播了🐋"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.1.7",
+          "publishTimestamp": 1794111349,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.6",
+          "publishTimestamp": 1793889807,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
+          "version": "0.1.4",
+          "publishTimestamp": 1793798107,
+          "source": {
+            "type": "npm"
           },
           "engines": {}
         }
