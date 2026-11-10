@@ -4827,10 +4827,10 @@
         "en": "Connect remote DSH web instances through SSH and browse them from the local DSH sidebar. Unified local/remote workspace browser with SSH config discovery and project selection.",
         "zh": "通过 SSH 连接远端 DSH 实例并在本地侧栏浏览。基于 SSH 配置的远端主机发现与项目选择，统一的本地/远端工作区管理。"
       },
-      "author": "sincerity711",
+      "author": "Very12345",
       "homepage": "https://github.com/Very12345/dsh-ssh-workspace",
       "repository": {
-        "url": "https://github.com/sincerity711/dsh-ssh-workspace.git"
+        "url": "https://github.com/Very12345/dsh-ssh-workspace.git"
       },
       "metadata": {
         "category": "蓝莓智选大💊",
