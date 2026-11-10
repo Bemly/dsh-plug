@@ -5,6 +5,9 @@
 // version already listed (skips 0.0.0-stage placeholders and prereleases);
 // never removes versions.
 import { readFileSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const exec = promisify(execFile);
 
 const INDEX = new URL('../index.json', import.meta.url);
 const CHECK = process.argv.includes('--check');
@@ -50,10 +53,43 @@ for (const p of idx.plugins) {
   }
   p.versions.sort((a, b) => b.publishTimestamp - a.publishTimestamp);
 }
-if (added.length === 0) {
+
+// Sync git sources: update commit SHA to latest main/master branch
+const git_changed = [];
+for (const p of idx.plugins) {
+  const src = p.versions?.[0]?.source;
+  if (!src || src.type !== 'git' || !src.url) continue;
+  const repo = src.url.replace(/\.git$/, '');
+  let out;
+  try {
+    out = (await exec('git', ['ls-remote', repo, 'HEAD'])).stdout.trim();
+  } catch {
+    console.error(`skip ${p.name}: git ls-remote failed for ${repo}`);
+    continue;
+  }
+  const sha = out.split(/\s/)[0];
+  if (!sha || sha.length !== 40) {
+    console.error(`skip ${p.name}: bad SHA from ${repo}`);
+    continue;
+  }
+  // Update all versions of this plugin
+  for (const v of p.versions) {
+    if (v.source.type === 'git' && v.source.commit !== sha) {
+      const old = v.source.commit;
+      v.source.commit = sha;
+      // Refresh publishTimestamp to now
+      v.publishTimestamp = Math.floor(Date.now() / 1000);
+      git_changed.push(`${p.name}: ${old?.slice(0,7)} → ${sha.slice(0,7)}`);
+      break; // only log once per plugin
+    }
+  }
+}
+
+if (added.length === 0 && git_changed.length === 0) {
   console.log('up to date');
 } else {
   if (!CHECK) writeFileSync(INDEX, JSON.stringify(idx, null, 2) + '\n');
-  console.log((CHECK ? 'would add: ' : 'added: ') + added.join(', '));
+  if (added.length > 0) console.log((CHECK ? 'would add: ' : 'added: ') + added.join(', '));
+  if (git_changed.length > 0) console.log((CHECK ? 'would update git: ' : 'git updated: ') + git_changed.join(', '));
 }
 process.exitCode = CHECK && added.length > 0 ? 1 : 0;
