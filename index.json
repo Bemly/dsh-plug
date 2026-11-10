@@ -4845,7 +4845,7 @@
           "version": "0.2.8",
           "publishTimestamp": 1791519004,
           "source": {
-            "type": "npm"
+            "type": "git"
           },
           "engines": {}
         },
@@ -4853,7 +4853,7 @@
           "version": "0.2.7",
           "publishTimestamp": 1791517540,
           "source": {
-            "type": "npm"
+            "type": "git"
           },
           "engines": {}
         },
@@ -4861,7 +4861,7 @@
           "version": "0.2.6",
           "publishTimestamp": 1791450653,
           "source": {
-            "type": "npm"
+            "type": "git"
           },
           "engines": {}
         },
@@ -4869,7 +4869,7 @@
           "version": "0.2.5",
           "publishTimestamp": 1791449954,
           "source": {
-            "type": "npm"
+            "type": "git"
           },
           "engines": {}
         },
@@ -4877,7 +4877,7 @@
           "version": "0.2.4",
           "publishTimestamp": 1791449381,
           "source": {
-            "type": "npm"
+            "type": "git"
           },
           "engines": {}
         },
@@ -4885,7 +4885,7 @@
           "version": "0.2.3",
           "publishTimestamp": 1791448926,
           "source": {
-            "type": "npm"
+            "type": "git"
           },
           "engines": {}
         },
@@ -4893,7 +4893,7 @@
           "version": "0.2.2",
           "publishTimestamp": 1791448567,
           "source": {
-            "type": "npm"
+            "type": "git"
           },
           "engines": {}
         },
@@ -4901,7 +4901,7 @@
           "version": "0.2.0",
           "publishTimestamp": 1791446371,
           "source": {
-            "type": "npm"
+            "type": "git"
           },
           "engines": {}
         }
