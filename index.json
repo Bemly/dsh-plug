@@ -4820,11 +4820,11 @@
       ]
     },
     {
-      "name": "dsh-ssh-workspace",
+      "name": "@very12345/dsh-ssh-workspace",
       "icon": "icons/dsh-ssh-workspace.webp",
       "title": "SSH Workspace",
       "description": {
-        "en": "Connect remote DSH web instances through SSH and browse them from the local DSH sidebar. Unified local/remote workspace browser with SSH config discovery and project selection.",
+        "en": "SSH host management and remote project selection for DeepSeek Harness",
         "zh": "通过 SSH 连接远端 DSH 实例并在本地侧栏浏览。基于 SSH 配置的远端主机发现与项目选择，统一的本地/远端工作区管理。"
       },
       "author": "Very12345",
@@ -4842,64 +4842,8 @@
       },
       "versions": [
         {
-          "version": "0.2.8",
-          "publishTimestamp": 1791519004,
-          "source": {
-            "type": "git"
-          },
-          "engines": {}
-        },
-        {
-          "version": "0.2.7",
-          "publishTimestamp": 1791517540,
-          "source": {
-            "type": "git"
-          },
-          "engines": {}
-        },
-        {
-          "version": "0.2.6",
-          "publishTimestamp": 1791450653,
-          "source": {
-            "type": "git"
-          },
-          "engines": {}
-        },
-        {
-          "version": "0.2.5",
-          "publishTimestamp": 1791449954,
-          "source": {
-            "type": "git"
-          },
-          "engines": {}
-        },
-        {
-          "version": "0.2.4",
-          "publishTimestamp": 1791449381,
-          "source": {
-            "type": "git"
-          },
-          "engines": {}
-        },
-        {
-          "version": "0.2.3",
-          "publishTimestamp": 1791448926,
-          "source": {
-            "type": "git"
-          },
-          "engines": {}
-        },
-        {
-          "version": "0.2.2",
-          "publishTimestamp": 1791448567,
-          "source": {
-            "type": "git"
-          },
-          "engines": {}
-        },
-        {
-          "version": "0.2.0",
-          "publishTimestamp": 1791446371,
+          "version": "0.1.12",
+          "publishTimestamp": 1762812510,
           "source": {
             "type": "git"
           },
