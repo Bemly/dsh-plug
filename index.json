@@ -4847,7 +4847,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/Very12345/dsh-ssh-workspace",
-            "commit": "e17477b"
+            "commit": "e17477b1aa99a0bcff636182626c0cdf01c85818"
           },
           "engines": {}
         }
