@@ -4845,7 +4845,9 @@
           "version": "0.1.12",
           "publishTimestamp": 1762812510,
           "source": {
-            "type": "git"
+            "type": "git",
+            "url": "https://github.com/Very12345/dsh-ssh-workspace",
+            "commit": "e17477b"
           },
           "engines": {}
         }
