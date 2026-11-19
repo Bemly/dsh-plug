@@ -305,16 +305,16 @@
           "engines": {}
         },
         {
-          "version": "1.0.1",
-          "publishTimestamp": 1792639084,
+          "version": "1.0.2",
+          "publishTimestamp": 1792638955,
           "source": {
             "type": "npm"
           },
           "engines": {}
         },
         {
-          "version": "1.0.2",
-          "publishTimestamp": 1792638955,
+          "version": "1.0.1",
+          "publishTimestamp": 1792639084,
           "source": {
             "type": "npm"
           },
@@ -2944,6 +2944,14 @@
       },
       "versions": [
         {
+          "version": "5.25.2",
+          "publishTimestamp": 1795089385,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
           "version": "5.25.1",
           "publishTimestamp": 1795071701,
           "source": {
@@ -5368,6 +5376,38 @@
             "type": "git",
             "url": "https://github.com/Very12345/dsh-ssh-workspace",
             "commit": "e17477b1aa99a0bcff636182626c0cdf01c85818"
+          },
+          "engines": {}
+        }
+      ]
+    },
+    {
+      "name": "@dmh2002/dsh-connect-qoder",
+      "icon": "icons/dsh-connect-qoder.webp",
+      "title": "Connect Qoder",
+      "description": {
+        "en": "Brings Qoder (Tongyi Lingma, domestic and international editions) into DeepSeek Harness: multi-account PAT pool, daily check-in, credit readout, and model management.",
+        "zh": "把 Qoder（通义灵码国内版 / 国际版）接入 DeepSeek Harness：PAT 多账号池、每日签到、积分读数与模型管理。"
+      },
+      "author": "dingminhua",
+      "homepage": "https://github.com/dingminhua/dsh-connect-qoder#readme",
+      "repository": {
+        "url": "https://github.com/dingminhua/dsh-connect-qoder"
+      },
+      "metadata": {
+        "category": "蓝莓智选大💊",
+        "keywords": [],
+        "labels": [
+          "蓝莓智选大💊"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "1.27.0",
+          "publishTimestamp": 1795073123,
+          "source": {
+            "type": "npm"
           },
           "engines": {}
         }
