@@ -5412,6 +5412,38 @@
           "engines": {}
         }
       ]
+    },
+    {
+      "name": "dsh-plugin-subscriptions",
+      "icon": "icons/dsh-plugin-subscriptions.webp",
+      "title": "Subscriptions",
+      "description": {
+        "en": "Use ChatGPT (Codex), Claude, Grok (X Premium), GitHub Copilot, and Google Antigravity subscriptions as DeepSeek Harness LLM providers, with OAuth login from the web Settings page.",
+        "zh": "把 ChatGPT（Codex）、Claude、Grok（X Premium）、GitHub Copilot 与 Google Antigravity 的订阅当作 DeepSeek Harness 的 LLM 提供方使用，在网页设置页通过 OAuth 登录。"
+      },
+      "author": "V1ki",
+      "homepage": "https://github.com/V1ki/dsh-plugin-subscriptions#readme",
+      "repository": {
+        "url": "https://github.com/V1ki/dsh-plugin-subscriptions"
+      },
+      "metadata": {
+        "category": "蓝莓智选大💊",
+        "keywords": [],
+        "labels": [
+          "蓝莓智选大💊"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.9.13",
+          "publishTimestamp": 1794386806,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
     }
   ]
 }
