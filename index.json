@@ -2332,10 +2332,10 @@
         "url": "https://github.com/tencent-connect/dsh-qqbot.git"
       },
       "metadata": {
-        "category": "蓝莓智选大💊",
+        "category": "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件",
         "keywords": [],
         "labels": [
-          "蓝莓智选大💊"
+          "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件"
         ],
         "sortKeys": {}
       },
@@ -5446,6 +5446,38 @@
         {
           "version": "0.9.13",
           "publishTimestamp": 1794386806,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
+    },
+    {
+      "name": "@zaofan/dsh-qqbot",
+      "icon": "icons/zaofan-qqbot.webp",
+      "title": "QQ Bot (Zaofan)",
+      "description": {
+        "en": "QQ Bot IM channel for DeepSeek Harness: group and private chat, meme battles, group-join approval, automatic session reordering, QQ Markdown and image aggregation.",
+        "zh": "QQ 机器人 IM 通道：群聊与私聊、斗图、入群审批、会话自动重排、QQ Markdown 与图片聚合。"
+      },
+      "author": "zaofan",
+      "homepage": "https://github.com/zaofan-make/dsh-qqbot#readme",
+      "repository": {
+        "url": "https://github.com/zaofan-make/dsh-qqbot"
+      },
+      "metadata": {
+        "category": "蓝莓智选大💊",
+        "keywords": [],
+        "labels": [
+          "蓝莓智选大💊"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "1.13.19",
+          "publishTimestamp": 1795145471,
           "source": {
             "type": "npm"
           },
