@@ -5404,6 +5404,14 @@
       },
       "versions": [
         {
+          "version": "1.27.1",
+          "publishTimestamp": 1795159821,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        },
+        {
           "version": "1.27.0",
           "publishTimestamp": 1795073123,
           "source": {
