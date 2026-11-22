@@ -1,0 +1,67 @@
+name: Publish magpie-unsafe-archive to npm
+
+# 可信发布（GitHub Actions OIDC）：仓库里不存 npm token，npm 侧按
+# 「包名 + 仓库 + 本文件名」放行。改文件名要同步改 npm 的 publisher 配置。
+on:
+  push:
+    tags:
+      - magpie-unsafe-archive-v*
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-magpie-unsafe-archive
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: 发包前脱敏自查
+        run: |
+          set -euo pipefail
+          cd magpie
+          pattern='sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|xox[baprs]-|Bearer [A-Za-z0-9]|/(Users|vol[0-9])/|192\.168\.|@appdata|/home/runner'
+          if grep -rnE "$pattern" README.md package.json *.hooks.js; then
+            echo '::error::包里出现凭据或本机路径，拒绝发布'
+            exit 1
+          fi
+          echo 'sources clean'
+
+      - name: 只打包不发布，核对包内容与版本
+        run: |
+          set -euo pipefail
+          cd magpie
+          tarball=$(npm pack --silent)
+          echo "tarball: $tarball"
+          test "$tarball" = "magpie-unsafe-archive-$(node -p "require('./package.json').version").tgz"
+          rm -rf /tmp/pkg && mkdir -p /tmp/pkg
+          tar xzf "$tarball" -C /tmp/pkg
+          find /tmp/pkg -type f
+          if grep -rnE 'sk-[A-Za-z0-9]{8,}|/(Users|vol[0-9])/|192\.168\.|@appdata' /tmp/pkg; then
+            echo '::error::tarball 内有凭据或本机路径，拒绝发布'
+            exit 1
+          fi
+          echo 'tarball clean'
+
+      - name: npm publish
+        run: npm publish --provenance
+        working-directory: magpie
+
+      - name: 核对已发布的版本
+        run: |
+          set -euo pipefail
+          want=$(node -p "require('./magpie/package.json').version")
+          got=$(npm view magpie-unsafe-archive version)
+          echo "published: $got (expected $want)"
+          test "$got" = "$want"

@@ -50,6 +50,22 @@ git diff --cached | grep -nE 'sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|xox[baprs]-
 ```
 
 发布前额外一步：`npm pack` 后解开 tarball，对**包内文件**再跑一遍同样的自查。
+`.github/workflows/publish-magpie-unsafe-archive.yml` 里已经把这两步写成 CI 门禁，
+本地漏了也会在 CI 上被拒。
+
+## 发布
+
+走 npm 可信发布（GitHub Actions OIDC），**仓库里没有 npm token**：
+
+```
+npm version 0.1.1 --no-git-tag-version      # 在 magpie/ 里改版本
+git commit -am 'magpie: 0.1.1 …' && git push
+git tag magpie-unsafe-archive-v0.1.1 && git push --tags
+```
+
+推 `magpie-unsafe-archive-v*` 标签即触发发布。npm 侧的放行规则绑定
+「包名 + 仓库 `Bemly/dsh-plug` + workflow 文件名」，**改 workflow 文件名必须
+同步去 npm 改 trusted publisher**，否则 CI 会 403。
 
 ## 设计红线：不得引入删除
 
