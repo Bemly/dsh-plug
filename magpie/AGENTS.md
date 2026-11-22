@@ -86,6 +86,19 @@ git tag magpie-unsafe-archive-v0.1.1 && git push --tags
 所以发之前想清楚，**没有"撤回已发布版本"这种安全操作**——`npm unpublish`
 是删除，与本插件"永不删除"的红线相反，不要用。
 
+## 谁能发这个包
+
+访问权挂在 npm 组织的 team 上，不是靠一个个邀请协作者：
+头像 → Account → Organizations → 组织 → **Teams** → `developers`（组织默认
+team，成员自动进）→ **Packages** → 输入包名 → **Add Existing Package** →
+选 Read and write。公开 unscoped 包同样能这么归组织管，别以为它只能属于一个
+用户。
+
+改这些**只能在网页上做**：CLI 三条路都实测被拒——网页登录的 session token
+403（要 2FA）、勾了 bypass 的 granular token 在 `GET /-/user/…` 上 401（账号
+类操作不再接受它）、`npm trust` 在没有账号 2FA 时 403。所以别在 CLI 上反复
+试权限，直接告诉用户去点哪。
+
 ## 设计红线：不得引入删除
 
 本插件是**审计留痕**，归档只追加。任何轮转、保留期、总量上限、"清理旧文件"
