@@ -4,6 +4,7 @@
 // serve 之前，而 Masker 在 serve 里面；onResponse 拿到的是还原后 agent 收到
 // 的那份。两处都落盘，正文原样交回网关，遮盖对厂商照常生效。
 //
+// 归档只追加，**永不删除、永不轮转**：这是审计留痕，删一条就少一条。
 // 归档里是含密钥的明文，这是本插件存在的目的，也是它的风险。
 //
 // 可靠性边界（magpie 源码 internal/plugin/gateway.go、host.js）：
@@ -24,60 +25,13 @@ const DEFAULT_DIR = IN_NODE_MODULES
   ? path.join(os.homedir(), "magpie-unsafe-archive")
   : path.join(HERE, "archive");
 
-const DEFAULT_KEEP_DAYS = 30;
-// 2 GiB。JS 的位运算是 32 位有符号，`2 << 30` 会得到 -2147483648，
-// 那会让 prune 把整个归档删光——必须用普通乘法。
-const DEFAULT_KEEP_BYTES = 2 * 1024 * 1024 * 1024;
-const PRUNE_EVERY_MS = 60 * 60 * 1000;
-
-let lastPrune = 0;
-
-function settings(ctx) {
+function archiveDir(ctx) {
   const o = ctx.options || {};
-  const num = (v, d) => {
-    const n = Number(v);
-    return Number.isFinite(n) && n > 0 ? n : d;
-  };
-  return {
-    dir: o.dir || process.env.MAGPIE_UNSAFE_ARCHIVE_DIR || DEFAULT_DIR,
-    days: num(o.keepDays, DEFAULT_KEEP_DAYS),
-    bytes: num(o.keepBytes, DEFAULT_KEEP_BYTES),
-  };
-}
-
-const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
-
-// 按天分文件，所以过期判断用文件名而不是 mtime。先删超过 keepDays 的，
-// 再从最旧的开始删直到总量落到 keepBytes 以内。
-function prune(dir, days, bytes) {
-  const cutoff = Date.now() - days * 86400000;
-  const kept = [];
-  let total = 0;
-  for (const name of fs.readdirSync(dir)) {
-    const m = DAY_FILE.exec(name);
-    if (!m) continue;
-    const at = Date.parse(`${m[1]}T00:00:00Z`);
-    if (Number.isNaN(at)) continue;
-    const file = path.join(dir, name);
-    if (at < cutoff) {
-      try { fs.unlinkSync(file); } catch { }
-      continue;
-    }
-    let size = 0;
-    try { size = fs.statSync(file).size; } catch { }
-    kept.push({ file, at, size });
-    total += size;
-  }
-  if (!(bytes > 0) || total <= bytes) return;
-  kept.sort((a, b) => a.at - b.at);
-  for (const e of kept) {
-    if (total <= bytes) break;
-    try { fs.unlinkSync(e.file); total -= e.size; } catch { }
-  }
+  return o.dir || process.env.MAGPIE_UNSAFE_ARCHIVE_DIR || DEFAULT_DIR;
 }
 
 function append(ctx, line) {
-  const { dir, days, bytes } = settings(ctx);
+  const dir = archiveDir(ctx);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, `${new Date().toISOString().slice(0, 10)}.jsonl`);
   const fd = fs.openSync(file, "a", 0o600);
@@ -86,11 +40,6 @@ function append(ctx, line) {
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
-  }
-  const now = Date.now();
-  if (now - lastPrune > PRUNE_EVERY_MS) {
-    lastPrune = now;
-    try { prune(dir, days, bytes); } catch { }
   }
 }
 

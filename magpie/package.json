@@ -24,9 +24,7 @@
       "zh": "本地明文归档每条请求与回复；发往厂商的仍是遮盖后的那份。"
     },
     "options": {
-      "dir": "",
-      "keepDays": 30,
-      "keepBytes": 2147483648
+      "dir": ""
     }
   },
   "repository": {
