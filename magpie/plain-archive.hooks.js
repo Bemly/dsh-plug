@@ -13,11 +13,16 @@
 //   - onRequest 返回 undefined 表示不改正文；改动 tools/tool_choice/model/stream
 //     会被回滚并计为失败，且拿不到 onResponse。
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DIR = process.env.MAGPIE_PLAIN_DIR || path.join(HERE, "archive");
+// npm 安装时本文件在 node_modules 里，归档写在那儿会随升级丢失；
+// 那种情况退到用户主目录。路径安装（magpie plugin add <路径>）仍写插件旁。
+const IN_NODE_MODULES = HERE.includes(`${path.sep}node_modules${path.sep}`);
+const DIR = process.env.MAGPIE_PLAIN_DIR
+  || (IN_NODE_MODULES ? path.join(os.homedir(), "magpie-plain-archive") : path.join(HERE, "archive"));
 
 function ensureDir() {
   fs.mkdirSync(DIR, { recursive: true, mode: 0o700 });

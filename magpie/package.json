@@ -1,0 +1,27 @@
+{
+  "name": "magpie-plain-archive",
+  "version": "0.1.0",
+  "description": "magpie gateway hook: keep a local plaintext archive of every request and reply while redaction still masks what vendors receive",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "plain-archive.hooks.js",
+    "README.md"
+  ],
+  "keywords": [
+    "magpie",
+    "magpie-plugin",
+    "gateway-hook",
+    "archive",
+    "redaction",
+    "privacy"
+  ],
+  "magpie": {
+    "hooks": "./plain-archive.hooks.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bemly/dsh-plug.git",
+    "directory": "magpie"
+  }
+}
