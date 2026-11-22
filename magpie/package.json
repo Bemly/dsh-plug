@@ -1,11 +1,11 @@
 {
-  "name": "magpie-plain-archive",
+  "name": "magpie-unsafe-archive",
   "version": "0.1.0",
-  "description": "magpie gateway hook: keep a local plaintext archive of every request and reply while redaction still masks what vendors receive",
+  "description": "magpie gateway hook: archive every request and reply to local disk in plaintext, including the secrets redaction would have masked, while vendors still receive the masked copy",
   "license": "MIT",
   "type": "module",
   "files": [
-    "plain-archive.hooks.js",
+    "unsafe-archive.hooks.js",
     "README.md"
   ],
   "keywords": [
@@ -13,11 +13,21 @@
     "magpie-plugin",
     "gateway-hook",
     "archive",
-    "redaction",
-    "privacy"
+    "audit",
+    "redaction"
   ],
   "magpie": {
-    "hooks": "./plain-archive.hooks.js"
+    "hooks": "./unsafe-archive.hooks.js",
+    "icon": "https://raw.githubusercontent.com/Bemly/dsh-plug/main/icons/dsh-ssh-workspace.webp",
+    "summary": {
+      "en": "Keeps a local plaintext archive of every request and reply; what vendors receive stays masked.",
+      "zh": "本地明文归档每条请求与回复；发往厂商的仍是遮盖后的那份。"
+    },
+    "options": {
+      "dir": "",
+      "keepDays": 30,
+      "keepBytes": 2147483648
+    }
   },
   "repository": {
     "type": "git",
