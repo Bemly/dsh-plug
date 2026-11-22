@@ -5055,10 +5055,10 @@
         "url": "https://github.com/liubaicai/dsh-codebuddy-link.git"
       },
       "metadata": {
-        "category": "蓝莓智选大💊",
+        "category": "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件",
         "keywords": [],
         "labels": [
-          "蓝莓智选大💊"
+          "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件"
         ],
         "sortKeys": {}
       },
@@ -5443,10 +5443,10 @@
         "url": "https://github.com/dingminhua/dsh-connect-qoder"
       },
       "metadata": {
-        "category": "蓝莓智选大💊",
+        "category": "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件",
         "keywords": [],
         "labels": [
-          "蓝莓智选大💊"
+          "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件"
         ],
         "sortKeys": {}
       },
@@ -5483,10 +5483,10 @@
         "url": "https://github.com/V1ki/dsh-plugin-subscriptions"
       },
       "metadata": {
-        "category": "蓝莓智选大💊",
+        "category": "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件",
         "keywords": [],
         "labels": [
-          "蓝莓智选大💊"
+          "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件"
         ],
         "sortKeys": {}
       },
@@ -5550,6 +5550,38 @@
         {
           "version": "1.13.19",
           "publishTimestamp": 1795145471,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
+    },
+    {
+      "name": "dsh-bundle-antigravity-acp",
+      "icon": "icons/antigravity-acp.webp",
+      "title": "Antigravity ACP",
+      "description": {
+        "en": "Host bundle that talks to the official Antigravity ACP server over stdio (Agent Client Protocol v1): Gemini models with context-usage anchors, xhigh tier recognized but not exposed, tools validated and executed by DSH.",
+        "zh": "对接官方 Antigravity ACP 服务端的 DSH 宿主 bundle（stdio / Agent Client Protocol v1）：Gemini 模型带上下文用量锚点，识别 xhigh 档位但不暴露，工具调用由 DSH 校验、审批与执行。"
+      },
+      "author": "AlaIchhe",
+      "homepage": "https://github.com/AlaIchhe/dsh-antigravity-acp#readme",
+      "repository": {
+        "url": "https://github.com/AlaIchhe/dsh-antigravity-acp"
+      },
+      "metadata": {
+        "category": "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件",
+        "keywords": [],
+        "labels": [
+          "能让大肥鱼欲罢不能直接摸鱼的妙妙🔞插件"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.5.4",
+          "publishTimestamp": 1795348426,
           "source": {
             "type": "npm"
           },
