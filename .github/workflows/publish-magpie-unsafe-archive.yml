@@ -2,6 +2,9 @@ name: Publish magpie-unsafe-archive to npm
 
 # 可信发布（GitHub Actions OIDC）：仓库里不存 npm token，npm 侧按
 # 「包名 + 仓库 + 本文件名」放行。改文件名要同步改 npm 的 publisher 配置。
+#
+# 注意：trusted publisher 只能管**已存在**的包，0.1.0 的首发必须人工走一次
+# （2FA + OTP，或一次性 granular token），之后一切版本从这里出。
 on:
   push:
     tags:
@@ -24,8 +27,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # 可信发布要求 npm CLI ≥ 11.5.1（Node ≥ 22.14.0），GitHub 托管 runner。
+          node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - run: npm --version
 
       - name: 发包前脱敏自查
         run: |
