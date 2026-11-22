@@ -12,6 +12,9 @@
 git diff --cached | grep -nE 'sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|npm_[A-Za-z0-9]{20,}|xox[baprs]-|Bearer [A-Za-z0-9]|/(Users|vol[0-9])/|192\.168\.|@appdata'
 ```
 
+这条会命中它自己那一行（正则字面量），属预期；判据是**除这行以外没有别的命中**。
+要更干净的判据，把加号开头的行拿出来、去掉本条命令再匹配一遍。
+
 四类不得入库：凭据（API key、token、密码、cookie、sudo 口令）、只属于某台
 机器的绝对路径与内网地址、测试探针用的假密钥/邮箱/姓名/session id、运行期
 产物（归档、`*.jsonl`、`*.tgz`）。
