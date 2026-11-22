@@ -67,6 +67,25 @@ git tag magpie-unsafe-archive-v0.1.1 && git push --tags
 「包名 + 仓库 `Bemly/dsh-plug` + workflow 文件名」，**改 workflow 文件名必须
 同步去 npm 改 trusted publisher**，否则 CI 会 403。
 
+首发（0.1.0，2026-11-23 已发）踩到的三条 npm 规矩，记下来免得再撞：
+
+1. **trusted publisher 只能绑已存在的包**，所以第一个版本必须由人带一次
+   交互式认证发出去（2FA + OTP，或勾了 bypass 的 granular token）。
+2. **CLI 网页登录的 token 发不了包**：`npm publish` 会 403 要 2FA 或
+   bypass token。
+3. **`npm trust` 命令要求账号开了 2FA**（没开会 403），所以可信发布者
+   只能在 npm 网页上配：包 → Settings → Trusted publishing → GitHub Actions，
+   `Organization or user` / `Repository` / `Workflow filename`（只填文件名，
+   带 `.yml`）/ Environment 留空，并把 **allow `npm publish`** 勾上——
+   2026-09-03 之后新建的 trust 默认只允许 `npm stage publish`。
+4. 新建包发布后，`latest` 会先指向占位版本 `0.0.0-stage`（"Temporary package
+   placeholder for staged publishing"），几十秒后才切到真实版本；别看到
+   `0.0.0-stage` 就以为发失败了。
+
+发布出去的版本会自动到达 npm 安装的用户：magpie 的插件更新循环会拉新版。
+所以发之前想清楚，**没有"撤回已发布版本"这种安全操作**——`npm unpublish`
+是删除，与本插件"永不删除"的红线相反，不要用。
+
 ## 设计红线：不得引入删除
 
 本插件是**审计留痕**，归档只追加。任何轮转、保留期、总量上限、"清理旧文件"
