@@ -307,10 +307,18 @@ injectRules) {
     }
     catch { /* 聚合缓冲失败不影响插话 */ }
     try {
-        a.inject(createUserMessage({
+        const msg = createUserMessage({
             content: [{ type: 'text', text }],
             source: { kind: 'user' },
-        }));
+        });
+        // ★ 2026-11-23 修复：插话优先走 steer (next-step + wakeup:true)，避免当前回合被 reply_gate
+        //   以 keepInbox:true 中止后，已注入的插话因 wakeup:false 滞留在 inbox 不唤醒导致漏回。
+        if (typeof a.steer === 'function') {
+            a.steer(msg);
+        }
+        else {
+            a.inject(msg);
+        }
         rec.interjectSeq = seq + 1;
         // ★ 2026-11-05（主人定）：插话成功 = 这一回合**解除 web 静默**，从此**全部放行**直到回合结束。
         //   （场景：用户在 DSH 界面里发起回合 → 正文本来不发 QQ；但 QQ 群里有人插话，
