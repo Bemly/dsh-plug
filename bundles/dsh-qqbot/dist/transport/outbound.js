@@ -63,6 +63,33 @@ const ADAPTIVE_RECENT_MS = 5 * 60_000;
 /**
  * 出站路由器：持有会话级状态，按事件类型分发到处理器
  */
+// 出站扩展的唤醒能力（2026-11-24）：挂载点原来只传 `{ source }` ⇒ `ctx.appendWake` 恒为 undefined
+// ⇒ 扩展 annihilate() 拦掉正文后没人告诉模型，消息静默蒸发（turn/end 照样 completed）。
+// 消息必须带 id：无 id 会让 dsh-session 校验报 "lacks an identified message" 并使整个会话无法加载。
+function outboundExtCaps(record) {
+    const ag = record?.agent;
+    if (!ag || typeof ag.followup !== 'function')
+        return {};
+    const mkWakeMessage = (text) => ({
+        id: globalThis.crypto?.randomUUID?.() ?? `ext-wake-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: 'user',
+        content: [{ type: 'text', text: String(text ?? '') }],
+        source: { kind: 'user' },
+    });
+    return {
+        appendWake: async (text) => {
+            if (!String(text ?? '').trim())
+                return false;
+            try {
+                ag.followup(mkWakeMessage(text));
+                return true;
+            }
+            catch {
+                return false;
+            }
+        },
+    };
+}
 class OutboundRouter {
     manager;
     bot;
@@ -819,11 +846,11 @@ class OutboundRouter {
                     //   `localMarkdownImagesToMediaMarkers` 认不出来（它只认本地路径）⇒ 整段语法原样发到群里。
                     //   这里再套一层 stripMarkdownImagesForPlainText 统一收拾：
                     //   本地图 → [MEDIA:image|路径]；qqbot-media/http 图 → [图片：说明]。绝不把语法露给群友。
-                    await sendRichOutbound(this.bot, _record.replyTarget, stripMarkdownImagesForPlainText(localMarkdownImagesToMediaMarkers(text)), this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source });
+                    await sendRichOutbound(this.bot, _record.replyTarget, stripMarkdownImagesForPlainText(localMarkdownImagesToMediaMarkers(text)), this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source, ...outboundExtCaps(_record) });
                     return;
                 }
             }
-            await sendRichOutbound(this.bot, _record.replyTarget, outText, this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source });
+            await sendRichOutbound(this.bot, _record.replyTarget, outText, this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source, ...outboundExtCaps(_record) });
         }
         catch (err) {
             this.logger.error(`im-qqbot: ${tag} failed: ${err instanceof Error ? err.message : String(err)}`);

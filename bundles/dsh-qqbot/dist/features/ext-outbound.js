@@ -341,6 +341,16 @@ export function makeOutboundCtx(initialText, opts = {}, state = { text: initialT
                 /* 连调度都失败也不能抛 */
             }
         },
+        appendWake: typeof opts.appendWake === 'function'
+            ? async (text) => {
+                try {
+                    return await opts.appendWake(text);
+                }
+                catch {
+                    return false;
+                }
+            }
+            : undefined,
         note(msg) {
             try {
                 logger.debug?.(`[ext-outbound] ${msg}`);
