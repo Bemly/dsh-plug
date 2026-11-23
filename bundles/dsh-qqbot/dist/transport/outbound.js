@@ -403,6 +403,7 @@ class OutboundRouter {
                         if (ag.status === 'idle') {
                             this.logger.info(`im-qqbot: [reply_gate+插话补唤醒] session=${record.sessionKey} 已唤醒处理中途插话`);
                             ag.followup({
+                                id: globalThis.crypto?.randomUUID?.() ?? `interject-wake-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                                 role: 'user',
                                 content: [{ type: 'text', text: '[系统提示] 上一轮思考期间有群友新发了插话，请查看上面的插话内容并决定是否回应。' }],
                                 source: { kind: 'user' },
