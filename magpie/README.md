@@ -20,6 +20,31 @@ magpie 的网关请求钩子（gateway request hook，跑在 Bun 插件宿主）
 内置记录对密钥的清除是 magpie 源码里写死的、没有开关，所以想要「本地留全明文」
 只能靠钩子在遮盖之前取一份——这就是本插件做的事。
 
+## 记录字段
+
+每行一条 JSON（schema `v: 2`）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `v` / `at` / `end` / `durMs` | schema 版本；请求到达、回复落盘时刻（UTC ISO）、差值毫秒 |
+| `session` / `agent` / `caller` | 客户端报的会话 id、客户端名、`{agent,name,via}`（经其他 magpie 转来时带链路） |
+| `model` / `protocol` / `path` / `kind` / `stream` | 请求里说的模型、协议（chat/anthropic/responses）、入口路径、`subagent` 标记、是否流式 |
+| `origin` | `magpie-key`（本机自己）/ `gateway-key`（任何网关密钥）/ `local` / `remote` |
+| `cwd` / `query` | 客户端工作目录、本次用户原话（magpie 的路由同款取法） |
+| `success` | 网关是否成功返回 |
+| `usage` | 归一后的用量：`in/out/cacheRead/cacheWrite/reasoning/total`，缺哪个就不写哪个 |
+| `request` / `reply` | 遮盖**前**的完整请求正文；还原后客户端收到的回复正文 |
+
+两条诚实的限制：
+
+- **存的是解析后重新序列化的对象**，不是客户端实际收到的原始字节；流式回复
+  存的是聚合完成的那份。内容完整，但不是逐字节证据。
+- **没有 HTTP 状态码和错误文本**。失败时钩子只拿到 `reply: null` 与
+  `ctx.success === false`，`ctx` 里没有 status/error/headers。要按状态、
+  错误类型、成本、供应商账号分类，查看时与 magpie 自己的 `usage.jsonl` 台账
+  对齐（台账有 `status/err/err_type/callerKeyName/cost/ms/ttft_ms` 等，且不设
+  保留期）；对齐靠 `session` + 时间，客户端不发 `X-Magpie-Session` 的那些对不上。
+
 ## 安装
 
 ```sh

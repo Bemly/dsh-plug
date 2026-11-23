@@ -13,6 +13,33 @@
 
 本插件走 `.hooks.js` 这条路，因为它需要 `node:fs`。
 
+## 钩子实际能拿到什么（2026-11-23 在 magpie 0.1.4676/4677 实测，别再猜）
+
+- `onRequest` 的 ctx 键：`origin, protocol, model, stream, path, agent, session,
+  cwd, query, kind, caller, options, state, signal, report`。
+- `onResponse` 的 `reply` 是**解析后的对象**（流式也是聚合完成的那份，含
+  `usage`），不是原始字节，也不是 SSE 文本。
+- **失败时 `reply` 是 `null`**，且 `ctx.status` / `ctx.error` / `ctx.headers`
+  全是 `undefined` —— 状态码与错误文本在钩子里根本拿不到，只能查看时与
+  `usage.jsonl` 台账 join。
+- `ctx.state` 是 magpie 给一次请求的暂存位，跨 onRequest/onResponse 传数据用
+  它（带命名空间键 `unsafeArchive`，别用裸 `ctx.pending`，那是共享对象）。
+- 台账 `usage.jsonl` **没有保留期、不轮转**（只有用户主动 clear），所以
+  `callerKeyName/status/cost/ms` 这些永远补得回来；join 靠 `session`+时间，
+  实测 550/555 命中，客户端不发 `X-Magpie-Session` 的对不上。
+
+## 查看侧的硬边界（要做页面时先读这段）
+
+- **桌面 app 窗口里，插件页面读不到任何归档数据**：iframe CSP 是
+  `connect-src 'none'`，页面可调的只有 `read()` 白名单
+  `usage:summary / usage:day / providers:list`（`internal/plugin/page.go` 的
+  `PageReads`），`magpie.service` 地址只发给浏览器（`pluginpage.go` 里
+  `if !web …`）。这是 magpie 的隔离设计，不是可以绕过去的实现细节。
+- **magpie web 里可以做**：`magpie.page {file, service:{port, option}}` +
+  `main` 字段（缺 `main`/`exports` 时 service 会被丢弃），服务由 Bun 宿主起在
+  loopback，页面经 `_magpie/service/` 反代访问。参照实现是社区包
+  `@magpie-community/page-chat`。
+
 ## magpie 读哪些字段（缺了就不显示或装不上）
 
 `package.json` 里这些字段各有用途，改动时不要漏：

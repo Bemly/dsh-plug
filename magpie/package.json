@@ -1,6 +1,6 @@
 {
   "name": "magpie-unsafe-archive",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "magpie gateway hook: archive every request and reply to local disk in plaintext, including the secrets redaction would have masked, while vendors still receive the masked copy",
   "license": "MIT",
   "type": "module",
