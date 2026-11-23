@@ -48,6 +48,8 @@ function createEmptyStore(model) {
     dreamState: {
       lastSlots: {},
       lastDreamAt: null,
+      lastDreamAttempt: null,
+      lastDreamError: '',
       lastDreamSummary: '',
       lastProcessedShortSeq: 0,
       lastProvider: null,
@@ -83,6 +85,8 @@ function loadStore(storePath, model) {
               ? dreamState.lastSlots
               : {},
           lastDreamAt: dreamState.lastDreamAt || null,
+          lastDreamAttempt: dreamState.lastDreamAttempt || null,
+          lastDreamError: dreamState.lastDreamError || '',
           lastDreamSummary: dreamState.lastDreamSummary || '',
           lastProcessedShortSeq:
             typeof dreamState.lastProcessedShortSeq === 'number'
@@ -168,7 +172,8 @@ function isSystemInjectedText(text) {
     text.includes('【@ 人的方法】') ||
     text.includes('Current runtime context') ||
     text.includes('<available_skills>') ||
-    text.includes('<system-reminder>')
+    text.includes('<system-reminder>') ||
+    /^Time sampled while preparing turn\b/.test(text)
   ) {
     return true;
   }
@@ -308,26 +313,33 @@ function getLocalDateAndHHMM(date = new Date()) {
 }
 
 function parseDreamJson(rawText) {
-  if (!rawText || typeof rawText !== 'string') return [];
+  if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
+    throw new Error('做梦模型未返回有效的 JSON 数组');
+  }
   const trimmed = rawText.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = fenced ? fenced[1].trim() : trimmed;
   const start = candidate.indexOf('[');
   const end = candidate.lastIndexOf(']');
-  if (start === -1 || end === -1 || end <= start) return [];
-  try {
-    const parsed = JSON.parse(candidate.slice(start, end + 1));
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((x) => x && typeof x.text === 'string' && x.text.trim().length > 0)
-      .map((x) => ({
-        text: x.text.trim(),
-        tags: Array.isArray(x.tags) ? x.tags.map((t) => String(t).trim()).filter(Boolean) : ['梦境整理'],
-        pinned: Boolean(x.pinned),
-      }));
-  } catch {
-    return [];
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error('做梦模型未返回有效的 JSON 数组');
   }
+  let parsed;
+  try {
+    parsed = JSON.parse(candidate.slice(start, end + 1));
+  } catch {
+    throw new Error('做梦模型未返回有效的 JSON 数组');
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error('做梦模型未返回有效的 JSON 数组');
+  }
+  return parsed
+    .filter((x) => x && typeof x.text === 'string' && x.text.trim().length > 0)
+    .map((x) => ({
+      text: x.text.trim(),
+      tags: Array.isArray(x.tags) ? x.tags.map((t) => String(t).trim()).filter(Boolean) : ['梦境整理'],
+      pinned: Boolean(x.pinned),
+    }));
 }
 
 function formatSummary(
@@ -344,6 +356,9 @@ function formatSummary(
   const lines = [
     `RAG 记忆状态：长期记忆 ${store.items.length} 条｜短期滚动记忆上限 ${shortTermLimit} 条（插件自动记录，含本地文件路径）｜每日做梦时间：${dreamTimes.join('、')}（上次：${lastDream}）`,
   ];
+  if (store.dreamState?.lastDreamError) {
+    lines.push(`最近做梦未完成：${store.dreamState.lastDreamError}`);
+  }
 
   if (!store.items.length) {
     lines.push('（长期记忆库暂无记录；遇到重要事实请调 rag_memory_add，回忆旧事或查近期消息请调 rag_memory_search）');
@@ -409,14 +424,26 @@ export function apply(ctx, config = {}) {
 
   let dreaming = false;
 
+  const recordDreamAttempt = async (attemptedAt, slotKey, result, error = '') => {
+    await enqueueWrite(() => {
+      const latest = loadStore(storePath, model);
+      latest.dreamState.lastDreamAttempt = attemptedAt;
+      latest.dreamState.lastDreamError = error;
+      if (slotKey && (!result.skipped || result.reason === 'no_new_short_term_messages')) {
+        latest.dreamState.lastSlots[slotKey] = attemptedAt;
+      }
+      saveStore(storePath, latest);
+    });
+    return result;
+  };
+
   async function runDream({ force = false, slotKey = null } = {}) {
     if (dreaming) {
       return { skipped: true, reason: 'already_dreaming', added: 0, updated: 0, inspected: 0 };
     }
-    if (!ctx.llm || typeof ctx.llm.stream !== 'function') {
-      return { skipped: true, reason: 'llm_service_unavailable', added: 0, updated: 0, inspected: 0 };
-    }
 
+    const attemptedAt = new Date().toISOString();
+    let inspected = 0;
     dreaming = true;
     try {
       const store = loadStore(storePath, model);
@@ -424,28 +451,37 @@ export function apply(ctx, config = {}) {
       const pending = force
         ? store.shortTerm.slice(-shortTermLimit)
         : store.shortTerm.filter((x) => (Number(x.seq) || 0) > lastSeq);
+      inspected = pending.length;
 
       if (pending.length === 0) {
-        if (slotKey) {
-          await enqueueWrite(() => {
-            const s = loadStore(storePath, model);
-            s.dreamState.lastSlots[slotKey] = new Date().toISOString();
-            saveStore(storePath, s);
-          });
-        }
-        return { skipped: true, reason: 'no_new_short_term_messages', added: 0, updated: 0, inspected: 0 };
+        return await recordDreamAttempt(attemptedAt, slotKey, {
+          skipped: true,
+          reason: 'no_new_short_term_messages',
+          added: 0,
+          updated: 0,
+          inspected: 0,
+        });
+      }
+      if (!ctx.llm || typeof ctx.llm.stream !== 'function') {
+        return await recordDreamAttempt(attemptedAt, slotKey, {
+          skipped: true,
+          reason: 'llm_service_unavailable',
+          added: 0,
+          updated: 0,
+          inspected,
+        }, 'llm_service_unavailable');
       }
 
       const provider = config.dreamProvider || store.dreamState.lastProvider || undefined;
       const llmModel = config.dreamModel || store.dreamState.lastModel || undefined;
       if (!provider || !llmModel) {
-        return {
+        return await recordDreamAttempt(attemptedAt, slotKey, {
           skipped: true,
           reason: 'no_recent_llm_route_recorded',
           added: 0,
           updated: 0,
-          inspected: pending.length,
-        };
+          inspected,
+        }, 'no_recent_llm_route_recorded');
       }
 
       const existingLong = store.items
@@ -528,6 +564,8 @@ export function apply(ctx, config = {}) {
           else added++;
         }
         latest.dreamState.lastDreamAt = new Date().toISOString();
+        latest.dreamState.lastDreamAttempt = attemptedAt;
+        latest.dreamState.lastDreamError = '';
         latest.dreamState.lastProcessedShortSeq = Math.max(latest.dreamState.lastProcessedShortSeq || 0, maxSeq);
         latest.dreamState.lastDreamSummary = `整理 ${pending.length} 条短期记忆 -> 新增 ${added} 条，更新 ${updated} 条`;
         if (slotKey) {
@@ -537,6 +575,16 @@ export function apply(ctx, config = {}) {
       });
 
       return { skipped: false, added, updated, inspected: pending.length };
+    } catch (err) {
+      const message = String(err?.message || err).slice(0, 300);
+      await recordDreamAttempt(attemptedAt, slotKey, {
+        skipped: true,
+        reason: 'dream_failed',
+        added: 0,
+        updated: 0,
+        inspected,
+      }, message);
+      throw err;
     } finally {
       dreaming = false;
     }
@@ -600,10 +648,12 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => {
     const timer = setInterval(() => {
       const { dateStr, hhmm } = getLocalDateAndHHMM(new Date());
-      if (!dreamTimes.includes(hhmm)) return;
-      const slotKey = `${dateStr}@${hhmm}`;
       const store = loadStore(storePath, model);
-      if (store.dreamState.lastSlots?.[slotKey]) return;
+      const dueSlots = dreamTimes
+        .filter((time) => time <= hhmm && !store.dreamState.lastSlots?.[`${dateStr}@${time}`])
+        .sort();
+      if (dueSlots.length === 0) return;
+      const slotKey = `${dateStr}@${dueSlots[dueSlots.length - 1]}`;
       void runDream({ force: false, slotKey }).catch((err) => {
         console.warn(`[conan-rag-memory] scheduled dream failed: ${err?.message || err}`);
       });
