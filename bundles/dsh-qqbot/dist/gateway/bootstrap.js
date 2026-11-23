@@ -557,9 +557,14 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
             /\[([^\]\n]+)\]\(https?:[^)\n]+\)/.test(t) ||
             /~~[^~\n]+~~/.test(t));
     };
+    // 出站排版：模型爱用空行分段，QQ 里会渲染成隔一空行。这里统一压成单个换行。
+    const collapseBlankLines = (content) => String(content ?? '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/[ \t\u00a0\u3000]*\n(?:[ \t\u00a0\u3000]*\n)+[ \t\u00a0\u3000]*/g, '\n');
     const sender = {
         sendMarkdown: async (target, content) => {
             try {
+                content = collapseBlankLines(content);
                 let rawText = String(content || '');
                 // 2026-10-21: markdown 通道也要自动传本地图 ——
                 //   扩展工具 send_md / 卡片 / sendText 都直接走这个 sender.sendMarkdown，
