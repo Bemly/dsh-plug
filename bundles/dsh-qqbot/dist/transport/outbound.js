@@ -390,7 +390,7 @@ class OutboundRouter {
         // turn/end 复位 false → 攒的消息才批量入站。assistant/tool 事件=回合活跃。
         if (event.type === 'turn/end') {
             const hadInterject = (Number(record.interjectSeq) || 0) > 0;
-            const isAborted = event.data?.reason?.kind === 'aborted';
+            const isAborted = event.reason?.kind === 'aborted' || raw?.data?.reason?.kind === 'aborted';
             record.turnActive = false;
             // 插话计数随回合结束清零（2026-10-09）→ 下一回合的第一次插话又用完整提示
             record.interjectSeq = 0;
@@ -401,6 +401,7 @@ class OutboundRouter {
                 setTimeout(() => {
                     try {
                         if (ag.status === 'idle') {
+                            this.logger.info(`im-qqbot: [reply_gate+插话补唤醒] session=${record.sessionKey} 已唤醒处理中途插话`);
                             ag.followup({
                                 role: 'user',
                                 content: [{ type: 'text', text: '[系统提示] 上一轮思考期间有群友新发了插话，请查看上面的插话内容并决定是否回应。' }],

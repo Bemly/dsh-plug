@@ -109,6 +109,97 @@ export async function prefetchQuoteImages(quote, dataRoot, logger) {
     }
     return done;
 }
+/** 一次最多预取几张合并转发/正文内嵌图 */
+const MAX_CONTENT_IMAGES = 6;
+function detectImageExt(buf, contentType) {
+    const ct = String(contentType ?? '').toLowerCase();
+    if (ct.includes('png'))
+        return '.png';
+    if (ct.includes('gif'))
+        return '.gif';
+    if (ct.includes('webp'))
+        return '.webp';
+    if (ct.includes('bmp'))
+        return '.bmp';
+    if (ct.includes('jpeg') || ct.includes('jpg'))
+        return '.jpg';
+    // 魔数识别（QQ 群聊图片有时报 application/octet-stream）
+    if (buf.length >= 4) {
+        if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
+            return '.png';
+        if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)
+            return '.jpg';
+        if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38)
+            return '.gif';
+        if (buf.length >= 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP')
+            return '.webp';
+        if (buf[0] === 0x42 && buf[1] === 0x4d)
+            return '.bmp';
+    }
+    return '';
+}
+/**
+ * 预取消息正文（如合并转发 `[群聊的聊天记录]`）里附带的 QQ 多媒体图片 URL，
+ * 自动落盘到 `{dataRoot}/.qqbot/referenced/<sha1>.<ext>`，并把正文里的 `URL:https://...`
+ * 直接替换为本地路径，方便模型直接调用 `read_image` 查看，无需手动 curl。
+ */
+export async function prefetchContentImages(content, dataRoot, logger) {
+    if (typeof content !== 'string' || !dataRoot || !content.includes('multimedia.nt.qq.com.cn/download?'))
+        return content;
+    const re = /https:\/\/multimedia\.nt\.qq\.com\.cn\/download\?[^\s\]）)]+/g;
+    const urls = [];
+    let m;
+    while ((m = re.exec(content)) !== null) {
+        const u = m[0];
+        if (!urls.includes(u))
+            urls.push(u);
+    }
+    if (!urls.length)
+        return content;
+    try {
+        pruneOldReferenced(join(dataRoot, '.qqbot', 'referenced'));
+    }
+    catch { /* 清理失败不影响预取 */ }
+    let out = content;
+    let done = 0;
+    for (const url of urls) {
+        if (done >= MAX_CONTENT_IMAGES)
+            break;
+        let file = lookupImagePath(url);
+        if (!file || !existsSync(file)) {
+            try {
+                const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+                if (!res.ok) {
+                    logger?.debug?.(`[正文图片预取] HTTP ${res.status}: ${url.slice(0, 80)}`);
+                    continue;
+                }
+                const buf = Buffer.from(await res.arrayBuffer());
+                if (buf.length === 0 || buf.length > 12 * 1024 * 1024)
+                    continue;
+                const ext = detectImageExt(buf, res.headers.get('content-type'));
+                if (!ext)
+                    continue; // 非图片（如视频/文件）跳过
+                const dir = join(dataRoot, '.qqbot', 'referenced');
+                mkdirSync(dir, { recursive: true });
+                const sha1 = createHash('sha1').update(buf).digest('hex').slice(0, 12);
+                file = join(dir, sha1 + ext);
+                if (!existsSync(file))
+                    writeFileSync(file, buf);
+                rememberImagePath(url, file);
+                logger?.debug?.(`[正文图片预取] 已落盘 ${file} (${buf.length}B)`);
+            }
+            catch (e) {
+                logger?.debug?.(`[正文图片预取] 失败(忽略): ${e instanceof Error ? e.message : String(e)}`);
+                continue;
+            }
+        }
+        if (file) {
+            out = out.split(`URL:${url}`).join(`本地路径:${file}`).split(url).join(file);
+            done++;
+        }
+    }
+    return out;
+}
 /** 回收预取目录里的旧图片（超过 {@link KEEP_DAYS} 天；24 小时内最多扫一次） */
 function pruneOldReferenced(dir) {
     const now = Date.now();

@@ -6,7 +6,7 @@ import { buildCommandList } from '../commands/index.js';
 import { attachmentProcessor } from '../middleware/attachment.js';
 import { attributionLedger, historyRecorder } from '../middleware/attribution.js';
 import { mediaHistoryBuffer } from '../middleware/media-history.js';
-import { prefetchQuoteImages } from '../transport/quote-images.js';
+import { prefetchQuoteImages, prefetchContentImages } from '../transport/quote-images.js';
 import { stickerCapture } from '../middleware/sticker-capture.js';
 import { getHistoryStore, historyGroupKey } from '../features/history-store.js';
 import { loadExtensionCommands } from '../features/extension-store.js';
@@ -268,6 +268,12 @@ pluginCtx) {
             await prefetchQuoteImages(q, dataRootOf(config), logger);
         }
         catch { /* 预取失败不影响主链 */ }
+        try {
+            if (typeof ctx.message?.content === 'string' && ctx.message.content.includes('multimedia.nt.qq.com.cn/download?')) {
+                ctx.message.content = await prefetchContentImages(ctx.message.content, dataRootOf(config), logger);
+            }
+        }
+        catch { /* 合并转发图片预取失败不影响主链 */ }
         await next();
     });
     // 4. 群历史缓冲 — 放在门控之前，确保所有消息（含未 @bot）都计入上下文

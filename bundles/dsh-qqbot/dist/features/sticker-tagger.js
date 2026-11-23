@@ -9,7 +9,76 @@
  * ⚠️ 本地手改功能(fork 新增)。
  */
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { extname } from 'node:path';
+
+let hostVisionLlmGetter = null;
+let hostVisionProvider = 'kfc';
+let hostVisionModel = 'Qwen/Qwen3.6-27B-FP8';
+
+/** 由 im-qqbot 启动时注入宿主 ctx.llm，免密钥直接走宿主已配置的视觉模型 */
+export function setStickerVisionLlm(llmOrGetter, provider = 'kfc', model = 'Qwen/Qwen3.6-27B-FP8') {
+    hostVisionLlmGetter = typeof llmOrGetter === 'function' ? llmOrGetter : () => llmOrGetter;
+    if (provider)
+        hostVisionProvider = String(provider);
+    if (model)
+        hostVisionModel = String(model);
+}
+
+async function autoTagViaHostLlm(localPath, logger) {
+    const llm = typeof hostVisionLlmGetter === 'function' ? hostVisionLlmGetter() : null;
+    if (!llm || typeof llm.stream !== 'function')
+        return null;
+    try {
+        const ext = extname(localPath).toLowerCase();
+        const mimeMap = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.webp': 'image/webp',
+            '.gif': 'image/gif',
+        };
+        const mimeType = mimeMap[ext] || 'image/png';
+        const data = readFileSync(localPath).toString('base64');
+        const stream = llm.stream(hostVisionProvider, hostVisionModel, {
+            systemPrompt: '你是 QQ 群聊表情包自动打标助手，只按要求输出【标签】和【描述】两行。',
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'image', data, mimeType },
+                        { type: 'text', text: PROMPT },
+                    ],
+                },
+            ],
+        });
+        let text = '';
+        for await (const ev of stream) {
+            if (ev?.type === 'text-delta' && typeof ev.delta === 'string') {
+                text += ev.delta;
+            }
+            else if (ev?.type === 'message' && Array.isArray(ev.message?.content)) {
+                const joined = ev.message.content
+                    .filter((b) => b?.type === 'text' && typeof b.text === 'string')
+                    .map((b) => b.text)
+                    .join('');
+                if (joined)
+                    text = joined;
+            }
+        }
+        const summary = text.trim();
+        if (!summary)
+            return null;
+        const { tags, desc } = parseSummary(summary, {});
+        if (!desc && tags.length === 0)
+            return null;
+        return { tags, desc };
+    }
+    catch (err) {
+        logger?.debug?.(`[sticker-tagger] 宿主模型(${hostVisionProvider}/${hostVisionModel})打标失败: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+    }
+}
 const MODLENS_CANDIDATES = [
 // 公开版不内置任何机器绝对路径。用法: 配置 sticker.visionCli 命令模板(含 {img}), 或把本机视觉 CLI 路径加进候选数组。
 ];
@@ -52,6 +121,10 @@ export async function autoTagImage(localPath, visionCli, logger) {
         argv = splitArgs(templ.replaceAll('{img}', localPath));
     }
     else {
+        // 优先走宿主 ctx.llm（默认 kfc / Qwen/Qwen3.6-27B-FP8），免外部脚本与密钥
+        const hostRes = await autoTagViaHostLlm(localPath, logger);
+        if (hostRes)
+            return hostRes;
         const cli = resolveCli();
         if (!cli) {
             logger?.debug?.('[sticker-tagger] 无可用视觉CLI(config.visionCli 为空且未探测到), 跳过自动打标');
