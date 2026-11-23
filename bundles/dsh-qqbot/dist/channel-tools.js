@@ -1171,29 +1171,6 @@ export async function apply(ctx, opts) {
             return { ok: true, msg: `🗑️ 已删除定时任务 ${args.id}` };
         },
     });
-    // text_break: 专用"打断正文"工具(2026-09-05, 主人定) —— 零副作用、零查询、近零 token。
-    // 机制: 把回复正文拆成多个文本块、块间调用本工具, QQ 端就会把每块作为独立一条消息发出
-    // (工具调用 = 天然断点)。本工具不做事: 输入任意(留空即可), 返回空, 仅用于中断文本流。
-    // ⚠️ 数量不限制: 连发条数由「出站方式」控制(适配主动默认=同一条入站消息前5条被动回复、
-    //   第6条起自动转主动), 工具本身无 5 条限制; 5 条上限是旧「被动回复同一 msg」的 QQ 限制, 已由适配主动解决。
-    const textBreakTool = defineTool({
-        name: 'text_break',
-        description: '打断正文实现"逐条发送": 想逐字/逐句卖萌或把长话拆成多条连发时, 把内容拆成几个文本块, 每块之间调用一次本工具(参数随便填个占位值即可), 对方就会收到分割的多条消息。工具本身无任何副作用, 不会发东西。拆多少条都行, 没有 5 条限制(连发保护由出站方式自动处理: 前5条带引用、之后自动转独立消息, 不会被吞)。',
-        parameters: {
-            next: { type: 'string', required: true, description: '占位参数: 随便填一个值(如 "." 或下一段内容), 工具不读它, 只用于打断文本流' },
-        },
-        output: {
-            schema: {
-                type: 'object', additionalProperties: false,
-                properties: { ok: { type: 'boolean', required: true } },
-            },
-            // ⚠️ 2026-09-30 修: render 空文本 → 空 tool_result → DeepSeek 400 INVALID_REQUEST
-            render: () => [{ type: 'text', text: '·' }],
-        },
-        async execute() {
-            return { ok: true }; // 纯打断, 无实质结果
-        },
-    });
     // reply_gate: 回复闸门(实验, 2026-09-05, 主人设想: 让 AI"自主判定要不要回", 判定不吃瓜时由宿主硬终止回合,
     // 实现"真·静默吃瓜"。机制参考 dsh-task-control: agent.cancel({kind:'user'},{keepInbox:true}) 立即切断当前回合输出)。
     // ⚠️ 描述只讲"什么时候该用它"和两个分支的效果, 不给具体场景规则(写死规则会导致静默率过高)。
@@ -3014,7 +2991,6 @@ export async function apply(ctx, opts) {
     const toolDefs = [
         { name: 'send_media', tool: sendMediaTool },
         { name: 'recall_message', tool: recallTool },
-        { name: 'text_break', tool: textBreakTool },
         { name: 'quote_view', tool: quoteViewTool },
         { name: 'people_memo', tool: peopleMemoTool },
         // 无上下文模式·智能判断专用（全局开关 config.contextlessSmart 开启时才出现）

@@ -155,7 +155,11 @@ async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, reso
         segments: parseOutbound(part).map((segment) => {
             if (segment.type === 'media')
                 return segment;
-            const chunks = chunkMarkdownText(stripDirectives(segment.text), limit).filter((chunk) => chunk.trim());
+            const paragraphText = stripDirectives(segment.text).replace(/\r\n?/g, '\n');
+            const chunks = paragraphText
+                .split(/[ \t\u00a0\u3000]*\n(?:[ \t\u00a0\u3000]*\n)+[ \t\u00a0\u3000]*/)
+                .flatMap((paragraph) => chunkMarkdownText(paragraph, limit))
+                .filter((chunk) => chunk.trim());
             return { type: 'text', chunks };
         }),
     }));
