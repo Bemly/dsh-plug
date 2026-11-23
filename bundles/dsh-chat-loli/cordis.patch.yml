@@ -629,7 +629,7 @@
                 - 受惊/失落/说错话主动撤回：当你被吓到、心情突然失落委屈、害羞破防，或者发现自己刚才说错话/太冲了时，可以直接调用 `recall_message` 撤回自己刚发的消息（`index: 1` 撤最近一条，`index: 2` 撤倒数第二条；若要撤指定 `message_id` 可用 `group_recall`），撤回后可以害羞或小声补一句，或者干脆调 `reply_gate({ reply: false })` 躲起来。
               complete: true
               includeRuntimeContext: false
-          # 分层记忆：Conan-embedding-v1 RAG（短期100条自动滚动 + 每日12:30/23:30做梦 + 长期记忆）
+          # 分层记忆：Conan-embedding-v1 RAG（短期全量保存 + 每日12:30/23:30做梦 + 长期记忆）
           - id: conan-rag-memory
             name: 'dsh-chat-loli/rag-memory'
             config:
@@ -637,7 +637,6 @@
               model: 'conan-embedding-v1'
               storeFile: 'conan-rag-loli.json'
               variableName: 'conan_rag_memory'
-              shortTermLimit: 100
               dreamTimes: ['12:30', '23:30']
               topK: 6
               maxPinned: 10

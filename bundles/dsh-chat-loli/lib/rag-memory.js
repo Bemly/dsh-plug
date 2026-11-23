@@ -2,7 +2,7 @@
  * conan-rag-memory —— 基于本机 OpenVINO-OVMS + TencentBAC/Conan-embedding-v1 的分层 RAG 记忆插件。
  *
  * 记忆分层：
- * 1. 短期记忆（shortTerm）：插件监听 session/event 自动滚动保存最近 100 条消息（含本地文件路径），
+ * 1. 短期记忆（shortTerm）：插件监听 session/event 自动保存全部消息（含本地文件路径），
  *    无需模型手动操作，自动调用本机 OVMS 向量化。
  * 2. 定时做梦（dream）：插件内置定时器，每天按本机时间触发两次（默认 12:30 与 23:30），
  *    独立调用 ctx.llm 通读新增短期记忆，将重要事实/偏好/约定提炼升格到长期记忆。
@@ -20,7 +20,6 @@ export const DEFAULT_ENDPOINT = 'http://127.0.0.1:8765/v3/embeddings';
 export const DEFAULT_MODEL = 'conan-embedding-v1';
 export const DEFAULT_STORE_FILE = 'conan-rag-loli.json';
 export const DEFAULT_VARIABLE = 'conan_rag_memory';
-export const DEFAULT_SHORT_TERM_LIMIT = 100;
 export const DEFAULT_DREAM_TIMES = ['12:30', '23:30'];
 
 function resolveDshHome() {
@@ -344,7 +343,7 @@ function parseDreamJson(rawText) {
 
 function formatSummary(
   store,
-  { maxPinned = 10, maxRecent = 10, maxChars = 4000, shortTermLimit = DEFAULT_SHORT_TERM_LIMIT, dreamTimes = DEFAULT_DREAM_TIMES } = {}
+  { maxPinned = 10, maxRecent = 10, maxChars = 4000, dreamTimes = DEFAULT_DREAM_TIMES } = {}
 ) {
   const pinned = store.items.filter((x) => x.pinned).slice(-maxPinned);
   const pinnedIds = new Set(pinned.map((x) => x.id));
@@ -354,7 +353,7 @@ function formatSummary(
     ? store.dreamState.lastDreamAt.slice(0, 16).replace('T', ' ')
     : '尚未做梦';
   const lines = [
-    `RAG 记忆状态：长期记忆 ${store.items.length} 条｜短期滚动记忆上限 ${shortTermLimit} 条（插件自动记录，含本地文件路径）｜每日做梦时间：${dreamTimes.join('、')}（上次：${lastDream}）`,
+    `RAG 记忆状态：长期记忆 ${store.items.length} 条｜短期记忆 ${store.shortTerm.length} 条（全量保存，含本地文件路径）｜每日做梦时间：${dreamTimes.join('、')}（上次：${lastDream}）`,
   ];
   if (store.dreamState?.lastDreamError) {
     lines.push(`最近做梦未完成：${store.dreamState.lastDreamError}`);
@@ -402,10 +401,6 @@ export function apply(ctx, config = {}) {
   const maxPinned = typeof config.maxPinned === 'number' ? config.maxPinned : 10;
   const maxRecent = typeof config.maxRecent === 'number' ? config.maxRecent : 10;
   const maxChars = typeof config.maxChars === 'number' ? config.maxChars : 4000;
-  const shortTermLimit =
-    typeof config.shortTermLimit === 'number' && config.shortTermLimit > 0
-      ? Math.floor(config.shortTermLimit)
-      : DEFAULT_SHORT_TERM_LIMIT;
   const dreamTimes =
     Array.isArray(config.dreamTimes) && config.dreamTimes.length > 0
       ? config.dreamTimes.map((t) => String(t).trim()).filter((t) => /^\d{2}:\d{2}$/.test(t))
@@ -452,7 +447,7 @@ export function apply(ctx, config = {}) {
       const store = loadStore(storePath, model);
       const lastSeq = store.dreamState.lastProcessedShortSeq || 0;
       const pending = force
-        ? store.shortTerm.slice(-shortTermLimit)
+        ? store.shortTerm
         : store.shortTerm.filter((x) => (Number(x.seq) || 0) > lastSeq);
       inspected = pending.length;
 
@@ -596,13 +591,13 @@ export function apply(ctx, config = {}) {
     if (typeof ctx.systemPrompt?.variable === 'function') {
       return ctx.systemPrompt.variable(variableName, () => {
         const store = loadStore(storePath, model);
-        return formatSummary(store, { maxPinned, maxRecent, maxChars, shortTermLimit, dreamTimes });
+        return formatSummary(store, { maxPinned, maxRecent, maxChars, dreamTimes });
       });
     }
     return undefined;
   }, `conan-rag-memory.var(${variableName})`);
 
-  // 2. 自动监听会话消息，滚动保存前 100 条短期记忆（含本地文件路径）
+  // 2. 自动监听会话消息，全量保存短期记忆（含本地文件路径）
   ctx.effect(() => {
     return ctx.on('session/event', (_session, event) => {
       const extracted = extractEventMessage(event);
@@ -636,9 +631,6 @@ export function apply(ctx, config = {}) {
             embedding: vec,
             createdAt: new Date().toISOString(),
           });
-          if (store.shortTerm.length > shortTermLimit) {
-            store.shortTerm = store.shortTerm.slice(-shortTermLimit);
-          }
         }
         saveStore(storePath, store);
       }).catch(() => {});
@@ -672,7 +664,7 @@ export function apply(ctx, config = {}) {
     return ctx.tools.register({
       name: 'rag_memory_add',
       description:
-        '把重要事实、群友偏好、约定或事件写入 Conan RAG 长期记忆库（短期消息由插件自动滚动保存，此工具仅用于重要长期记忆）。',
+        '把重要事实、群友偏好、约定或事件写入 Conan RAG 长期记忆库（短期消息由插件全量自动保存，此工具仅用于重要长期记忆）。',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -750,7 +742,7 @@ export function apply(ctx, config = {}) {
     return ctx.tools.register({
       name: 'rag_memory_search',
       description:
-        '按语义检索 Conan RAG 记忆库（默认同时检索长期记忆与最近 100 条短期记忆，可用 scope 筛选）。',
+        '按语义检索 Conan RAG 记忆库（默认同时检索长期记忆与全部短期记忆，可用 scope 筛选）。',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -766,7 +758,7 @@ export function apply(ctx, config = {}) {
           scope: {
             type: 'string',
             enum: ['all', 'long', 'short'],
-            description: '检索范围：all=全部（默认），long=仅长期记忆，short=仅短期滚动记忆',
+            description: '检索范围：all=全部（默认），long=仅长期记忆，short=仅全量短期记忆',
           },
         },
         required: ['query'],
@@ -930,7 +922,7 @@ export function apply(ctx, config = {}) {
     return ctx.tools.register({
       name: 'rag_memory_dream',
       description:
-        '手动触发一次“做梦整理”，把短期滚动记忆中的重要信息提炼写入长期记忆（平时由插件每天中午 12:30 和晚上 23:30 自动执行，无需主动调用，除非主人明确要求立刻整理记忆）。',
+        '手动触发一次“做梦整理”，把全部短期记忆中的重要信息提炼写入长期记忆（平时由插件每天中午 12:30 和晚上 23:30 自动执行，无需主动调用，除非主人明确要求立刻整理记忆）。',
       parameters: {
         type: 'object',
         additionalProperties: false,
