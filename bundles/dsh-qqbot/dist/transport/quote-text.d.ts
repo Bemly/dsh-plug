@@ -1,0 +1,35 @@
+/**
+ * 剥掉 QQ 引用模板的壳，返回各层正文（**最外层在前**，即"最近被引用的那句话"排第一）。
+ * 不是模板串时，按行返回原文（保留原样，只 trim）。
+ */
+export declare function stripQqQuoteTemplate(s: string): string[];
+/**
+ * 从 QQ 表情标签里挖**图片线索**。
+ *
+ * 背景（2026-10-01 主人实测：「图片收藏进了表情里，依然是图片」）：
+ *   QQ 的「图片表情 / 收藏表情」在消息里只给一个 `<faceType=…,ext="base64">` 标签。
+ *   实测那条 ext = `eyJ0ZXh0IjoiIn0=` → `{"text":""}` —— **里面没有图**（QQ 官方文档也没定义 faceType，
+ *   SDK 同样只解 ext.text），所以光靠标签解析不出图；真正的出路是"那条消息入站时的附件"
+ *   （走本地台账回查，见 msg-content-cache.ts / quote-images.ts 的预取）。
+ *   但不同端/版本的 ext 里**可能**带 url 之类字段 —— 这里全部扫一遍，挖到就当真图片附件用。
+ */
+export declare function extractFaceImageUrls(text: string): string[];
+/**
+ * 引用块正文瘦身：剥模板壳 → 表情标签转可读 → 压平水平空白 → 限长。
+ *
+ * ⚠️ 2026-10-11 修（主人实测：引用一条多行长消息，AI 只看到首行）：
+ *   原来无条件取 `lines[0]`，本意是砍 QQ 的**嵌套引用链**（`[关联消息] --- 第1条 --- [消息内容] …`
+ *   全是"这句话又引用了谁"，又长又乱，主人原话「不止是排版乱的问题，这是内容就乱了」）。
+ *   但普通多行正文也被一起剁掉了 —— 那才是"他引用的内容"本身。现在分两种情况：
+ *     · 模板串   → 只取最外层那一句（原行为，防嵌套噪声进上下文）
+ *     · 普通文本 → 保留多行（限长仍交给调用方：当前消息走 trimQuoteBlock 的 60 字截断+缓存+提示）
+ *
+ * @param max 最大字数（默认 160；传 0 = 不限长）
+ */
+export declare function slimQuoteText(s: string, max?: number): string;
+/**
+ * 把整个 `[引]…[/引]` 块压成**一行**并限长（历史行用）。
+ * 附件行不参与截断（否则路径被切掉 = 白记）。
+ */
+export declare function slimQuoteBlockOneLine(block: string, max?: number): string;
+//# sourceMappingURL=quote-text.d.ts.map

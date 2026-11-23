@@ -1,0 +1,96 @@
+<!-- qqbot-ui: { "id": "demo", "slot": "dock", "title": "🔌 扩展示例", "order": 5 } -->
+<!--
+  扩展示例 · dock 卡片（slot=dock → 放 **数据根**）
+    {dataRoot}/.qqbot-extensions/ui/demo-dock/card.html
+
+  ★ 元信息里的 "id": "demo" 是关键 —— 目录叫 demo-dock，但 cosplay 成 extId=demo，
+    这样才能和 settings 那张卡共用同一份配置 id（文本1 在 profile、文本2 在数据根）。
+
+  dock 卡片的独特之处：qqbotExt.dock.* 能拿到**当前实例 + 当前会话**的真实数据。
+-->
+<div class="card">
+  <div class="hd"><span class="dot" id="dot"></span><span>🔌 扩展示例 · 本实例</span></div>
+
+  <div class="subtabs">
+    <button data-p="set" class="on">✏ 改文本2</button>
+    <button data-p="ctx">📊 会话数据</button>
+    <button data-p="store">📝 自有存储</button>
+    <button data-p="silent">💤 静默注入</button>
+    <button data-p="file">📄 读写文件</button>
+  </div>
+
+  <!-- 子标签 1：改文本2（数据根级，只影响这个机器人） -->
+  <div class="pane on" data-pane="set">
+    <div class="row"><span class="lbl">文本2（本实例）</span></div>
+    <div class="row"><input class="txt" id="t2" placeholder="填一段文字，例如 我是本机文本" /></div>
+    <div class="tip">
+      这里填的文字会出现在 <b>/扩展示例</b> 的输出里 —— 去群里敲一下就能看到：
+      <div class="code">/扩展示例  →  （文本1）（文本2）</div>
+      本页改的是 <b>文本2</b>（只影响当前这个机器人）；<b>文本1</b> 在「通用设置 → QQ机器人 → 扩展示例 · 全局」里改（所有机器人共用）。
+    </div>
+    <div class="acts">
+      <button class="btn" id="save2">保存到本实例</button>
+      <button class="btn ghost" id="reload2">重新读取</button>
+    </div>
+    <div class="row"><span class="val" id="st2"></span></div>
+  </div>
+
+  <!-- 子标签 2：展示 dock 能拿到的会话数据（这是 dock 独有能力的演示） -->
+  <div class="pane" data-pane="ctx">
+    <div class="row"><span class="hint">下面这些是 dock 卡片独有的能力 —— 能直接读到当前实例和会话的真实数据。<br />
+      「读 AI 最后正文」取的是她 <b>最后一次输出的那段话</b>（不是 QQ 消息流水）。</span></div>
+    <div class="acts">
+      <button class="btn" id="ctxBtn">读上下文</button>
+      <button class="btn ghost" id="hisBtn">读 AI 最后正文</button>
+    </div>
+    <pre class="info" id="info">点上面按钮看看</pre>
+  </div>
+
+  <!-- 子标签 3：自有存储（不用 ext-config 那套，走 hooks 注册的 /store 路由） -->
+  <div class="pane" data-pane="store">
+    <div class="row"><span class="hint">这块数据存在 <b>hooks/demo-store.mjs</b> 自己挑的文件里，通过 <code>api('/store')</code> 读写 —— 想换 SQLite 只改后端，卡片不用动。</span></div>
+    <div class="row"><span class="lbl">键</span><input class="txt" id="sk" placeholder="note" style="max-width:120px" /></div>
+    <div class="row"><input class="txt" id="sv" placeholder="值，例如 你好自有存储" /></div>
+    <div class="acts">
+      <button class="btn" id="storeSave">写入自有存储</button>
+      <button class="btn ghost" id="storeLoad">读取</button>
+    </div>
+    <pre class="info" id="storeInfo">点「读取」看看</pre>
+  </div>
+
+  <!-- 子标签 4：静默注入（往当前会话塞一条消息，但不唤醒 AI） -->
+  <div class="pane" data-pane="silent">
+    <div class="tip">
+      往当前会话塞一条消息，但 <b>不唤醒 AI</b> —— 它 <b>不会</b> 立刻回复，
+      而是等下一次被叫到时才会在上下文里看到这条。<br />
+      用途：给 AI 留个备忘、埋个线索，或者悄悄改一下它下一轮的认知。
+    </div>
+    <div class="row"><input class="txt" id="silentText" placeholder="要静默注入的文本，例如：记住主人的猫叫豆豆" /></div>
+    <div class="acts">
+      <button class="btn" id="silentBtn">静默注入</button>
+    </div>
+    <pre class="info" id="silentInfo">还没试过</pre>
+  </div>
+
+  <!-- 子标签 5：读写电脑上任意文本文件（走 fs.read / fs.write 白名单） -->
+  <div class="pane" data-pane="file">
+    <div class="tip">
+      读 / 写本机任意文本文件（<b>只放行文本类扩展名</b>：txt / md / json / log / yml / csv / ini / js / ts / html / css，单文件 ≤2MB）。<br />
+      保存时会在旁边留一份 <code>.bak-时间戳</code> 备份，改坏了能捞回来。
+    </div>
+    <div class="row">
+      <input class="txt" id="filePath" placeholder="D:\某个目录\note.txt" />
+      <button class="btn ghost" id="filePick" style="flex:none">选择文件…</button>
+      <button class="btn ghost" id="filePicker2" style="flex:none" title="用系统对话框选文件，选完直接可读可写（不需要路径）">系统选择器</button>
+      <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.json,.log,.yml,.yaml,.csv,.ini,.conf,.js,.ts,.mjs,.cjs,.html,.css" />
+    </div>
+    <div class="acts">
+      <button class="btn" id="fileRead">读取</button>
+      <button class="btn" id="fileSave">保存修改</button>
+    </div>
+    <div class="row">
+      <textarea class="txt" id="fileText" rows="8" placeholder="文件内容会显示在这里，可以直接改" style="width:100%;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:12px"></textarea>
+    </div>
+    <pre class="info" id="fileInfo">先填路径再点「读取」</pre>
+  </div>
+</div>

@@ -1,0 +1,64 @@
+/* 颜色全部走 --qqs-* 变量（带 fallback）——
+   宿主的亮/暗 token 定义在 body 上，自定义属性会穿透 Shadow DOM，
+   所以卡片跟着宿主主题自动切换，不用自己判断。 */
+/* 扩展示例 · 两处卡片共用的样式（Shadow DOM 内，不影响面板其他地方） */
+:host { display: block; }
+.card {
+  background: var(--qqs-card, #fff); border: 1px solid var(--qqs-border, #e6e8ec); border-radius: 12px;
+  padding: 10px 12px; font: 13px -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: var(--qqs-text, #1f2329); box-shadow: 0 1px 2px rgba(20,30,60,.05);
+}
+.hd { display: flex; align-items: center; gap: 6px; font-weight: 700; margin-bottom: 8px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #bbb; flex: none; }
+.dot.on { background: #16a34a; }
+.dot.err { background: #dc2626; }
+.row { display: flex; align-items: center; gap: 6px; margin: 6px 0; font-size: 12px; }
+.lbl { color: var(--qqs-text3, #6b7280); flex: none; }
+.val { color: var(--qqs-text, #1f2329); }
+.hint { color: var(--qqs-text3, #9aa0a8); font-size: 11px; line-height: 1.5; }
+.txt {
+  flex: 1; min-width: 160px; font: inherit; padding: 6px 9px;
+  border: 1px solid var(--qqs-border, #d0d5dd); border-radius: 8px; outline: none; color: var(--qqs-text, #1f2329);
+}
+.txt:focus { border-color: #7c6cf0; }
+.acts { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.btn {
+  font: inherit; font-size: 12px; padding: 5px 12px; border-radius: 8px;
+  border: 1px solid var(--qqs-primary-border, #d9c6ff); background: var(--qqs-primary-bg, #f1ecff); color: var(--qqs-primary-fg, #4a3a9f); cursor: pointer;
+}
+.btn:hover { background: #e9e1ff; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.ghost { background: var(--qqs-card, #fff); border-color: #d0d5dd; color: #4b5563; }
+
+/* dock 卡片专用：顶部一排子标签 */
+.subtabs { display: flex; gap: 4px; border-bottom: 1px solid #eee; margin-bottom: 10px; }
+.subtabs button {
+  font: inherit; font-size: 13px; padding: 6px 14px; border: none; background: none;
+  cursor: pointer; color: #666; border-bottom: 2px solid transparent;
+}
+.subtabs button.on { color: var(--qqs-primary-fg, #4a3a9f); font-weight: 700; border-bottom-color: #7c6cf0; }
+.pane { display: none; }
+.pane.on { display: block; }
+pre.info {
+  background: var(--qqs-card-solid, #f6f7f9); border: 1px solid var(--qqs-border, #e6e8ec); border-radius: 8px;
+  padding: 8px 10px; font-size: 11px; line-height: 1.6; max-height: 180px; overflow: auto;
+  white-space: pre-wrap; word-break: break-all; margin: 4px 0 0;
+}
+
+/* 说明块（2026-10-27）：告诉用户这两段文字会出现在 /扩展示例 里 */
+.tip {
+  background: var(--qqs-primary-bg, #f4f7ff); border: 1px solid var(--qqs-primary-border, #dbe6ff); border-radius: 9px;
+  padding: 8px 10px; font-size: 11.5px; line-height: 1.65; color: var(--qqs-text2, #3a4a6b); margin: 2px 0 10px;
+}
+.tip b { color: var(--qqs-primary-fg, #2b4a8f); }
+.code {
+  font-family: ui-monospace, Consolas, monospace; font-size: 11px;
+  background: var(--qqs-card, #fff); border: 1px dashed var(--qqs-primary-border, #c9d8f5); border-radius: 6px;
+  padding: 3px 7px; margin: 5px 0; color: var(--qqs-primary-fg, #1f3b73);
+}
+
+/* 作用域切换（2026-10-27）：全局 / 当前账号 */
+.seg { gap: 14px; flex-wrap: wrap; }
+.seg label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font-size: 12px; color: var(--qqs-text2, #374151); }
+.seg input[type="radio"] { margin: 0; cursor: pointer; }
+.seg b { color: var(--qqs-primary-fg, #2b4a8f); font-weight: 600; }

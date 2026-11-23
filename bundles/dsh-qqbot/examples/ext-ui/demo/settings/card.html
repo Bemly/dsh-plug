@@ -1,0 +1,38 @@
+<!-- qqbot-ui: { "id": "demo", "slot": "settings", "title": "扩展示例 · 全局", "order": 5 } -->
+<!--
+  扩展示例 · 设置页卡片（slot=settings → 放 profile 级目录）
+    {PROFILE_ROOT}/.qqbot-extensions/ui/demo-settings/card.html
+
+  ★ 2026-10-27：虽然是「全局 UI」，但能操作**当前选中账号**那份数据 ——
+    上面账号下拉框切到谁，getConfig('data') 就是谁。
+    这是主人明确要的能力：一个界面里既能改全局，又能改单实例。
+-->
+<div class="card">
+  <div class="hd"><span class="dot" id="dot"></span><span>⚙ 扩展示例</span></div>
+
+  <div class="tip">
+    这里填的文字会出现在 <b>/扩展示例</b> 的输出里 —— 去群里敲一下就能看到：
+    <div class="code">/扩展示例  →  （文本1）（文本2）</div>
+    <b>文本2</b> 在悬浮球的「🔌 扩展示例」里改（每个机器人各一份）。
+  </div>
+
+  <div class="row seg">
+    <label><input type="radio" name="dscope" value="profile" checked /> 改全局（所有机器人共用）</label>
+    <label><input type="radio" name="dscope" value="data" /> 改当前账号：<b id="acctName">—</b></label>
+  </div>
+
+  <div class="row">
+    <span class="lbl" id="fieldLbl">文本1（全局）</span>
+  </div>
+  <div class="row">
+    <input class="txt" id="t1" placeholder="填一段文字，例如 我是全局文本" />
+  </div>
+  <div class="row">
+    <span class="hint" id="scopeHint">改动影响所有机器人；改完去群里敲 /扩展示例 看效果。</span>
+  </div>
+  <div class="acts">
+    <button class="btn" id="save">保存</button>
+    <button class="btn ghost" id="load">重新读取</button>
+  </div>
+  <div class="row"><span class="val" id="st"></span></div>
+</div>
