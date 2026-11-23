@@ -5,7 +5,7 @@
  *   1) 同一个人 120 秒内第 3 条起，每条给烦躁值 +1；
  *   2) 烦躁值随时间线性衰减，20 分钟没有新增就归零（读取时按时间戳折算，无需定时器）；
  *   3) ≥2 分：注入状态提示，要求每句末尾自然带一个小吐槽尾巴（同一人 90 秒内最多注一次）；
- *   4) ≥4 分：注入"谁老是和你畅谈"点名提示（同一人 5 分钟最多一次）；
+ *   4) ≥4 分：提示"被同一个人单方面缠住了"，允许敷衍、抱怨一句（同一人 5 分钟最多一次）；
  *   5) ≥6 分（上限）：不搭理这个人 —— `ctx.decide({mention:'ignore'})`，不唤醒、消息照常进
  *      群历史，衰减回落到阈值以下自动恢复。
  *
@@ -26,11 +26,26 @@ const CONFIG = {
   decayMin: 20,            // 衰减归零时间
   perHit: 1,               // 每条超窗连发记多少分
   nagSuffixAt: 2,          // L1: 每句带小吐槽
-  nagNameAt: 4,            // L2: "谁老是和你畅谈"
+  fedUpAt: 4,              // L2: 被单方面缠住，允许敷衍/抱怨
   ignoreAt: 6,             // L3: 不搭理
   suffixCooldownSec: 90,   // L1 提示最小间隔（silentInto 计入破坏性熔断，必须节流）
-  nagNameCooldownMin: 5,   // L2 提示最小间隔
+  fedUpCooldownMin: 5,     // L2 提示最小间隔
   maxKeys: 400,            // 状态表最多留多少个人
+};
+
+// 注入给她看的状态提示（不进群、只是提示，别原样念出去）
+const WORDING = {
+  tail(who, count, score) {
+    return `【烦躁 ${score}/${CONFIG.ignoreAt}】${who} 这两分钟已经连着发了 ${count} 条，`
+      + `你被磨得有点不耐烦了。这轮回话时，每句末尾自然带一小截吐槽，两三个字就够`
+      + `（比如"又来了""耳朵都听起茧了""真是的"），别单独成句，也别每句都用同一个词。`;
+  },
+  fedUp(who, score) {
+    return `【被单方面缠住 ${score}/${CONFIG.ignoreAt}】这段时间一直是 ${who} 在找你说话，`
+      + `群里别人都没接茬，你已经听得有点烦、不太想理了。这轮可以敷衍一点：少说两句、`
+      + `只回一个"？"，或者干脆抱怨一句"你怎么一直在说呀"。但别真跟人生气，也别骂人。`;
+  },
+  footer: '（以上是插件给她的状态提示，不是群友说的话，也别原样念到群里。）',
 };
 
 let cache = null;
@@ -112,12 +127,16 @@ export async function onInbound(ctx, next) {
     e.hits.push({ t: now, v: inWindow >= CONFIG.freeHits ? CONFIG.perHit : 0 });
 
     const score = scoreOf(e, now);
+    const disp = Math.round(score * 10) / 10;
     const who = String(ctx?.senderName ?? '') || '一位群友';
     const mentioned = ctx?.platform?.mentioned === true;
     const msgs = [];
 
     if (score >= CONFIG.ignoreAt && !mentioned) {
-      ctx.decide?.({ mention: 'ignore', reason: `烦躁感 ${score}/${CONFIG.ignoreAt}: ${who} 短时间刷屏` });
+      ctx.decide?.({
+        mention: 'ignore',
+        reason: `${who} 短时间内连发 ${inWindow + 1} 条，她这轮先不接（烦躁 ${disp}/${CONFIG.ignoreAt}）`,
+      });
       ctx.logger?.debug?.(`[irritation] ignore ${who} score=${score}`);
       writeTable(path, table, now);
       return next();
@@ -125,15 +144,15 @@ export async function onInbound(ctx, next) {
 
     if (score >= CONFIG.nagSuffixAt && now - (e.lastSuffixAt ?? 0) > CONFIG.suffixCooldownSec * 1000) {
       e.lastSuffixAt = now;
-      msgs.push(`【烦躁度 ${score}/${CONFIG.ignoreAt}】${who} 这两分钟已经发第 ${inWindow + 1} 条了。你回的时候每句末尾自然带一个小吐槽尾巴(2~6字, 如"又来了""耳朵起茧了"), 别单独成句、别每句都同一个词。`);
+      msgs.push(WORDING.tail(who, inWindow + 1, disp));
     }
-    if (score >= CONFIG.nagNameAt && now - (e.lastNagAt ?? 0) > CONFIG.nagNameCooldownMin * 60_000) {
+    if (score >= CONFIG.fedUpAt && now - (e.lastNagAt ?? 0) > CONFIG.fedUpCooldownMin * 60_000) {
       e.lastNagAt = now;
-      msgs.push(`【谁老是和你畅谈】一直是 ${who} 在单方面找你说话, 别人都没接茬。你烦就少说两句, 或者只回一个"？"也行。`);
+      msgs.push(WORDING.fedUp(who, disp));
     }
     if (msgs.length) {
       ctx.silentInto?.({
-        text: `${msgs.join('\n')}\n（以上是 irritation-meter 扩展给她的状态提示, 不是群友说的话）`,
+        text: `${msgs.join('\n')}\n${WORDING.footer}`,
         reason: `irritation score=${score}`,
       });
       ctx.logger?.debug?.(`[irritation] 注入提示 ${who} score=${score}`);
