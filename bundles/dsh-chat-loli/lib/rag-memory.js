@@ -14,10 +14,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 export const name = 'conan-rag-memory';
-export const inject = {
-  required: ['systemPrompt', 'tools'],
-  optional: ['llm'],
-};
+export const inject = ['systemPrompt', 'tools'];
 
 export const DEFAULT_ENDPOINT = 'http://127.0.0.1:8765/v3/embeddings';
 export const DEFAULT_MODEL = 'conan-embedding-v1';
