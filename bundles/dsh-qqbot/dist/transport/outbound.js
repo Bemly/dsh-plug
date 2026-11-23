@@ -389,9 +389,28 @@ class OutboundRouter {
         // LLM 回合进行中(turnActive=true): debounce 见忙就把该会话新消息全攒着;
         // turn/end 复位 false → 攒的消息才批量入站。assistant/tool 事件=回合活跃。
         if (event.type === 'turn/end') {
+            const hadInterject = (Number(record.interjectSeq) || 0) > 0;
+            const isAborted = event.data?.reason?.kind === 'aborted';
             record.turnActive = false;
             // 插话计数随回合结束清零（2026-10-09）→ 下一回合的第一次插话又用完整提示
             record.interjectSeq = 0;
+            // ★ 2026-11-23 修复：若当前回合因 reply_gate 被 aborted，但中途已收到插话，
+            //   keepInbox:true 仅保留 inbox 不会自动唤醒，这里在 idle 后补一次 followup 唤醒处理插话。
+            if (isAborted && hadInterject && record.agent && typeof record.agent.followup === 'function') {
+                const ag = record.agent;
+                setTimeout(() => {
+                    try {
+                        if (ag.status === 'idle') {
+                            ag.followup({
+                                role: 'user',
+                                content: [{ type: 'text', text: '[系统提示] 上一轮思考期间有群友新发了插话，请查看上面的插话内容并决定是否回应。' }],
+                                source: { kind: 'user' },
+                            });
+                        }
+                    }
+                    catch { /* 唤醒失败不影响主流程 */ }
+                }, 150);
+            }
             // 好感度结算：整个回合算**一次**（放在 silent/nothink 早退之前 —— "照常思考"也包括潜水）
             const acc = this.turnAcc.get(record.sessionKey);
             if (acc !== undefined) {
