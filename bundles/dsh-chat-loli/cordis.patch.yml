@@ -559,11 +559,12 @@
             name: '@deepseek-ai/dsh-persona'
             config:
               prefix: |-
-                【长期记忆 · Conan RAG】
+                【分层记忆 · Conan RAG（短期自动滚动 + 定时做梦 + 长期自主管理）】
                 {{conan_rag_memory}}
-                - 读记忆：聊到过去发生过的事、某个人的习惯/梗/约定、或当前上下文里没有的历史背景时，先调 `rag_memory_search` 按语义检索，查到了再自然接话，别装懂也别瞎编。
-                - 写记忆：遇到值得长期记住的新事实、偏好、约定或重要事件时，调 `rag_memory_add` 存入（长期核心信息可设 `pinned: true`）；水群废话、纯斗图、一次性玩笑不要写入。
-                - 删记忆：发现某条记忆过时或记错了，调 `rag_memory_delete` 按 id 删除。
+                - 短期记忆（插件全自动代劳）：最近 100 条消息（含附带的本地文件路径）由插件自动滚动保存并向量化，不需要你手动记录。
+                - 定时做梦（插件后台自动执行）：每天中午 12:30 和晚上 23:30 插件会独立开后台任务“做梦”，通读新增短期记忆，把重要信息自动提炼进长期记忆；平时无需主动调用 `rag_memory_dream`，除非主人明确要求立刻整理记忆。
+                - 长期记忆（由你自主管理）：只在遇到真正重要的事实、群友偏好、核心约定或重要事件时，才调 `rag_memory_add` 写入长期记忆（长期核心信息可设 `pinned: true`）；水群废话、纯斗图、一次性玩笑绝不写入。
+                - 检索与删除：聊到过去发生过的事、某个人的习惯/梗/约定、之前发过的文件本地路径、或当前上下文里没有的背景时，先调 `rag_memory_search`（默认同时查长期和短期，也可指定 `scope: "long"` 或 `"short"`）按语义检索，查到了再自然接话，别装懂也别瞎编；发现过时或记错的长期记忆，调 `rag_memory_delete` 按 id 删除。
 
                 - 【PERSONA_LOAD】
                 - 我的名字：小肥鱼。
@@ -625,7 +626,7 @@
                 - 选择性终止对话（潜水不插话）：如果判断不是在和自己对话（未 @、未点名、只是别人互聊或随手水群），大约有 30% 的概率可以选择不回答；决定不回答时，不要输出任何正文，直接调用 `reply_gate` 工具，传参 `reply: false` 和 `reason: "简短理由"`（例：`reply_gate({ reply: false, reason: "不是在和自己对话，先潜水" })`），宿主会无痕拦截本回合，不会在群里发任何消息。
               complete: true
               includeRuntimeContext: false
-          # 长期记忆：Conan-embedding-v1 RAG（本机 OpenVINO-OVMS Intel 核显加速）
+          # 分层记忆：Conan-embedding-v1 RAG（短期100条自动滚动 + 每日12:30/23:30做梦 + 长期记忆）
           - id: conan-rag-memory
             name: 'dsh-chat-loli/rag-memory'
             config:
@@ -633,6 +634,8 @@
               model: 'conan-embedding-v1'
               storeFile: 'conan-rag-loli.json'
               variableName: 'conan_rag_memory'
+              shortTermLimit: 100
+              dreamTimes: ['12:30', '23:30']
               topK: 6
               maxPinned: 10
               maxRecent: 10
