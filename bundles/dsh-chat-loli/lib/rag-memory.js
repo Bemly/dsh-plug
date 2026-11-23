@@ -416,10 +416,12 @@ export function apply(ctx, config = {}) {
   // 串行写队列，防止并发读写丢数据
   let writeChain = Promise.resolve();
   const enqueueWrite = (fn) => {
-    writeChain = writeChain.then(fn, fn).catch((err) => {
+    const queued = writeChain.then(fn, fn);
+    writeChain = queued;
+    void queued.catch((err) => {
       console.warn(`[conan-rag-memory] write queue error: ${err?.message || err}`);
     });
-    return writeChain;
+    return queued;
   };
 
   let dreaming = false;
@@ -446,6 +448,7 @@ export function apply(ctx, config = {}) {
     let inspected = 0;
     dreaming = true;
     try {
+      await writeChain;
       const store = loadStore(storePath, model);
       const lastSeq = store.dreamState.lastProcessedShortSeq || 0;
       const pending = force
@@ -640,13 +643,14 @@ export function apply(ctx, config = {}) {
           }
         }
         saveStore(storePath, store);
-      });
+      }).catch(() => {});
     });
   }, 'conan-rag-memory.short-term-capture');
 
   // 3. 定时做梦调度器（每天中午与晚上各一次，按本机系统时间触发）
   ctx.effect(() => {
-    const timer = setInterval(() => {
+    const tick = async () => {
+      await writeChain;
       const { dateStr, hhmm } = getLocalDateAndHHMM(new Date());
       const store = loadStore(storePath, model);
       const dueSlots = dreamTimes
@@ -654,7 +658,10 @@ export function apply(ctx, config = {}) {
         .sort();
       if (dueSlots.length === 0) return;
       const slotKey = `${dateStr}@${dueSlots[dueSlots.length - 1]}`;
-      void runDream({ force: false, slotKey }).catch((err) => {
+      await runDream({ force: false, slotKey });
+    };
+    const timer = setInterval(() => {
+      void tick().catch((err) => {
         console.warn(`[conan-rag-memory] scheduled dream failed: ${err?.message || err}`);
       });
     }, 30_000);
