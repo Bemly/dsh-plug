@@ -527,9 +527,7 @@ export function apply(ctx, config = {}) {
         });
         for await (const chunk of stream) {
           if (!chunk || typeof chunk !== 'object') continue;
-          if (chunk.type === 'text-delta' && typeof chunk.delta === 'string') {
-            rawOutput += chunk.delta;
-          } else if (chunk.type === 'text' && typeof chunk.text === 'string') {
+          if (chunk.type === 'text-delta' && typeof chunk.text === 'string') {
             rawOutput += chunk.text;
           }
         }
