@@ -126,6 +126,23 @@ team，成员自动进）→ **Packages** → 输入包名 → **Add Existing Pa
 类操作不再接受它）、`npm trust` 在没有账号 2FA 时 403。所以别在 CLI 上反复
 试权限，直接告诉用户去点哪。
 
+## Discover 为什么搜不到（2026-11-23 源码定位）
+
+发现页里有两个完全不同的来源：
+
+- **"npm 上的插件"是实时 npm search + 本地硬过滤**（`internal/plugin/market.go:560-604`）：
+  它发 `q + " opencode"` 和 `keywords:pi-package + q`。OpenCode 分支要求
+  **name+keywords 里同时出现 `opencode` 和 `auth|plugin|provider`**；Pi 分支要求
+  **keyword `pi-package` + `auth|provider`**。只看 `magpie.hooks`、summary、icon
+  都没用，这个过滤器根本不看它们。所以本包的 keywords 必须有 `opencode`
+  （`magpie-plugin` 已满足第二项），否则名字搜得再准也会被丢。
+- **普通 Discover 卡片走 `magpie-community/plugins` 的 `registry.json`**，不是
+  实时 npm search。`kind` 合法值是 `middleware, hooks, agent, tools, page`，本包
+  应登记 `kind: "hooks"`（卡片显示"请求钩子"）；不加这一条就只能出现在上面
+  那个 npm 分区，而 npm 分区的卡片会把它猜成 Provider。
+- GitHub 自动发现另读**仓库根目录的 package.json**并要求仓库 topic
+  `magpie-plugin`；本包在 `magpie/` 子目录，所以那条路也命中不了。
+
 ## 设计红线：不得引入删除
 
 本插件是**审计留痕**，归档只追加。任何轮转、保留期、总量上限、"清理旧文件"
