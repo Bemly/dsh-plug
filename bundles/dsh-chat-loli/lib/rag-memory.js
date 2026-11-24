@@ -353,7 +353,7 @@ function formatSummary(
     ? store.dreamState.lastDreamAt.slice(0, 16).replace('T', ' ')
     : '尚未做梦';
   const lines = [
-    `RAG 记忆状态：长期记忆 ${store.items.length} 条｜短期记忆 ${store.shortTerm.length} 条（全量保存，含本地文件路径）｜每日做梦时间：${dreamTimes.join('、')}（上次：${lastDream}）`,
+    `RAG 记忆状态：长期记忆 ${store.items.length} 条｜短期记忆：全量保存（含本地文件路径）｜每日做梦时间：${dreamTimes.join('、')}（上次：${lastDream}）`,
   ];
   if (store.dreamState?.lastDreamError) {
     lines.push(`最近做梦未完成：${store.dreamState.lastDreamError}`);
