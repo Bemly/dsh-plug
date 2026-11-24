@@ -1,19 +1,56 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { shouldDrainInboxAfterAbort } from '../dist/transport/wake-policy.js';
+import { selectPendingWake, wakePendingAfterGate } from '../dist/transport/wake-policy.js';
 
-test('drains unseen inbox messages after reply_gate abort', () => {
-    assert.equal(shouldDrainInboxAfterAbort(true, 4, true), true);
+test('returns null when inbox is empty', () => {
+    assert.equal(selectPendingWake([], []), null);
 });
 
-test('does not open an empty turn when inbox is empty', () => {
-    assert.equal(shouldDrainInboxAfterAbort(true, 0, true), false);
+test('selects the last next-step message', () => {
+    const first = { id: 'step-1' };
+    const last = { id: 'step-2' };
+    assert.equal(selectPendingWake([first, last], []), last);
 });
 
-test('does not wake after a normal turn end', () => {
-    assert.equal(shouldDrainInboxAfterAbort(false, 4, true), false);
+test('selects the last next-turn message', () => {
+    const first = { id: 'turn-1' };
+    const last = { id: 'turn-2' };
+    assert.equal(selectPendingWake([], [first, last]), last);
 });
 
-test('does not wake without followup capability', () => {
-    assert.equal(shouldDrainInboxAfterAbort(true, 4, false), false);
+test('preserves normal consumption order across both queues', () => {
+    const step = { id: 'step-1' };
+    const turn = { id: 'turn-1' };
+    assert.equal(selectPendingWake([step], [turn]), turn);
+});
+
+test('cancels silently without opening an empty turn', () => {
+    const calls = [];
+    const agent = {
+        cancel: (...args) => calls.push(['cancel', ...args]),
+        followup: () => calls.push(['followup']),
+        inbox: { nextStep: [], nextTurn: [], remove: () => false },
+    };
+    assert.equal(wakePendingAfterGate(agent), false);
+    assert.deepEqual(calls, [['cancel', { kind: 'user' }, { keepInbox: true }]]);
+});
+
+test('re-enqueues an existing pending message after cancel', () => {
+    const calls = [];
+    const pending = { id: 'pending-1', role: 'user', content: [] };
+    const agent = {
+        cancel: (...args) => calls.push(['cancel', ...args]),
+        followup: (message) => calls.push(['followup', message]),
+        inbox: {
+            nextStep: [pending],
+            nextTurn: [],
+            remove: (id) => { calls.push(['remove', id]); return true; },
+        },
+    };
+    assert.equal(wakePendingAfterGate(agent), true);
+    assert.deepEqual(calls, [
+        ['cancel', { kind: 'user' }, { keepInbox: true }],
+        ['remove', 'pending-1'],
+        ['followup', pending],
+    ]);
 });

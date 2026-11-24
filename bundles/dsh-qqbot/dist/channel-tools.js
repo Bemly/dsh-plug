@@ -26,6 +26,7 @@ import { makeExtCaps } from './features/ext-capabilities.js';
 import { verifyHuman, groupRegistryPath } from './api/group-admin.js';
 import { readGroupMembers } from './features/chat-ledger.js';
 import { readMsgHistory, latestMsgHistory, historyDebug, latestGroupId } from './features/msg-history.js';
+import { wakePendingAfterGate } from './transport/wake-policy.js';
 import * as broadcastQueue from './features/broadcast.js';
 import { wakeSessionAgent, safeAppendUserMessage } from './features/group-hub.js';
 import { managersOf, findManagerByPeer, findManagerBySessionId } from './features/session-registry.js';
@@ -1181,7 +1182,7 @@ export async function apply(ctx, opts) {
         //   说明"每轮都要调用"既做不到、也不必要；真正必须的是**每轮都要判断**。
         //   ⇒ 描述改成「判断要回就直接回、不用调；判断不该说话才调用」，顺带消掉 issue #28 的结构问题：
         //     回复路径上不再多一条工具回执，上下文末尾仍是群友那句话。
-        description: '回复闸门（**只在你不回复时**才调用）: 每轮先自己判断"这一轮该不该说话"——判断要回，就**直接回复**，不要调用本工具; 判断这一轮不该说话(没@你、话题与你无关、没必要插嘴)，就调用它传 reply:false，本回合立即静默终止，你不会再输出任何内容(这条消息就像没发生过)。默认行为是"正常回复"，所以不调用它 = 照常说话。' +
+        description: '回复闸门（**只在你不回复时**才调用）: 每轮先自己判断"这一轮该不该说话"——判断要回，就**直接回复**，不要调用本工具; 判断这一轮不该说话(没@你、话题与你无关、没必要插嘴)，就调用它传 reply:false，本回合立即静默终止，你不会再输出任何内容(这条消息就像没发生过)。已排队的后续消息会由系统继续处理，不需要重试。默认行为是"正常回复"，所以不调用它 = 照常说话。' +
             '\n✅ **收到 reply:false 后，你会看到一条 `tool call aborted` 之类的"报错" —— 那正是「静默成功」本身**（本工具就是靠中断输出实现的，设计如此），不是工具坏了、也不是调用失败。看到它请直接收手，什么都不用做、也不用重试。' +
             '\n⛔ **不要为了"想安静"去动别的开关**（例如把出站模式切成 silent/静默）：那会影响**后续所有回合**，而你要的只是"这一轮别说话"。要静默，只走本工具。' +
             '\n⚠️ 传 reply:false 后**不要再调用任何工具**(包括记笔记、记喜好、发表情包): 本回合已经关闭, 那些调用会被直接中止 —— 想记录的话, 留到下一次开口的回合里做。',
@@ -1211,7 +1212,7 @@ export async function apply(ctx, opts) {
                 try {
                     const agent = exec.agent;
                     if (agent && typeof agent.cancel === 'function') {
-                        agent.cancel({ kind: 'user' }, { keepInbox: true });
+                        wakePendingAfterGate(agent);
                     }
                 }
                 catch {
