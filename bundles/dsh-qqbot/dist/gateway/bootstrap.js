@@ -5,6 +5,7 @@ import { FULL_INTENTS } from '@tencent-connect/qqbot-nodejs/protocol';
 import { SessionManager } from '../session/index.js';
 import { handleInbound, createOutboundHandler } from '../transport/index.js';
 import { parseStreamFrame } from '../transport/events.js';
+import { isUpstreamAuthError } from '../transport/upstream-error-filter.js';
 import { setMaterialTargetFactory, rewriteLocalMarkdownImages, lastMediaRewrite } from '../features/md-media-rewrite.js';
 import { resolveAutoRecall } from '../features/auto-recall.js';
 import { registerOutboundOwner } from '../features/ext-outbound.js';
@@ -540,6 +541,11 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
         sendMarkdown: async (target, content, groupId) => {
             try {
                 let rawText = String(content || '');
+                if (isUpstreamAuthError(rawText)) {
+                    logger.warn('im-qqbot: 已拦截上游 Google 401 认证错误，未发送到 QQ');
+                    diagWrite('qqbot-send-diag', `[${new Date().toISOString()}] blocked upstream auth error scope=${target.scope} target=${String(target.targetId ?? '').slice(0, 12)}…`);
+                    return undefined;
+                }
                 // 2026-10-21: markdown 通道也要自动传本地图 ——
                 //   扩展工具 send_md / 卡片 / sendText 都直接走这个 sender.sendMarkdown，
                 //   绕过了 OutboundRouter.send() 里的那次重写，所以这里必须再来一次。
