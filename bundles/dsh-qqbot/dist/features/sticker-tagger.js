@@ -8,26 +8,49 @@
  *
  * ⚠️ 本地手改功能(fork 新增)。
  */
-import { execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { execFile, execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname } from 'node:path';
 
-let hostVisionLlmGetter = null;
-let hostVisionProvider = 'kfc';
+let hostVisionBaseUrl = 'https://ai.bemly.moe';
+let hostVisionApiKeyEnv = 'KFC_API_KEY';
 let hostVisionModel = 'Qwen/Qwen3.6-27B-FP8';
 
-/** 由 im-qqbot 启动时注入宿主 ctx.llm，免密钥直接走宿主已配置的视觉模型 */
-export function setStickerVisionLlm(llmOrGetter, provider = 'kfc', model = 'Qwen/Qwen3.6-27B-FP8') {
-    hostVisionLlmGetter = typeof llmOrGetter === 'function' ? llmOrGetter : () => llmOrGetter;
-    if (provider)
-        hostVisionProvider = String(provider);
+function resolveVisionApiKey() {
+    if (process.env[hostVisionApiKeyEnv])
+        return process.env[hostVisionApiKeyEnv];
+    const candidates = [
+        '/vol1/@apphome/fn-deepseek-harness/.credentials.yaml',
+        '/vol1/@apphome/fn-deepseek-harness/profiles/web/.credentials.yaml',
+        `${process.env.HOME || ''}/.credentials.yaml`,
+    ];
+    for (const p of candidates) {
+        try {
+            if (!p || !existsSync(p))
+                continue;
+            const raw = readFileSync(p, 'utf8');
+            const m = raw.match(new RegExp(`(?:^|\\n)\\s*${hostVisionApiKeyEnv}\\s*:\\s*["']?([^\\s"'\r\n]+)["']?`));
+            if (m?.[1])
+                return m[1].trim();
+        }
+        catch { /* ignore */ }
+    }
+    return '';
+}
+
+/** 由 im-qqbot 启动时配置视觉模型参数（默认走宿主 kfc: https://ai.bemly.moe + KFC_API_KEY） */
+export function setStickerVisionLlm(_llmOrGetter, providerOrBaseUrl = 'https://ai.bemly.moe', model = 'Qwen/Qwen3.6-27B-FP8') {
+    if (providerOrBaseUrl && /^https?:\/\//i.test(String(providerOrBaseUrl))) {
+        hostVisionBaseUrl = String(providerOrBaseUrl).replace(/\/+$/, '');
+    }
     if (model)
         hostVisionModel = String(model);
 }
 
 async function autoTagViaHostLlm(localPath, logger) {
-    const llm = typeof hostVisionLlmGetter === 'function' ? hostVisionLlmGetter() : null;
-    if (!llm || typeof llm.stream !== 'function')
+    const apiKey = resolveVisionApiKey();
+    const baseUrl = hostVisionBaseUrl.replace(/\/+$/, '');
+    if (!baseUrl)
         return null;
     try {
         const ext = extname(localPath).toLowerCase();
@@ -38,35 +61,67 @@ async function autoTagViaHostLlm(localPath, logger) {
             '.webp': 'image/webp',
             '.gif': 'image/gif',
         };
-        const mimeType = mimeMap[ext] || 'image/png';
-        const data = readFileSync(localPath).toString('base64');
-        const stream = llm.stream(hostVisionProvider, hostVisionModel, {
-            systemPrompt: '你是 QQ 群聊表情包自动打标助手，只按要求输出【标签】和【描述】两行。',
-            messages: [
-                {
-                    role: 'user',
-                    content: [
-                        { type: 'image', data, mimeType },
-                        { type: 'text', text: PROMPT },
-                    ],
-                },
-            ],
-        });
-        let text = '';
-        for await (const ev of stream) {
-            if (ev?.type === 'text-delta' && typeof ev.delta === 'string') {
-                text += ev.delta;
+        let mimeType = mimeMap[ext] || 'image/png';
+        let buf = readFileSync(localPath);
+        // 大图(>350KB)或动图(gif)先用 ffmpeg 缩成首帧 ≤512px JPEG，避免触发网关 HTTP 413
+        if (buf.length > 350 * 1024 || ext === '.gif') {
+            try {
+                const compressed = execFileSync('ffmpeg', [
+                    '-v', 'error',
+                    '-i', localPath,
+                    '-frames:v', '1',
+                    '-vf', "scale='min(512,iw)':-2",
+                    '-f', 'image2pipe',
+                    '-vcodec', 'mjpeg',
+                    '-q:v', '6',
+                    'pipe:1',
+                ], { timeout: 10000, maxBuffer: 5 * 1024 * 1024 });
+                if (compressed && compressed.length > 0 && compressed.length < buf.length) {
+                    buf = compressed;
+                    mimeType = 'image/jpeg';
+                }
             }
-            else if (ev?.type === 'message' && Array.isArray(ev.message?.content)) {
-                const joined = ev.message.content
-                    .filter((b) => b?.type === 'text' && typeof b.text === 'string')
-                    .map((b) => b.text)
-                    .join('');
-                if (joined)
-                    text = joined;
-            }
+            catch { /* 压缩失败则回退原图 */ }
         }
-        const summary = text.trim();
+        const data = buf.toString('base64');
+        const headers = { 'Content-Type': 'application/json' };
+        if (apiKey)
+            headers['Authorization'] = `Bearer ${apiKey}`;
+        const endpoint = baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
+        const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                model: hostVisionModel,
+                max_tokens: 256,
+                messages: [
+                    {
+                        role: 'system',
+                        content: '你是 QQ 群聊表情包自动打标助手，只按要求输出【标签】和【描述】两行。',
+                    },
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${data}` } },
+                            { type: 'text', text: PROMPT },
+                        ],
+                    },
+                ],
+            }),
+            signal: AbortSignal.timeout(45000),
+        });
+        if (!resp.ok) {
+            const errTxt = await resp.text().catch(() => '');
+            logger?.warn?.(`[sticker-tagger] 视觉接口 HTTP ${resp.status}: ${errTxt.slice(0, 160)}`);
+            return null;
+        }
+        const json = await resp.json();
+        const content = json?.choices?.[0]?.message?.content;
+        const summary = (typeof content === 'string'
+            ? content
+            : Array.isArray(content)
+                ? content.map((b) => (typeof b?.text === 'string' ? b.text : '')).join('')
+                : '').trim();
         if (!summary)
             return null;
         const { tags, desc } = parseSummary(summary, {});
@@ -75,7 +130,7 @@ async function autoTagViaHostLlm(localPath, logger) {
         return { tags, desc };
     }
     catch (err) {
-        logger?.debug?.(`[sticker-tagger] 宿主模型(${hostVisionProvider}/${hostVisionModel})打标失败: ${err instanceof Error ? err.message : String(err)}`);
+        logger?.warn?.(`[sticker-tagger] 视觉模型(${hostVisionModel})打标失败: ${err instanceof Error ? err.message : String(err)}`);
         return null;
     }
 }
