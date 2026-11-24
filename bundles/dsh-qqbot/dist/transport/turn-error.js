@@ -1,3 +1,4 @@
+import { isGoogleInputImagePolicyError } from './google-image-policy.js';
 /**
  * turn-error.ts — 回合异常提示的策略化（issue #73）
  *
@@ -36,6 +37,7 @@ export const FRIENDLY_TURN_ERROR = '⚠️ 这轮卡住了，再说一次试试~
  * @returns `null` = 不发；string = 发这个
  */
 export function resolveTurnErrorMessage(cfg, code, message) {
+    if (isGoogleInputImagePolicyError(message)) return null;
     const mode = String(cfg?.turnErrorMode ?? 'notify').trim().toLowerCase();
     if (mode === 'silent')
         return null;

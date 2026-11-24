@@ -35,6 +35,7 @@ import { botAvatarMarkdown } from '../features/bot-avatar.js';
 import { stripOutboundArtifacts } from './strip-artifacts.js';
 import { replaceFacePlaceholders } from './face-placeholder.js';
 import { resolveTurnErrorMessage } from './turn-error.js';
+import { isGoogleInputImagePolicyError, findGoogleImageOffloadTarget } from './google-image-policy.js';
 /**
  * 「正文被平台判违规」已经告知过 AI 的回合标记（2026-11-07 主人要的功能）。
  * 键＝SessionRecord 对象，值＝该回合的 turnStartAt；同一回合只提醒一次，免得连发刷屏。
@@ -90,7 +91,7 @@ function outboundExtCaps(record) {
         },
     };
 }
-class OutboundRouter {
+export class OutboundRouter {
     manager;
     bot;
     config;
@@ -102,6 +103,7 @@ class OutboundRouter {
     streamAttempt = new Map();
     /** 本回合是否产出过正文增量（turn/end 判断"有没有正文"用） */
     streamSawText = new Set();
+    imagePolicyRecovery = new WeakMap();
     /**
      * 消费 `agent/assistant-stream` 的瞬态帧（2026-10-20 对齐上游 c8b9158）。
      * · attempt-start：新 attempt → 丢掉上一 attempt 已流出的内容（重试不该出第二条）
@@ -264,7 +266,40 @@ class OutboundRouter {
             : replaceFacePlaceholders(text, dataRootOf(this.config)); // 默认 → 彩蛋：换成真表情
         return stripOutboundArtifacts(withFaces, this.config);
     }
+    recoverGoogleInputImagePolicy(record) {
+        const agent = record?.agent;
+        const session = agent?.session;
+        if (!agent || typeof agent.followup !== 'function' || !session) return false;
+        const target = findGoogleImageOffloadTarget(session);
+        if (!target) {
+            this.logger.debug(`im-qqbot: 图片策略错误无可移除输入 session=${record.sessionKey}`);
+            return false;
+        }
+        let attempted = this.imagePolicyRecovery.get(record);
+        if (!attempted) {
+            attempted = new Set();
+            this.imagePolicyRecovery.set(record, attempted);
+        }
+        if (attempted.has(target.seq)) return false;
+        attempted.add(target.seq);
+        setTimeout(() => {
+            try {
+                session.append('image/offload', { targets: [target] });
+                agent.followup(createUserMessage({
+                    content: [{ type: 'text', text: '[系统恢复] 上一条输入图片触发上游图片使用政策，已从模型输入中移除。请只根据文字和剩余上下文继续回复，不要复述本提示。' }],
+                    source: { kind: 'user' },
+                }));
+                record.lastActivity = Date.now();
+                this.logger.info(`im-qqbot: 图片策略错误已静默并重试 session=${record.sessionKey} seq=${target.seq}`);
+            }
+            catch (err) {
+                this.logger.warn(`im-qqbot: 图片策略恢复失败(仍保持静默) session=${record.sessionKey}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }, 0);
+        return true;
+    }
     noteGenerated(sessionKey, msgId, text) {
+        if (isGoogleInputImagePolicyError(text)) return;
         // ★ 2026-11-19 issue #72：**记账时就清洗**，因为 `st.last` 并不只用于统计 ——
         //   `maybeResendLastBlock()` 会拿它**再发一次**（passive 模式下第 6 块之后补发最后一块），
         //   还会交给出站扩展（`runOutboundTurnEnd(st.last, …)`）。
@@ -540,14 +575,6 @@ class OutboundRouter {
     }
     /** 完整 assistant 消息：有流式 buffer 则 flush，否则直接发送文本块 */
     onMessage(sessionId, record, event) {
-        const buffer = this.buffers.get(sessionId);
-        if (buffer !== undefined && buffer.text.trim()) {
-            // 记账放**生成侧**(不看发送成败): 这块正文已经产生了, 就该入账
-            this.noteGenerated(record.sessionKey, record.replyTarget.msgId ?? '', buffer.text);
-            void this.trackSend(record, buffer.flush());
-            this.buffers.delete(sessionId);
-            return;
-        }
         const textParts = [];
         for (const block of event.content) {
             if (block.type === 'text' && block.text)
@@ -556,6 +583,23 @@ class OutboundRouter {
         const fullText = textParts.join('\n');
         if (!fullText.trim())
             return;
+        if (isGoogleInputImagePolicyError(fullText)) {
+            const buffer = this.buffers.get(sessionId);
+            if (buffer !== undefined) {
+                buffer.cancel();
+                this.buffers.delete(sessionId);
+            }
+            void this.trackSend(record, Promise.resolve(this.recoverGoogleInputImagePolicy(record)));
+            return;
+        }
+        const buffer = this.buffers.get(sessionId);
+        if (buffer !== undefined && buffer.text.trim()) {
+            // 记账放**生成侧**(不看发送成败): 这块正文已经产生了, 就该入账
+            this.noteGenerated(record.sessionKey, record.replyTarget.msgId ?? '', buffer.text);
+            void this.trackSend(record, buffer.flush());
+            this.buffers.delete(sessionId);
+            return;
+        }
         this.noteGenerated(record.sessionKey, record.replyTarget.msgId ?? '', fullText);
         void this.trackSend(record, this.send(record, fullText, 'sendMarkdown', 'assistant/message'));
         this.buffers.delete(sessionId);
@@ -750,6 +794,10 @@ class OutboundRouter {
     /** 统一发送：逐条自适应目标(适配主动) + 富媒体感知分块；媒体指令([MEDIA:..]/[RECALL])被剔除，失败降级记录 */
     async send(_record, text, tag, source) {
         try {
+            if (source === 'assistant/message' && isGoogleInputImagePolicyError(text)) {
+                await this.recoverGoogleInputImagePolicy(_record);
+                return;
+            }
             // ★★ 2026-11-05（主人定）：**web 回合静默**
             //   设置项 `webTurnSilent` 勾上后：不是由 QQ 入站触发的回合（`turnOrigin !== 'qq'`，
             //   即用户是在 DSH 的 web/桌面界面里打的字），它的**正文块不发到 QQ**。
