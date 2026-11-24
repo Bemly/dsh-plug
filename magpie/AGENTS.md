@@ -140,6 +140,11 @@ team，成员自动进）→ **Packages** → 输入包名 → **Add Existing Pa
   实时 npm search。`kind` 合法值是 `middleware, hooks, agent, tools, page`，本包
   应登记 `kind: "hooks"`（卡片显示"请求钩子"）；不加这一条就只能出现在上面
   那个 npm 分区，而 npm 分区的卡片会把它猜成 Provider。
+  **`opencode` 关键词只是必要条件，不是充分条件**：npm 综合搜索把本包排在
+  第 33 位（2026-11-24 实测，周下载 253），而 magpie 的 `searchNPM` 固定
+  `size=30`（`market.go:609`），所以照样被截掉。加关键词期间曾短暂排到第 29，
+  随后稳定回到 33；别把一次命中当成永久修好。要稳定可见，只能进 community
+  `registry.json`，或者靠下载/搜索权重把排名挤进前 30。
 - GitHub 自动发现另读**仓库根目录的 package.json**并要求仓库 topic
   `magpie-plugin`；本包在 `magpie/` 子目录，所以那条路也命中不了。
 
