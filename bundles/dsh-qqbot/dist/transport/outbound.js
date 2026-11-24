@@ -7,6 +7,7 @@ import { noteThinking } from '../features/thinking-log.js';
 import { noteTurnSignals, extractInnerText, applyTurnAttitude } from '../features/four-source.js';
 import { getLastSender } from '../features/attitude.js';
 import { formatToolResult } from './tool-presenter.js';
+import { shouldWakeInterjectAfterAbort } from './wake-policy.js';
 /**
  * `reply_gate` 的参数里是不是"判定静默"？
  *
@@ -26,9 +27,6 @@ export function isGateSilence(rawArgs) {
     catch {
         return false;
     }
-}
-export function shouldWakeInterjectAfterAbort(isAborted, hadInterject, gateSilenced, canFollowup) {
-    return Boolean(isAborted && hadInterject && !gateSilenced && canFollowup);
 }
 import { parseEvent, extractTurnError, } from './events.js';
 import { DeliverablesDeliverer } from './deliverables.js';
@@ -163,6 +161,7 @@ export class OutboundRouter {
      *   那些 "aborted" 是**有意行为**，一律不展示（否则聊天里刷一串假报错）。
      */
     gateSilenced = new Set();
+    gateSilencedInterjectSeq = new Map();
     /**
      * 回合级累积 —— 好感度**按回合结算**（2026-09-14 修）。
      *
@@ -454,16 +453,17 @@ export class OutboundRouter {
         // LLM 回合进行中(turnActive=true): debounce 见忙就把该会话新消息全攒着;
         // turn/end 复位 false → 攒的消息才批量入站。assistant/tool 事件=回合活跃。
         if (event.type === 'turn/end') {
-            const hadInterject = (Number(record.interjectSeq) || 0) > 0;
+            const currentInterjectSeq = Number(record.interjectSeq) || 0;
+            const gateInterjectSeq = this.gateSilencedInterjectSeq.get(record.sessionKey) ?? 0;
             const isAborted = event.reason?.kind === 'aborted' || raw?.data?.reason?.kind === 'aborted';
             record.turnActive = false;
             // 插话计数随回合结束清零（2026-10-09）→ 下一回合的第一次插话又用完整提示
             record.interjectSeq = 0;
-            // 仅非 reply_gate 静默取消且确有未处理插话时补唤醒；reply_gate 已主动结束话题，不再开空回合。
+            // reply_gate 静默时不开空回合；但静默后到达的新插话必须唤醒，否则会滞留 inbox。
             if (shouldWakeInterjectAfterAbort(
                 isAborted,
-                hadInterject,
-                this.gateSilenced.has(record.sessionKey),
+                currentInterjectSeq,
+                gateInterjectSeq,
                 record.agent && typeof record.agent.followup === 'function',
             )) {
                 const ag = record.agent;
@@ -674,6 +674,9 @@ export class OutboundRouter {
         //   （模型常在闸门后还想顺手记点东西，那些调用会被连带 abort；
         //    主人 2026-09-14："改成直接停止 llm 的回合，而不是报错"）
         if (call.name === 'reply_gate' && isGateSilence(call.args)) {
+            if (!this.gateSilenced.has(record.sessionKey)) {
+                this.gateSilencedInterjectSeq.set(record.sessionKey, Number(record.interjectSeq) || 0);
+            }
             this.gateSilenced.add(record.sessionKey);
             this.logger.debug(`im-qqbot: 回复闸门判定静默 → 本回合工具展示全部静音 (${record.sessionKey})`);
             return;
@@ -740,6 +743,7 @@ export class OutboundRouter {
             }
         }
         this.gateSilenced.delete(_record.sessionKey);
+        this.gateSilencedInterjectSeq.delete(_record.sessionKey);
         this.deliveredFiles.delete(_record.sessionKey);
         // ★ 2026-11-05：回合结束 → 清掉"来源/因插话解除静默"两个标记，
         //   下一回合重新判定（web 回合继续静默，QQ 入站回合由 handleInbound 重新置 'qq'）。
