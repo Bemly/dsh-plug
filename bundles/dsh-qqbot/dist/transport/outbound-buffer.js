@@ -86,6 +86,7 @@ extHook) {
     }
 }
 async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, resolveTarget, chunkTarget, onBlockSent, refLookup, onSendError, extHook) {
+    const groupId = globalThis.crypto?.randomUUID?.() ?? `send-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let outboundTexts;
     // ★★ 出站扩展链（2026-10-16）：先让扩展改 / 杀这条出站，再走原有发送逻辑 ★★
     //   · 动态 import：没装扩展时零开销，也避免 transport ↔ features 的循环依赖；
@@ -235,7 +236,7 @@ async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, reso
                 const sourceOpt = src.kind === 'url' ? { url: src.url } : { localPath: src.path };
                 sentStat.total += 1;
                 try {
-                    await bot.sendMedia(eff(), seg.kind, sourceOpt);
+                    await bot.sendMedia(eff(), seg.kind, sourceOpt, groupId);
                     sentStat.ok += 1;
                     if (isStickerSeg)
                         turnStickerSent += 1;
@@ -269,7 +270,7 @@ async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, reso
                     }
                     catch { /* ignore */ }
                     try {
-                        await bot.sendMarkdown(tgt, chunk);
+                        await bot.sendMarkdown(tgt, chunk, groupId);
                         sentStat.ok += 1;
                         onBlockSent?.(chunk, tgt);
                     }

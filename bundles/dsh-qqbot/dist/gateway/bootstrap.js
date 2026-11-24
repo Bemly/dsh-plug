@@ -37,6 +37,7 @@ import { PresetSwitcherController, setPresetCardImpl } from '../features/preset-
 import { ModelSwitcherController, setModelCardImpl, setEffortPickerImpl } from '../features/model-switcher.js';
 import { registerMemStats } from '../features/mem-stats.js';
 import { imagePathCacheSize } from '../features/image-path-cache.js';
+import { SentGroupHistory } from '../features/sent-groups.js';
 import { buildCommandList } from '../commands/index.js';
 import { SettingsReader } from '../model/settings-reader.js';
 /** 从 interaction 事件推出"回复目标"(回执发到按钮所在群/私聊)。scope 由事件 chat_type/scene 推断 */
@@ -400,22 +401,13 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
         toolsRegistry = undefined;
     }
     // 发送适配器：将 QQBot 实例适配为 QQBotSender（openStream 参数形态不同）
-    // 记录 bot 发给每个 peer 的最近消息历史，供 agent [RECALL(:N)] 按序号撤回自身消息。
+    // 记录 bot 发给每个 peer 的最近发送批次，供 recall_message 按逻辑回复整组撤回。
     const HISTORY_LIMIT = 10;
-    const sentByPeer = new Map();
-    const keyOf = (t) => `${t.scope}:${t.targetId}`;
-    const pushSent = (target, id, text, kind) => {
+    const sentHistory = new SentGroupHistory(HISTORY_LIMIT);
+    const pushSent = (target, id, text, kind, groupId) => {
         if (!id)
             return;
-        const k = keyOf(target);
-        let arr = sentByPeer.get(k);
-        if (!arr) {
-            arr = [];
-            sentByPeer.set(k, arr);
-        }
-        arr.unshift({ target, id }); // 最新在前
-        if (arr.length > HISTORY_LIMIT)
-            arr.length = HISTORY_LIMIT;
+        sentHistory.push(target, id, groupId);
         // 2026-10-20 主人需求: 机器人自己发的消息也进 msg-recent 缓冲,
         // 这样「自动撤回/按关键词搜索消息」也能覆盖自己发的。
         try {
@@ -425,25 +417,12 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
         }
         catch { /* 记不了不影响发送 */ }
     };
-    const doRecall = async (target, index) => {
-        const arr = sentByPeer.get(keyOf(target));
-        if (!arr)
-            return false;
-        const item = arr[index - 1];
-        if (!item)
-            return false;
-        try {
-            await bot.recallMessage(item.target, item.id);
-            arr.splice(index - 1, 1);
-            if (!arr.length)
-                sentByPeer.delete(keyOf(target));
-            return true;
-        }
-        catch (err) {
-            logger.error(`recall(${index}) failed: ${err instanceof Error ? err.message : String(err)}`);
-            return false;
-        }
-    };
+    const doRecall = async (target, index) => sentHistory.recall(
+        target,
+        index,
+        (itemTarget, id) => bot.recallMessage(itemTarget, id),
+        logger,
+    );
     /**
      * 扫出正文里所有**成对**的 LaTeX 公式区间（返回原文本上的 `[start, end)` 偏移）。
      *
@@ -558,7 +537,7 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
             /~~[^~\n]+~~/.test(t));
     };
     const sender = {
-        sendMarkdown: async (target, content) => {
+        sendMarkdown: async (target, content, groupId) => {
             try {
                 let rawText = String(content || '');
                 // 2026-10-21: markdown 通道也要自动传本地图 ——
@@ -590,7 +569,7 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
                         : { target, msgType: 0, content: rawText, messageReference: { message_id: refId } };
                     try {
                         const resp = (await bot.send(refBody));
-                        pushSent(target, resp?.id, rawText);
+                        pushSent(target, resp?.id, rawText, undefined, groupId);
                         return resp;
                     }
                     catch (refErr) {
@@ -601,11 +580,11 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
                 // 纯文本降级: 无 markdown 语法/@标签 → 直接纯文本通道, 省富媒体额度与频控
                 if (!hasMarkdownSyntax(rawText)) {
                     const respT = (await bot.sendText(target, rawText));
-                    pushSent(target, respT?.id, rawText);
+                    pushSent(target, respT?.id, rawText, undefined, groupId);
                     return respT;
                 }
                 const resp = (await bot.sendMarkdown(target, content));
-                pushSent(target, resp?.id, rawText);
+                pushSent(target, resp?.id, rawText, undefined, groupId);
                 return resp;
             }
             catch (err) {
@@ -624,7 +603,7 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
                     try {
                         const act = { scope: target.scope, targetId: target.targetId };
                         const r0 = (await bot.sendMarkdown(act, content));
-                        pushSent(act, r0?.id);
+                        pushSent(act, r0?.id, undefined, undefined, groupId);
                         logger.warn(`被动回复被拒(msgId 失效) → 已去掉 msgId 转主动发送成功: ${firstErr}`);
                         diagWrite('qqbot-send-diag', `[${new Date().toISOString()}] 已降级为主动发送成功 target=${String(target.targetId ?? '').slice(0, 12)}…`);
                         return r0;
@@ -641,7 +620,7 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
                             const passivePlain = toPlainText(content);
                             if (passivePlain) {
                                 const rp = (await bot.sendText(target, passivePlain));
-                                pushSent(target, rp?.id);
+                                pushSent(target, rp?.id, undefined, undefined, groupId);
                                 logger.warn(`markdown 双通道被拒 → 已用被动纯文本发送成功: ${firstErr}`);
                                 diagWrite('qqbot-send-diag', `[${new Date().toISOString()}] 被动纯文本兜底成功 target=${String(target.targetId ?? '').slice(0, 12)}…`);
                                 return rp;
@@ -661,7 +640,7 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
                     if (plain) {
                         try {
                             const r2 = (await bot.sendText(plainTarget, plain));
-                            pushSent(plainTarget, r2?.id);
+                            pushSent(plainTarget, r2?.id, undefined, undefined, groupId);
                             logger.warn(`主动推送 markdown 被拒, 已降级纯文本发送: ${firstErr}`);
                             return r2;
                         }
@@ -669,7 +648,7 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
                             if (plainTarget.scope === 'c2c') {
                                 try {
                                     const r3 = (await bot.sendWakeup(plainTarget, plain));
-                                    pushSent(plainTarget, r3?.id);
+                                    pushSent(plainTarget, r3?.id, undefined, undefined, groupId);
                                     logger.warn(`主动纯文本被拒, 已降级 is_wakeup 召回通道: ${err2 instanceof Error ? err2.message : String(err2)}`);
                                     return r3;
                                 }
@@ -710,7 +689,7 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
                 msgId: target.msgId,
             },
         }),
-        sendMedia: async (target, kind, source) => {
+        sendMedia: async (target, kind, source, groupId) => {
             // ── P1 表情包闸门(唯一咽喉, [MEDIA]标记 与 send_media 工具都汇于此) ──
             // 只对"库内图片的主动发送"生效; URL/非库路径/语音视频文件放行。
             let gateHit = false;
@@ -776,7 +755,7 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
                 }
             }
             const id = out?.message?.id;
-            pushSent(usedTarget, id);
+            pushSent(usedTarget, id, undefined, kind, groupId);
             // 发送成功后才记录(失败不占预算/去重); 库内图且群内才算表情包发送
             if (gateHit && id !== undefined && source.localPath) {
                 try {

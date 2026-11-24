@@ -709,9 +709,9 @@ export async function apply(ctx, opts) {
     });
     const recallTool = defineTool({
         name: 'recall_message',
-        description: '撤回本机器人最近发给当前 QQ 会话的消息。index 缺省 1(=最近一条)，2=倒数第 2 条，以此类推。',
+        description: '撤回本机器人最近发给当前 QQ 会话的回复。index 缺省 1(=最近一组回复)，2=倒数第 2 组，以此类推；一次回复拆成的多条消息会整组撤回。',
         parameters: {
-            index: { type: 'integer', description: '要撤的倒数第几条(默认1)' },
+            index: { type: 'integer', description: '要撤的倒数第几组回复(默认1)' },
         },
         output: {
             schema: {
@@ -732,7 +732,7 @@ export async function apply(ctx, opts) {
             const idx = rawIdx == null || !Number.isFinite(rawIdx) ? 1 : rawIdx;
             try {
                 const ok = await ch.sender.recallByIndex(rec.replyTarget, idx);
-                return ok ? { ok: true, msg: '' } : { ok: false, msg: `第${idx}条无可撤回消息或已超时` };
+                return ok ? { ok: true, msg: '' } : { ok: false, msg: `第${idx}组无可撤回消息或已超时（可能部分撤回失败）` };
             }
             catch (e) {
                 return { ok: false, msg: e instanceof Error ? e.message : String(e) };
