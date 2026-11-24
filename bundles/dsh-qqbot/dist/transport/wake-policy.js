@@ -1,12 +1,7 @@
-export function shouldWakeInterjectAfterAbort(
+export function shouldDrainInboxAfterAbort(
     isAborted,
-    currentInterjectSeq,
-    gateInterjectSeq,
+    pendingInboxCount,
     canFollowup,
 ) {
-    return Boolean(
-        isAborted &&
-        (Number(currentInterjectSeq) || 0) > (Number(gateInterjectSeq) || 0) &&
-        canFollowup,
-    );
+    return Boolean(isAborted && (Number(pendingInboxCount) || 0) > 0 && canFollowup);
 }

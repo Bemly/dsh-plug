@@ -1,23 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { shouldWakeInterjectAfterAbort } from '../dist/transport/wake-policy.js';
+import { shouldDrainInboxAfterAbort } from '../dist/transport/wake-policy.js';
 
-test('does not wake when reply_gate has no newer interjection', () => {
-    assert.equal(shouldWakeInterjectAfterAbort(true, 2, 2, true), false);
+test('drains unseen inbox messages after reply_gate abort', () => {
+    assert.equal(shouldDrainInboxAfterAbort(true, 4, true), true);
 });
 
-test('wakes when a new interjection arrives after reply_gate', () => {
-    assert.equal(shouldWakeInterjectAfterAbort(true, 3, 2, true), true);
-});
-
-test('keeps the existing wake behavior for non-gate aborts', () => {
-    assert.equal(shouldWakeInterjectAfterAbort(true, 1, 0, true), true);
+test('does not open an empty turn when inbox is empty', () => {
+    assert.equal(shouldDrainInboxAfterAbort(true, 0, true), false);
 });
 
 test('does not wake after a normal turn end', () => {
-    assert.equal(shouldWakeInterjectAfterAbort(false, 1, 0, true), false);
+    assert.equal(shouldDrainInboxAfterAbort(false, 4, true), false);
 });
 
 test('does not wake without followup capability', () => {
-    assert.equal(shouldWakeInterjectAfterAbort(true, 1, 0, false), false);
+    assert.equal(shouldDrainInboxAfterAbort(true, 4, false), false);
 });
