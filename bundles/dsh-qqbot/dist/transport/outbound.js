@@ -27,6 +27,9 @@ export function isGateSilence(rawArgs) {
         return false;
     }
 }
+export function shouldWakeInterjectAfterAbort(isAborted, hadInterject, gateSilenced, canFollowup) {
+    return Boolean(isAborted && hadInterject && !gateSilenced && canFollowup);
+}
 import { parseEvent, extractTurnError, } from './events.js';
 import { DeliverablesDeliverer } from './deliverables.js';
 import { feedReasoning, endReasoningTurn } from '../features/reasoning-bus.js';
@@ -456,9 +459,13 @@ export class OutboundRouter {
             record.turnActive = false;
             // 插话计数随回合结束清零（2026-10-09）→ 下一回合的第一次插话又用完整提示
             record.interjectSeq = 0;
-            // ★ 2026-11-23 修复：若当前回合因 reply_gate 被 aborted，但中途已收到插话，
-            //   keepInbox:true 仅保留 inbox 不会自动唤醒，这里在 idle 后补一次 followup 唤醒处理插话。
-            if (isAborted && hadInterject && record.agent && typeof record.agent.followup === 'function') {
+            // 仅非 reply_gate 静默取消且确有未处理插话时补唤醒；reply_gate 已主动结束话题，不再开空回合。
+            if (shouldWakeInterjectAfterAbort(
+                isAborted,
+                hadInterject,
+                this.gateSilenced.has(record.sessionKey),
+                record.agent && typeof record.agent.followup === 'function',
+            )) {
                 const ag = record.agent;
                 setTimeout(() => {
                     try {
