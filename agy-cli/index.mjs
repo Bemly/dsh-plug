@@ -170,6 +170,15 @@ const DISABLED_CORE = AGENT_ERROR_CORES[6]
 // again. It is a 503 overloaded_error: the model's, not the account's, so
 // the account is not rested as a 429 would rest it.
 const BUSY_CORE = "⚠ Our servers are experiencing high traffic right now"
+// Before that ending, agy retries the 503 inside the turn for minutes, with
+// nothing streamed: only its log says "Run: attempt 1 failed (transport error
+// (Unavailable, HTTP 503): No capacity available for model … on the server
+// …), retrying in 4s". A 1 to 2 minute wait before the first token, past a
+// client's patience (Hermes cancels at 30s), and nothing behind magpie tried
+// another account (plugins#1541). The first such line, before anything was
+// streamed, ends the turn as the same overloaded 503.
+const noCapacity = (detail) => /\bNo capacity available for model\b/i.test(detail || "")
+const CAPACITY_POLL_MS = Math.max(50, Number(process.env.AGY_BRIDGE_CAPACITY_POLL_MS) || 500)
 const BUSY_MARKER = "\n" + BUSY_CORE
 // agy's ending when its agent executor failed: "⚠ agent executor error:
 // request failed: Bad Gateway", then end_turn. Answered as text, it was a
@@ -1015,6 +1024,38 @@ function saveCatalog(agyPath, change) {
   } catch {}
 }
 
+// Whether another account of this agy lists model, by the lists models.json
+// keeps for each (offered, when a session said, else listed). A family
+// alias for a model this account lacks swapped it for another model with a
+// 200, claude-sonnet-5-5 served as claude-sonnet-4-6, while the account
+// that has it was never asked (plugins#1542).
+function anotherAccountLists(agyPath, model) {
+  if (!agyPath || !model) return false
+  const base = model.replace(/-\d{8}$/, "")
+  const bare = base.replace(/-(?:minimal|low|medium|high|xhigh|max)$/i, "")
+  try {
+    const data = JSON.parse(fs.readFileSync(modelCatalogFile(), "utf8"))
+    if (data?.version !== 1 || !data.byAgy || typeof data.byAgy !== "object") return false
+    const mine = catalogKey(agyPath)
+    for (const [key, entry] of Object.entries(data.byAgy)) {
+      if (key === mine || (key !== agyPath && !key.startsWith(agyPath + "#"))) continue
+      // an account removed since leaves its entry behind, not its home
+      const id = key === agyPath ? "" : key.slice(agyPath.length + 1)
+      if (id && !fs.existsSync(path.join(accountsDir(), id))) continue
+      if (!Number.isFinite(entry?.at) || Date.now() - entry.at > SAVED_CATALOG_MAX_AGE_MS) continue
+      const rows = Array.isArray(entry.offered) && entry.offered.length ? entry.offered : entry.list
+      if (!Array.isArray(rows)) continue
+      for (const row of rows) {
+        const rowId = typeof row?.id === "string" ? row.id : ""
+        if (!rowId) continue
+        const family = row.effort && rowId.endsWith("-" + row.effort) ? rowId.slice(0, -row.effort.length - 1) : rowId
+        if (rowId === base || family === base || family === bare) return true
+      }
+    }
+  } catch {}
+  return false
+}
+
 function startingModelCatalog(agyPath) {
   const saved = readSavedCatalog(agyPath)
   if (!saved) return fallbackModelCatalog(agyPath, { replace: true })
@@ -1152,17 +1193,33 @@ function normalizeEffort(value) {
   return EFFORT_ORDER.includes(direct) ? direct : ""
 }
 
-function requestedEffort(body) {
+// The level the request names. magpie says the effort the client asked for in
+// X-Magpie-Effort (said): its Anthropic body carries only a thinking budget,
+// held under max_tokens, or no thinking at all when max_tokens is small, so a
+// level read from the budget put reasoning_effort "high" at max_tokens 4000 on
+// -low, and "low" at max_tokens 1500 on the family's default high
+// (plugins#1540). What magpie says comes first; the budget is the last guess.
+function namedEffort(body, said = "") {
   const forced = normalizeEffort(process.env.AGY_BRIDGE_EFFORT)
   if (forced) return forced
   const thinking = body.thinking?.type
   if (thinking === "disabled") return ""
+  const told = normalizeEffort(said)
+  if (told) return told
   const generic = [body.reasoning_effort, body.reasoningEffort, body.reasoning?.effort,
     body.generationConfig?.thinkingConfig?.thinkingLevel].map(normalizeEffort).find(Boolean)
   if (generic) return generic
   if (thinking !== "enabled" && thinking !== "adaptive") return ""
-  const direct = normalizeEffort(body.output_config?.effort)
-  if (direct) return direct
+  return normalizeEffort(body.output_config?.effort)
+}
+
+function requestedEffort(body, said = "") {
+  return namedEffort(body, said) || budgetEffort(body)
+}
+
+function budgetEffort(body) {
+  const thinking = body.thinking?.type
+  if (thinking !== "enabled" && thinking !== "adaptive") return ""
   const budget = Number(body.thinking?.budget_tokens)
   if (!Number.isFinite(budget) || budget <= 0) return ""
   if (budget <= 4096) return "low"
@@ -1228,12 +1285,13 @@ function resolveCatalogAlias(catalog, model) {
   return { id: model, inlineEffort: "" }
 }
 
-function resolveAgyModel(listed, model, body) {
+function resolveAgyModel(listed, model, body, said = "") {
   const catalog = listed.routing ?? listed
   const { id: resolvedId, inlineEffort } = resolveCatalogAlias(catalog, model)
   const family = catalog.routes.get(resolvedId)
   if (!family) return resolvedId
-  const requested = requestedEffort(body) || inlineEffort
+  // a level in the model's id beats one guessed from a thinking budget
+  const requested = namedEffort(body, said) || inlineEffort || budgetEffort(body)
   const effort = requested ? closestEffort(requested, family.efforts) : family.defaultEffort
   return family.byEffort.get(effort)
 }
@@ -2930,6 +2988,7 @@ class Proc {
         this.sessionPrompts++
         if (turn.promptSentAt == null) turn.promptSentAt = Date.now()
         let result
+        const capacityWatch = this.#watchCapacity(turn)
         try {
           result = await this.conn.request("session/prompt", {
             sessionId: this.sessionId,
@@ -2937,6 +2996,7 @@ class Proc {
           })
         } finally {
           turn.promptInFlight = false
+          clearInterval(capacityWatch)
         }
         if (promptNumber === 1) {
           // how long agy took to answer, beside the session row's start-up steps
@@ -3097,6 +3157,36 @@ class Proc {
   // A try Antigravity answered with the bare 429 ends the turn now, with the
   // same error as agy's own 429 ending, instead of after agy's retries: the
   // process goes, as on a timeout, since agy is still retrying in it.
+  // Reads agy's log while nothing has reached the client, for the retry of
+  // a "no capacity" 503 (noCapacity).
+  #watchCapacity(turn) {
+    let reading = false
+    const quiet = () => !turn.done && turn.firstOutputAt == null && !turn.calls.length
+    const timer = setInterval(async () => {
+      if (reading || !quiet()) return
+      reading = true
+      try {
+        const detail = await lastAgentError(this.logPath, turn.logOffset)
+        if (noCapacity(detail) && quiet()) this.capacityTurn(turn, detail)
+      } finally {
+        reading = false
+      }
+    }, CAPACITY_POLL_MS)
+    timer.unref?.()
+    return timer
+  }
+
+  capacityTurn(turn, detail) {
+    if (this.turn !== turn || turn.done) return
+    logSessionEvent(this, this.sessionReason ?? null, {
+      waited_ms: turn.promptSentAt != null ? Date.now() - turn.promptSentAt : null,
+      detail,
+    }, "no_capacity")
+    turn.fail(new AgentTurnError(`agy bridge: Antigravity has no capacity for this model now: ${detail}`, "overloaded_error"))
+    dropFromPool(this)
+    this.stop().catch(() => {})
+  }
+
   refuseTurn(turn, detail) {
     if (this.turn !== turn || turn.done) return
     turn.fail(this.#formatAgentError(detail))
@@ -5670,6 +5760,25 @@ function foldSplitCalls(body) {
   return changed ? { ...body, messages: out } : body
 }
 
+// Claude Code's AgentSummary: the sub-agent's own conversation, sent again
+// while it works with its last user message ending in the ask for a few
+// words of progress ("Describe your most recent action in 3-5 words. Do not
+// use tools."), as magpie's agentSummaryAsk tells it. Only a sub-agent's
+// (x-magpie-subagent) is one. In the worker's scope
+// it was the worker's conversation, whose response was still running: seven
+// 503 "already has an active response" over ~34s, each try retried
+// (plugins#1545). It gets a scope of its own, beside the worker's.
+const AGENT_SUMMARY_SCOPE = "\nagent-summary"
+
+function agentSummaryAsk(body) {
+  const last = body?.messages?.at(-1)
+  if (last?.role !== "user") return false
+  const part = typeof last.content === "string" ? { type: "text", text: last.content } : last.content?.at?.(-1)
+  if (part?.type !== "text" || typeof part.text !== "string") return false
+  const ask = part.text.trim()
+  return ask.startsWith("Describe your ") && ask.includes(" in 3-5 words")
+}
+
 function sameSessionScope(proc, sessionScope = "") {
   return (proc?.sessionScope || "") === sessionScope
 }
@@ -5771,6 +5880,13 @@ function compactIdentity(text) {
 
 function sameInstructions(a, b) {
   return instructionsIdentity(a) === instructionsIdentity(b)
+}
+
+function requestHeader(fetchInput, init, name) {
+  const headers = new Headers(
+    init?.headers ?? (fetchInput instanceof Request ? fetchInput.headers : undefined) ?? {},
+  )
+  return headers.get(name)?.trim() || ""
 }
 
 // The model is not part of the key: agy switches models inside a live session.
@@ -8708,9 +8824,18 @@ export const AntigravityBridgePlugin = async () => {
             const layout = requestLayout(body)
             body = { ...foldSplitCalls(canonicalBody(body)), model: requestedModel }
             if (isOrchestrator(requestedModel)) return jsonError(400, orchestratorRefusal(requestedModel), undefined, { noRetry: true })
-            const model = resolveAgyModel(await loadModelCatalog(agy), requestedModel, body)
-            const selection = { model: requestedModel, effort: requestedEffort(body) }
-            const sessionScope = requestSessionScope(fetchInput, init)
+            const saidEffort = requestHeader(fetchInput, init, "x-magpie-effort")
+            const listed = await loadModelCatalog(agy)
+            const model = resolveAgyModel(listed, requestedModel, body, saidEffort)
+            // a family alias stands in for a model only no account has
+            const aliasOf = resolveCatalogAlias(listed.routing ?? listed, requestedModel).id
+            if (aliasOf !== requestedModel && !requestedModel.startsWith(aliasOf + "-") &&
+              anotherAccountLists(agy, requestedModel)) {
+              return jsonError(400, `agy bridge: model ${requestedModel} is unavailable to this agy account; another signed-in agy account lists it`)
+            }
+            const selection = { model: requestedModel, effort: requestedEffort(body, saidEffort) }
+            const sessionScope = requestSessionScope(fetchInput, init) +
+              (requestHeader(fetchInput, init, "x-magpie-subagent") && agentSummaryAsk(body) ? AGENT_SUMMARY_SCOPE : "")
             // an account's conversations are its own: its agy has them
             const callerWorkDir = namedWorkDirectory(body, init)
             const convKey = (home ? `acct:${path.basename(home)}:` : "") + conversationKey(body, sessionScope, callerWorkDir || "")
