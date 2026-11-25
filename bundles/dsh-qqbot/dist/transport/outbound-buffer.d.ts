@@ -60,23 +60,23 @@ export interface QQBotSender {
     sendC2cWakeup(target: ReplyTarget, content: string): Promise<unknown>;
 }
 export declare function hasLatexFormula(text: string): boolean;
-export declare function sendRichOutbound(bot: QQBotSender, target: ReplyTarget, text: string, limit: number, cwd: string | undefined, logError?: (msg: string) => void, resolveTarget?: () => ReplyTarget, 
+export declare function sendRichOutbound(bot: QQBotSender, target: ReplyTarget, text: string, limit: number, cwd: string | undefined, logError?: (msg: string) => void, resolveTarget?: () => ReplyTarget,
 /** 逐文本块目标(2026-09-10 主人定 passive 收尾): 传 (块序号i, 总块数total)=>ReplyTarget,
  *  用于「正文块>5 时第 6 块起转主动发送」; undefined=所有块用 resolveTarget/固定 target */
-chunkTarget?: (i: number, total: number) => ReplyTarget, 
+chunkTarget?: (i: number, total: number) => ReplyTarget,
 /** 每成功发出一个正文块后回调(2026-09-10 主人定 passive 收尾 A 方案): outbound.ts 用它统计
  *  「**同一个 msg_id 下**已发出几个正文块」, 回合结束时决定是否把最后一块复制一份主动补发。
  *  带上 target 是因为 QQ 的被动回复 5 条上限**按 msg_id 计** —— msg_id 一变(群友中途发言)
  *  配额即重置, 计数必须跟着归零, 否则会误补发(2026-09-10 主人指出)。 */
-onBlockSent?: (text: string, target: ReplyTarget) => void, 
+onBlockSent?: (text: string, target: ReplyTarget) => void,
 /** 引用短号查表(2026-09-13 主人定): 传短号(如 0913a) → 完整 msg_id; 台账见 transport/msg-index.ts */
-refLookup?: (index: string) => string | undefined, 
+refLookup?: (index: string) => string | undefined,
 /**
  * ★ 2026-11-07 主人要的：**正文被平台判违规时告知 AI**。
  *   每块发送失败都会回调 (`err`, `该块文本`)，由上层判断是不是"内容违规"并注入提示；
  *   这里只是把异常**吞掉继续发后续块**（原来一抛就整段中断，后面的正文也全丢了）。
  */
-onSendError?: (err: unknown, text: string) => void, 
+onSendError?: (err: unknown, text: string) => void,
 /**
  * ★★ 2026-10-16 主人定：**出站扩展链**的上下文（第六套扩展点 `.qqbot-extensions/outbound/`）★★
  *
@@ -108,6 +108,8 @@ extHook?: {
     apiCall?: unknown;
     /** 插件 logger */
     logger?: unknown;
+    appendWake?: (text: string) => unknown;
+    appendSilent?: (text: string) => unknown;
 }): Promise<void>;
 export declare class OutboundBuffer {
     private readonly record;
@@ -134,18 +136,24 @@ export declare class OutboundBuffer {
      * 好在流式只在 c2c + 有 msgId 时开，群里走的是下面这条静态路径。
      */
     private readonly stripFn?;
+    /**
+     * ★ 2026-11-24（CodeRabbit #87）：回退路径也要带出站扩展的 caps
+     *   （appendWake / appendSilent / apiCall）—— 否则流式降级后扩展 `annihilate()` 掉正文，
+     *   依然没法通知模型，跟 send() 路径行为不一致。
+     */
+    private readonly extCaps?;
     private buffer;
     /** 缓冲过大只告警一次（见 append 的注释） */
     private warnedBig;
     private flushing;
     private readonly writer;
-    constructor(record: SessionRecord, bot: QQBotSender, limit: number, logger: Logger, streamingEnabled: boolean, cwd?: string | undefined, resolveTarget?: (() => ReplyTarget) | undefined, 
+    constructor(record: SessionRecord, bot: QQBotSender, limit: number, logger: Logger, streamingEnabled: boolean, cwd?: string | undefined, resolveTarget?: (() => ReplyTarget) | undefined,
     /** 逐文本块目标(2026-09-10 passive 收尾; 正文块>5 第6块起转主动) */
-    chunkTarget?: ((i: number, total: number) => ReplyTarget) | undefined, 
+    chunkTarget?: ((i: number, total: number) => ReplyTarget) | undefined,
     /** 每成功发出一个正文块后回调(见 sendRichOutbound 同名参数) */
-    onBlockSent?: ((text: string, target: ReplyTarget) => void) | undefined, 
+    onBlockSent?: ((text: string, target: ReplyTarget) => void) | undefined,
     /** 引用短号查表(见 sendRichOutbound 同名参数; 2026-09-13 主人定) */
-    refLookup?: ((index: string) => string | undefined) | undefined, 
+    refLookup?: ((index: string) => string | undefined) | undefined,
     /**
      * 出站正文清洗（issue #72）。
      *
@@ -157,7 +165,13 @@ export declare class OutboundBuffer {
      * 分块到达时时间头可能被切成两半，逐块清洗会把正文切坏。
      * 好在流式只在 c2c + 有 msgId 时开，群里走的是下面这条静态路径。
      */
-    stripFn?: ((text: string) => string) | undefined);
+    stripFn?: ((text: string) => string) | undefined,
+    /**
+     * ★ 2026-11-24（CodeRabbit #87）：回退路径也要带出站扩展的 caps
+     *   （appendWake / appendSilent / apiCall）—— 否则流式降级后扩展 `annihilate()` 掉正文，
+     *   依然没法通知模型，跟 send() 路径行为不一致。
+     */
+    extCaps?: Parameters<typeof sendRichOutbound>[11]);
     /**
      * 追加文本增量。
      *

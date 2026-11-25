@@ -1212,7 +1212,8 @@ export async function apply(ctx, opts) {
                 try {
                     const agent = exec.agent;
                     if (agent && typeof agent.cancel === 'function') {
-                        wakePendingAfterGate(agent);
+                        agent.cancel({ kind: 'hook', reason: 'reply_gate: 本轮静默' }, { keepInbox: true });
+                        wakePendingAfterGate(agent, { cancel: false });
                     }
                 }
                 catch {

@@ -3,9 +3,10 @@ export function selectPendingWake(nextStep = [], nextTurn = []) {
     return pending.length > 0 ? pending[pending.length - 1] : null;
 }
 
-export function wakePendingAfterGate(agent) {
-    if (!agent || typeof agent.cancel !== 'function') return false;
-    agent.cancel({ kind: 'user' }, { keepInbox: true });
+export function wakePendingAfterGate(agent, { cancel = true } = {}) {
+    if (!agent) return false;
+    if (cancel && typeof agent.cancel !== 'function') return false;
+    if (cancel) agent.cancel({ kind: 'user' }, { keepInbox: true });
     const wake = selectPendingWake(agent.inbox?.nextStep, agent.inbox?.nextTurn);
     if (!wake || typeof agent.inbox?.remove !== 'function' || typeof agent.followup !== 'function') {
         return false;

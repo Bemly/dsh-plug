@@ -1,6 +1,6 @@
 import { chunkMarkdownText } from './chunker.js';
 import { StreamingWriter } from './streaming-writer.js';
-import { containsRecall, collectRecallIndices, extractRefTag, parseOutbound, stripDirectives, resolveSource, } from './rich-media.js';
+import { containsRecall, containsMedia, collectRecallIndices, extractRefTag, parseOutbound, stripDirectives, resolveSource, } from './rich-media.js';
 import { stickerPerTurnCtx } from '../features/sticker-gate.js';
 import { rememberBotReply } from '../features/bot-reply-memo.js';
 /** 流式输出节流间隔(ms)：连续 chunk 累积后停顿该间隔才推送 */
@@ -35,23 +35,23 @@ const LATEX_RE = /\$\$[\s\S]{1,4000}?\$\$/;
 export function hasLatexFormula(text) {
     return LATEX_RE.test(text);
 }
-export async function sendRichOutbound(bot, target, text, limit, cwd, logError, resolveTarget, 
+export async function sendRichOutbound(bot, target, text, limit, cwd, logError, resolveTarget,
 /** 逐文本块目标(2026-09-10 主人定 passive 收尾): 传 (块序号i, 总块数total)=>ReplyTarget,
  *  用于「正文块>5 时第 6 块起转主动发送」; undefined=所有块用 resolveTarget/固定 target */
-chunkTarget, 
+chunkTarget,
 /** 每成功发出一个正文块后回调(2026-09-10 主人定 passive 收尾 A 方案): outbound.ts 用它统计
  *  「**同一个 msg_id 下**已发出几个正文块」, 回合结束时决定是否把最后一块复制一份主动补发。
  *  带上 target 是因为 QQ 的被动回复 5 条上限**按 msg_id 计** —— msg_id 一变(群友中途发言)
  *  配额即重置, 计数必须跟着归零, 否则会误补发(2026-09-10 主人指出)。 */
-onBlockSent, 
+onBlockSent,
 /** 引用短号查表(2026-09-13 主人定): 传短号(如 0913a) → 完整 msg_id; 台账见 transport/msg-index.ts */
-refLookup, 
+refLookup,
 /**
  * ★ 2026-11-07 主人要的：**正文被平台判违规时告知 AI**。
  *   每块发送失败都会回调 (`err`, `该块文本`)，由上层判断是不是"内容违规"并注入提示；
  *   这里只是把异常**吞掉继续发后续块**（原来一抛就整段中断，后面的正文也全丢了）。
  */
-onSendError, 
+onSendError,
 /**
  * ★★ 2026-10-16 主人定：**出站扩展链**的上下文（第六套扩展点 `.qqbot-extensions/outbound/`）★★
  *
@@ -201,8 +201,10 @@ async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, reso
         const withRef = (t) => refId ? { scope: t.scope, targetId: t.targetId, msgId: t.msgId, referenceMessageId: refId } : t;
         const eff = () => withRef(resolveTarget ? resolveTarget() : target);
         const hasRecall = containsRecall(message.text);
+        // ★ CodeRabbit #83：`[RECALL]` 与媒体同时出现、又没有可撤回消息时，原来只看"剥离后还有没有文本"
+        //   ⇒ 纯媒体消息被判成空、媒体被丢掉。这里把媒体段也算进来。
         const hasContent = outboundTexts === undefined
-            ? stripDirectives(message.text).length > 0
+            ? (stripDirectives(message.text).length > 0 || containsMedia(message.text))
             : segments.some((segment) => segment.type === 'media' || segment.chunks.length > 0);
         // 撤回按消息顺序执行；纯撤回未命中不影响后续消息
         if (hasRecall) {
@@ -318,18 +320,19 @@ export class OutboundBuffer {
     onBlockSent;
     refLookup;
     stripFn;
+    extCaps;
     buffer = '';
     /** 缓冲过大只告警一次（见 append 的注释） */
     warnedBig = false;
     flushing = false;
     writer;
-    constructor(record, bot, limit, logger, streamingEnabled, cwd = undefined, resolveTarget, 
+    constructor(record, bot, limit, logger, streamingEnabled, cwd = undefined, resolveTarget,
     /** 逐文本块目标(2026-09-10 passive 收尾; 正文块>5 第6块起转主动) */
-    chunkTarget, 
+    chunkTarget,
     /** 每成功发出一个正文块后回调(见 sendRichOutbound 同名参数) */
-    onBlockSent, 
+    onBlockSent,
     /** 引用短号查表(见 sendRichOutbound 同名参数; 2026-09-13 主人定) */
-    refLookup, 
+    refLookup,
     /**
      * 出站正文清洗（issue #72）。
      *
@@ -341,7 +344,13 @@ export class OutboundBuffer {
      * 分块到达时时间头可能被切成两半，逐块清洗会把正文切坏。
      * 好在流式只在 c2c + 有 msgId 时开，群里走的是下面这条静态路径。
      */
-    stripFn) {
+    stripFn,
+    /**
+     * ★ 2026-11-24（CodeRabbit #87）：回退路径也要带出站扩展的 caps
+     *   （appendWake / appendSilent / apiCall）—— 否则流式降级后扩展 `annihilate()` 掉正文，
+     *   依然没法通知模型，跟 send() 路径行为不一致。
+     */
+    extCaps) {
         this.record = record;
         this.bot = bot;
         this.limit = limit;
@@ -352,6 +361,7 @@ export class OutboundBuffer {
         this.onBlockSent = onBlockSent;
         this.refLookup = refLookup;
         this.stripFn = stripFn;
+        this.extCaps = extCaps;
         this.writer = streamingEnabled
             ? new StreamingWriter({
                 bot,
@@ -405,7 +415,7 @@ export class OutboundBuffer {
             const outText = this.stripFn ? this.stripFn(this.buffer) : this.buffer;
             if (!outText.trim())
                 return; // 洗完全是空（只剩时间头/占位符）→ 这条不发
-            await sendRichOutbound(this.bot, this.record.replyTarget, outText, this.limit, this.cwd, (m) => this.logger.error(m), this.resolveTarget, this.chunkTarget, this.onBlockSent, this.refLookup, undefined, { source: 'assistant/message' });
+            await sendRichOutbound(this.bot, this.record.replyTarget, outText, this.limit, this.cwd, (m) => this.logger.error(m), this.resolveTarget, this.chunkTarget, this.onBlockSent, this.refLookup, undefined, { source: 'assistant/message', ...(this.extCaps ?? {}) });
         }
         catch (err) {
             this.logger.error(`im-qqbot: flush failed: ${err instanceof Error ? err.message : String(err)}`);

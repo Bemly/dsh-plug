@@ -54,3 +54,22 @@ test('re-enqueues an existing pending message after cancel', () => {
         ['followup', pending],
     ]);
 });
+
+test('reuses an upstream hook cancel without cancelling again', () => {
+    const calls = [];
+    const pending = { id: 'pending-2', role: 'user', content: [] };
+    const agent = {
+        cancel: (...args) => calls.push(['cancel', ...args]),
+        followup: (message) => calls.push(['followup', message]),
+        inbox: {
+            nextStep: [pending],
+            nextTurn: [],
+            remove: (id) => { calls.push(['remove', id]); return true; },
+        },
+    };
+    assert.equal(wakePendingAfterGate(agent, { cancel: false }), true);
+    assert.deepEqual(calls, [
+        ['remove', 'pending-2'],
+        ['followup', pending],
+    ]);
+});
