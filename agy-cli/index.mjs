@@ -5407,6 +5407,12 @@ function dshImageMetadataText(value) {
 }
 
 function containsDshImageMetadataText(value) {
+  if (Array.isArray(value)) return value.some((block) => {
+    if (typeof block === "string") return containsDshImageMetadataText(block)
+    if (block?.type === "text") return containsDshImageMetadataText(block.text)
+    if (block?.type === "tool_result") return containsDshImageMetadataText(block.content)
+    return false
+  })
   const text = String(value || "")
   return dshImageMetadataText(text) || text.includes("[图片已省略") || text.includes("（↑") ||
     text.includes("[图片聚合]") || DSH_IMAGE_NOTE_RE.test(text.trim())
@@ -5441,7 +5447,7 @@ function dshImageMetadataMessage(message) {
 function isImagePlaceholder(text) {
   if (typeof text !== "string") return false
   const trimmed = text.trim()
-  return IMAGE_SLIM_RE.test(trimmed) || MAGPIE_IMAGE_PLACEHOLDERS.has(trimmed) || dshImageMetadataText(trimmed)
+  return IMAGE_SLIM_RE.test(trimmed) || MAGPIE_IMAGE_PLACEHOLDERS.has(trimmed) || DSH_IMAGE_OMITTED_RE.test(trimmed)
 }
 
 function isImageSlot(block) {
