@@ -341,45 +341,82 @@ function parseDreamJson(rawText) {
     }));
 }
 
-function formatSummary(
+function formatMemoryText(item) {
+  const rawTags = Array.isArray(item.tags)
+    ? item.tags.map((tag) => String(tag).trim()).filter(Boolean)
+    : [];
+  const tags = rawTags.filter((tag) => tag !== '梦境整理');
+  let identity = '';
+  const identityIndex = tags.indexOf('群友身份');
+  if (identityIndex >= 0) identity = tags[identityIndex + 1] || '';
+  if (!identity && tags.includes('主人互动')) {
+    identity = tags.find((tag) => tag !== '主人互动') || '';
+  }
+
+  let body = String(item.text ?? '').trim();
+  if (!identity) {
+    const account = body.match(/^群内账号“([^”]+)”/);
+    if (account) identity = account[1];
+  }
+  if (!identity) {
+    const match = body.match(/^群友\s*(.+?)(?=\s*(?:的|提到|说|曾|是|在|和|与|分享|编写|不知|想|要))/);
+    if (match) identity = match[1].trim();
+  }
+  if (!identity && tags.includes('群友')) {
+    const match = body.match(/^([^是]+?)是/);
+    if (match) identity = match[1].trim();
+  }
+
+  const genericTags = new Set(['群友身份', '群友', '群内账号', '梦境整理']);
+  const categoryTags = tags.filter((tag) => !genericTags.has(tag) && tag !== identity);
+  if (identity) {
+    const nicknameAt = body.indexOf('群昵称');
+    if (nicknameAt >= 0) {
+      body = body.slice(nicknameAt).replace(/^群昵称/, '昵称');
+    } else {
+      body = body.replace(/^群内账号“[^”]+”\s*/, '');
+      body = body.replace(`群友${identity}`, '');
+      body = body.replace(`群友 ${identity}`, '');
+      if (body.startsWith(identity)) body = body.slice(identity.length);
+      body = body.replace(/^的|^是/, '').trimStart();
+    }
+  }
+
+  const who = identity ? `[群u:${identity}]` : '';
+  const categories = categoryTags.map((tag) => `[${tag}]`).join('');
+  return `${who}${categories}${body}`;
+}
+
+export function formatSummary(
   store,
-  { maxPinned = 10, maxRecent = 10, maxChars = 4000, dreamTimes = DEFAULT_DREAM_TIMES } = {}
+  { maxPinned = 10, maxRecent = 10, maxChars = 4000 } = {}
 ) {
-  const pinned = store.items.filter((x) => x.pinned).slice(-maxPinned);
-  const pinnedIds = new Set(pinned.map((x) => x.id));
-  const recent = store.items.filter((x) => !pinnedIds.has(x.id)).slice(-maxRecent);
-
-  const lastDream = store.dreamState?.lastDreamAt
-    ? store.dreamState.lastDreamAt.slice(0, 16).replace('T', ' ')
-    : '尚未做梦';
-  const lines = [
-    `RAG 记忆状态：长期记忆 ${store.items.length} 条｜短期记忆：全量保存（含本地文件路径）｜每日做梦时间：${dreamTimes.join('、')}（上次：${lastDream}）`,
-  ];
-  if (store.dreamState?.lastDreamError) {
-    lines.push(`最近做梦未完成：${store.dreamState.lastDreamError}`);
+  const pinned = store.items.filter((item) => item.pinned).slice(-maxPinned);
+  const pinnedIds = new Set(pinned.map((item) => item.id));
+  const recent = store.items.filter((item) => !pinnedIds.has(item.id)).slice(-maxRecent);
+  const selected = [...pinned, ...recent];
+  if (!selected.length) {
+    return '（长期记忆库暂无记录；遇到重要事实请调 rag_memory_add，回忆旧事或查近期消息请调 rag_memory_search）';
   }
 
-  if (!store.items.length) {
-    lines.push('（长期记忆库暂无记录；遇到重要事实请调 rag_memory_add，回忆旧事或查近期消息请调 rag_memory_search）');
-  } else {
-    if (pinned.length) {
-      lines.push('【长期固定记忆】');
-      for (const it of pinned) {
-        const tagStr = it.tags?.length ? ` [${it.tags.join(',')}]` : '';
-        lines.push(`- ${it.id}${tagStr}: ${it.text}`);
-      }
-    }
-    if (recent.length) {
-      lines.push('【最近长期记忆】');
-      for (const it of recent) {
-        const tagStr = it.tags?.length ? ` [${it.tags.join(',')}]` : '';
-        lines.push(`- ${it.id}${tagStr}: ${it.text}`);
-      }
-    }
-  }
+  const out = selected.map(formatMemoryText).join('\n');
+  return out.length > maxChars
+    ? `${out.slice(0, maxChars)}\n…(已截断，请用 rag_memory_search 按语义检索)`
+    : out;
+}
 
-  const out = lines.join('\n');
-  return out.length > maxChars ? `${out.slice(0, maxChars)}\n…(已截断，请用 rag_memory_search 按语义检索)` : out;
+export function createDailySummaryCache(readSummary, today = () => getLocalDateAndHHMM().dateStr) {
+  let day = '';
+  let value = '';
+  return () => {
+    const nextDay = today();
+    if (nextDay !== day) {
+      const nextValue = readSummary();
+      day = nextDay;
+      value = nextValue;
+    }
+    return value;
+  };
 }
 
 export function apply(ctx, config = {}) {
@@ -407,6 +444,9 @@ export function apply(ctx, config = {}) {
       : DEFAULT_DREAM_TIMES;
 
   const storePath = resolveStorePath(storeFile);
+  const dailySummary = createDailySummaryCache(() =>
+    formatSummary(loadStore(storePath, model), { maxPinned, maxRecent, maxChars })
+  );
 
   // 串行写队列，防止并发读写丢数据
   let writeChain = Promise.resolve();
@@ -589,10 +629,7 @@ export function apply(ctx, config = {}) {
   // 1. 注册系统提示变量（兼容 complete: true 人设）
   ctx.effect(() => {
     if (typeof ctx.systemPrompt?.variable === 'function') {
-      return ctx.systemPrompt.variable(variableName, () => {
-        const store = loadStore(storePath, model);
-        return formatSummary(store, { maxPinned, maxRecent, maxChars, dreamTimes });
-      });
+      return ctx.systemPrompt.variable(variableName, dailySummary);
     }
     return undefined;
   }, `conan-rag-memory.var(${variableName})`);
