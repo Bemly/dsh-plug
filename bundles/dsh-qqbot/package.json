@@ -28,7 +28,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "prepublishOnly": "npm run build && node scripts/check-package.mjs",
+    "prepublishOnly": "node --check dist/index.js && node --test tests/*.test.mjs",
     "check:package": "node scripts/check-package.mjs",
     "lint": "eslint src/",
     "test": "vitest run",
