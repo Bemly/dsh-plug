@@ -10,7 +10,7 @@
  * 做法：
  *   1. 边界 = 最后一条 `assistant/message` 之后 —— 那之后就是本回合新来的消息；
  *   2. 边界**之前**的 user/message，只要含 ImageBlock，就换成「同一条消息的纯文字版」：
- *      图片块 → `[图片已省略：<路径/附件id>]`，其余文字原样保留；
+ *      图片块 → 通用 image-slim 占位符，其余文字原样保留；
  *   3. 用宿主认可的 **四事件协议**（compaction/start → summary → replace → end）做替换，
  *      这样不算"乱改历史"，token 账本也不会漂。
  *
@@ -48,6 +48,11 @@ function isOurAggregateMessage(content) {
         .join(String.fromCharCode(10));
     return text.includes('[图片聚合]') || text.includes('（↑');
 }
+export function imageSlimPlaceholder(attachment) {
+    const bytes = Number(attachment?.bytes);
+    const mb = Number.isFinite(bytes) && bytes >= 0 ? (bytes / 1048576).toFixed(2) : '0.00';
+    return `[${mb} MB image left out here: an image the user attached, already seen earlier in this conversation. Rely on what you already said about it.]`;
+}
 /** 把一条消息里的图片块换成一个文字占位；没有图片就返回 null */
 function stripImages(content) {
     if (!Array.isArray(content))
@@ -62,9 +67,7 @@ function stripImages(content) {
                 blocks.push(b);
                 continue;
             }
-            const id = String(b.attachment?.attachmentId ?? '');
-            const mt = String(b.attachment?.mediaType ?? '');
-            blocks.push({ type: 'text', text: `[图片已省略${mt ? ` ${mt}` : ''}${id ? ` #${id.slice(0, 8)}` : ''}]` });
+            blocks.push({ type: 'text', text: imageSlimPlaceholder(b.attachment) });
             removed += 1;
             continue;
         }

@@ -1,0 +1,35 @@
+{
+  "name": "magpie-image-slim",
+  "version": "0.1.0",
+  "description": "Magpie gateway middleware for DSH aggregate images: replace historical inline images with standard image-slim placeholders and split glued placeholder text blocks.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "image-slim.middleware.js"
+  ],
+  "keywords": [
+    "magpie",
+    "magpie-middleware",
+    "image-slim",
+    "dsh",
+    "cache"
+  ],
+  "magpie": {
+    "middleware": "./image-slim.middleware.js",
+    "options": {
+      "agents": [
+        "dsh"
+      ],
+      "models": [],
+      "keepCurrentTurn": true,
+      "replaceImages": true,
+      "splitPlaceholders": true,
+      "log": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bemly/dsh-plug.git",
+    "directory": "magpie/middlewares/magpie-image-slim"
+  }
+}

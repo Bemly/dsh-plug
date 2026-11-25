@@ -22,6 +22,7 @@ interface OffloadLogger {
  * @param turn 当前打开的轮次号（compaction 事件必须与它一致，否则会写坏会话日志）
  * @returns 处理掉的图片块数量（0 = 没事可做）
  */
+export declare function imageSlimPlaceholder(attachment: unknown): string;
 export declare function offloadHistoryImages(agent: OffloadAgentLike | undefined, logger?: OffloadLogger, turn?: number): Promise<number>;
 export {};
 //# sourceMappingURL=image-offload.d.ts.map
