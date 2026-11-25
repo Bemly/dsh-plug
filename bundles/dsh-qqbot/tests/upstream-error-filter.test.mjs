@@ -26,7 +26,14 @@ test('matches refusal phrases through markdown links and mixed whitespace', () =
     assert.equal(isRefusalText('A\nLANGUAGE   MODEL replied'), true);
 });
 
-test('does not match ordinary model discussion without the configured phrases', () => {
+test('matches configured substrings without word boundaries', () => {
+    assert.equal(isRefusalText('policyholder'), true);
+    assert.equal(isRefusalText('policies'), true);
+    assert.equal(isRefusalText('guidelines'), true);
+    assert.equal(isRefusalText('A LANGUAGE MODEL'), true);
+});
+
+test('does not match text without configured substrings', () => {
     assert.equal(isRefusalText('LLM 是语言模型，可以做很多事。'), false);
-    assert.equal(isRefusalText('This follows my guidelines.'), false);
+    assert.equal(isRefusalText('This request is allowed.'), false);
 });

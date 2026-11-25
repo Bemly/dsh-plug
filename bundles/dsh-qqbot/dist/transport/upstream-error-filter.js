@@ -4,7 +4,11 @@ function normalizeVisibleText(text) {
         .replace(/\s+/g, ' ');
 }
 export function isRefusalText(text) {
-    return /\ba\s+language\s+model\b|\bagainst\s+my\s+guidelines?\b/i.test(normalizeVisibleText(text));
+    const value = normalizeVisibleText(text).toLowerCase();
+    return value.includes('a language model')
+        || value.includes('policies')
+        || value.includes('policy')
+        || value.includes('guideline');
 }
 export function isUpstreamAuthError(text) {
     const value = String(text ?? '').trim();
