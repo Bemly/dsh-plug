@@ -35,8 +35,8 @@ if (missing.length > 0) {
     console.error('');
     console.error('  【最简单的解决办法】');
     console.error('   把依赖换成本包在 npm 上的发布版（自带 dist，不需要任何构建）：');
-    console.error('     pnpm add dsh-qq-bot');
-    console.error('   或者在 dsh 插件页里填【包名】 dsh-qq-bot （而不是 GitHub 地址）。');
+    console.error('     pnpm add dsh-botqq');
+    console.error('   或者在 dsh 插件页里填【包名】 dsh-botqq （而不是 GitHub 地址）。');
     console.error('');
     console.error('  【想继续用 git 源的化】');
     console.error('   在上面那个安装目录里手动编译一次：');

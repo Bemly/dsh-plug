@@ -165,7 +165,7 @@ export function persistCredentialsToProfile(credentials, profileDir, logger, ins
                 '# QQ Bot 凭据（扫码绑定自动生成）',
                 '- insert:',
                 `    - id: ${entryId}`,
-                '      name: dsh-qq-bot',
+                '      name: dsh-botqq',
                 '      config:',
                 `        appId: ${ystr(credentials.appId)}`,
                 `        appSecret: ${ystr(credentials.appSecret)}`,
@@ -209,7 +209,7 @@ function printYamlInstructions(credentials, patchPath, entryId = 'im-qqbot') {
     console.log('');
     console.log('  - insert:');
     console.log(`      - id: ${entryId}`);
-    console.log("        name: 'dsh-qq-bot'");
+    console.log("        name: 'dsh-botqq'");
     console.log('        config:');
     console.log(`          appId: '${credentials.appId}'`);
     console.log(`          appSecret: '${credentials.appSecret}'`);

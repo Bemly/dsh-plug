@@ -20,7 +20,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 /** 本插件包名（patch 里用它认出"这是本插件的实例行"） */
-const PLUGIN_PKG = 'dsh-qq-bot';
+const PLUGIN_PKG = 'dsh-botqq';
 /** 没写 settingsNs 时的默认槽名（必须与 index.ts / session-manager 的取值一致） */
 export const DEFAULT_NS = 'im-qqbot';
 /**

@@ -1,4 +1,4 @@
-# dsh-qq-bot
+# dsh-botqq
 
 An **enhanced fork** of the QQ Bot IM plugin for [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) (dsh): it drives the dsh agent loop with the QQ messaging platform as the frontend protocol, adding a local sticker library, rich media send/recall, scheduled tasks, multi-instance personas, and a visual settings panel.
 
@@ -142,7 +142,7 @@ panel where **your own account** calls the group website API to fill the gap
 ### Method 1 (after npm release): one command
 
 ```powershell
-npx @deepseek-ai/dsh plugin --profile web add dsh-qq-bot
+npx @deepseek-ai/dsh plugin --profile web add dsh-botqq
 ```
 
 > Until it is published to npm, use Method 2 below.
@@ -313,7 +313,7 @@ Messages that @ the bot always pass; **messages with images always pass** (peopl
 
 ```bash
 node scripts/download-model.mjs                                   # from the source checkout
-node node_modules/dsh-qq-bot/scripts/download-model.mjs    # when installed via npm
+node node_modules/dsh-botqq/scripts/download-model.mjs    # when installed via npm
 ```
 
 It prefers the China mirror `hf-mirror.com` and falls back to the official host, verifies file sizes, and prints the next steps.

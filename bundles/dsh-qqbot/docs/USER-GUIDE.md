@@ -1,6 +1,6 @@
 # dsh-qqbot 用户手册
 
-> [dsh-qq-bot](../README.md) 的**详细文档**：配置项、内置命令、自定义扩展、群管理（含 🔨 锤子：禁言 / 踢人）、本地小模型、好感度系统、数据文件与日志、升级排障、架构与本地开发。
+> [dsh-botqq](../README.md) 的**详细文档**：配置项、内置命令、自定义扩展、群管理（含 🔨 锤子：禁言 / 踢人）、本地小模型、好感度系统、数据文件与日志、升级排障、架构与本地开发。
 > 只想看"它能干什么 + 怎么装" → 回 **[README](../README.md)**。
 
 **章节**：给AI的话 · 架构 · QQ 远程审批 · QQ 群管理（含 🔨 锤子：禁言 / 踢人）· 智能回复（本地小模型）· **好感度与熟识度** · 配置项 · 数据文件与日志 · 内置命令 · 用户扩展（含自定义界面卡片）· 富媒体指令 · 核心模块 · 会话路由 · 升级与兼容 · 常见问题 · 设计原则 · 本地开发
@@ -290,7 +290,7 @@ dock 里的「🔨 锤子」下面现在分四页：
 
 ```bash
 node scripts/download-model.mjs                                   # 源码分发(在插件仓库根目录跑)
-node node_modules/dsh-qq-bot/scripts/download-model.mjs    # npm 装的插件(npm 目录内)
+node node_modules/dsh-botqq/scripts/download-model.mjs    # npm 装的插件(npm 目录内)
 ```
 
 默认**优先走国内镜像** `hf-mirror.com`（失败自动换官方源），下载完会校验体积并打印后续步骤。可选参数：
@@ -1454,7 +1454,7 @@ disabling profile plugin row …
 
 dsh / pnpm 有一条**「新版本冷却」**策略：**没进白名单的新版本会被当成"太新"而拒绝安装**，症状就是"命令跑成功、版本号却没变"。白名单就是 profile 里的 `minimumReleaseAgeExclude`。
 
-**排查**：打开你 profile 目录下的 `pnpm-workspace.yaml`，看白名单里**有没有你要的那个版本号**（形如 `dsh-qq-bot@1.6.5`）；没有就会被退回旧版 —— 把版本号加进去再装一次。
+**排查**：打开你 profile 目录下的 `pnpm-workspace.yaml`，看白名单里**有没有你要的那个版本号**（形如 `dsh-botqq@1.6.5`）；没有就会被退回旧版 —— 把版本号加进去再装一次。
 
 ### ③ 设置页还在吗？入口在哪儿？
 
@@ -1490,7 +1490,7 @@ disabling profile plugin row …
 **处理分三步**：
 
 1. **把本插件升到最新版** —— 本插件自 **v1.6.4** 起适配 dsh 0.2.x（兼容范围无上界），升上去就不会被拦。
-2. **升完还是旧版？** 那是 dsh / pnpm 的**「新版本冷却」**：没进白名单的新版本会被当成"太新"而拒绝安装。去 profile 的 `pnpm-workspace.yaml` 看 `minimumReleaseAgeExclude` **白名单里有没有你要的版本号**（形如 `dsh-qq-bot@1.6.5`），没有就加进去再装一次。
+2. **升完还是旧版？** 那是 dsh / pnpm 的**「新版本冷却」**：没进白名单的新版本会被当成"太新"而拒绝安装。去 profile 的 `pnpm-workspace.yaml` 看 `minimumReleaseAgeExclude` **白名单里有没有你要的版本号**（形如 `dsh-botqq@1.6.5`），没有就加进去再装一次。
 3. **插件在、但完全没有界面**（没有 dock 球、没有设置页）→ 确认插件装在 **`web` profile**（装到别的 profile 就是个"没有设置面板的裸环境"）。
 
 > 完整说明见上文「🆙 升级与兼容（dsh 0.2.x）」。

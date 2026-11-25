@@ -3,7 +3,7 @@
  * 数据经 host 半边同源路由 /api/qqbot-settings/{read,update}。
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-qq-bot',
+  id: 'dsh-botqq',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports

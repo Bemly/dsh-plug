@@ -10,8 +10,8 @@ import { createRequire } from 'node:module';   // 懒加载 zlib（zstd 是 Node
 import { spawn, execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { getStickerStore } from 'dsh-qq-bot/sticker-store';
-import { getScheduleStore } from 'dsh-qq-bot/schedule-store';
+import { getStickerStore } from 'dsh-botqq/sticker-store';
+import { getScheduleStore } from 'dsh-botqq/schedule-store';
 
 export const name = 'qqbot-settings';
 /**
@@ -27,7 +27,7 @@ const NS = 'im-qqbot';
 /**
  * 定位宿主 profile 根(账号实例 patch 所在)。优先代码位置(实体安装: 包根上溯 3 级 = profile 根,
  * 上溯层级在单包合并时已按包根位置修正); 若该位置没有 cordis.patch.yml(link/symlink 安装时
- * 本文件被从源码目录加载), 则扫描 ~/.dsh/profiles/* 找装着 dsh-qq-bot 的 profile。
+ * 本文件被从源码目录加载), 则扫描 ~/.dsh/profiles/* 找装着 dsh-botqq 的 profile。
  */
 function resolveProfileRoot() {
   // 2026-10-20 修(GitHub issue #14): 生成式安装(dsh-market / DSH Desktop)下,
@@ -70,7 +70,7 @@ function resolveProfileRoot() {
         try {
           const pkg = JSON.parse(readFileSync(join(prof, 'package.json'), 'utf8'));
           const blob = JSON.stringify(pkg.dsh?.profile?.bundles ?? []) + JSON.stringify(pkg.dependencies ?? {});
-          if (blob.includes('dsh-qq-bot')) return prof;
+          if (blob.includes('dsh-botqq')) return prof;
         } catch { /* 无 package.json, 跳过 */ }
       }
     } catch { /* 该 profiles 根不存在 */ }
@@ -1317,7 +1317,7 @@ export function apply(ctx) {
     //   而 DSH loader 只判 falsy（数字 1 是 truthy，照收），下游市场插件对 id 调 `.split()`
     //   就抛 TypeError，表现成"已安装列表空白 + 400 空 body + 零日志"，极难排查。
     out.push(`${pad0}- id: ${yqLoose(id)}`);
-    if (!isMain) out.push(`${pad2}name: 'dsh-qq-bot'`);
+    if (!isMain) out.push(`${pad2}name: 'dsh-botqq'`);
     if (inst.disabled) out.push(`${pad2}disabled: true`);
     out.push(`${pad2}config:`);
     if (inst.appId) out.push(`${pad4}appId: ${yq(inst.appId)}`);
@@ -1740,7 +1740,7 @@ export function apply(ctx) {
   // ── agent 预设: 列表/复制/打开文件夹/说明 ──
   /** QQ 通道工具插件的规范行 id/name(复制预设时自动补上; 新行名跟随本安装主包) */
   const CHANNEL_TOOLS_ROW_ID = 'qqbot-channel-tools';
-  const CHANNEL_TOOLS_ROW_NAME = 'dsh-qq-bot/channel-tools';
+  const CHANNEL_TOOLS_ROW_NAME = 'dsh-botqq/channel-tools';
   /** 检测 preset 的 agent.cordis.yml 是否已含 qqbot-channel-tools 插件行 */
   function presetHasChannelTools(base) {
     try {
@@ -3329,7 +3329,7 @@ export function apply(ctx) {
     try {
       const body = await readJsonBody(req);
       const ns = String((body && body.ns) || '');
-      const mod = await import('dsh-qq-bot/channel-tools');
+      const mod = await import('dsh-botqq/channel-tools');
       if (typeof mod.askAiToWriteSamples !== 'function') {
         return writeJson(res, 500, { ok: false, error: '线上插件还是旧版本(需重启宿主加载新代码)' });
       }
@@ -3819,7 +3819,7 @@ export function apply(ctx) {
       let mods = [];
       let note = '';
       try {
-        const mod = await import('dsh-qq-bot/channel-tools');
+        const mod = await import('dsh-botqq/channel-tools');
         if (typeof mod.botplayExtStatus === 'function') mods = mod.botplayExtStatus(ns) || [];
         else note = '线上插件还是旧版本(需重启宿主加载新代码) —— 现在只能显示文件路径';
       } catch (e) { note = String((e && e.message) || e); }
@@ -3843,7 +3843,7 @@ export function apply(ctx) {
       const body = await readJsonBody(req);
       const ns = String((body && body.ns) || NS);
       const file = String((body && body.file) || '').trim();
-      const mod = await import('dsh-qq-bot/channel-tools');
+      const mod = await import('dsh-botqq/channel-tools');
       if (typeof mod.reloadBotplayExt !== 'function') {
         return writeJson(res, 500, { ok: false, error: '线上插件还是旧版本(需重启宿主加载新代码)' });
       }
@@ -4005,7 +4005,7 @@ export function apply(ctx) {
         '写完自己核对一遍语法；可以用 /botplay 事件id 在群里发卡试一下, 或让主人去面板点「🔄 重载模块」后再发卡。',
       ].join('\n');
 
-      const mod = await import('dsh-qq-bot/channel-tools');
+      const mod = await import('dsh-botqq/channel-tools');
       if (typeof mod.setBotplayWritePrompt !== 'function' || typeof mod.askAiToWriteBotplayEvent !== 'function') {
         return writeJson(res, 500, { ok: false, error: '线上插件还是旧版本(需重启宿主加载新代码)' });
       }
@@ -6057,7 +6057,7 @@ const WHY_MAP = { busy: '目标会话回合活跃,已等待至回合结束仍超
             }
           }
           if (!__agentForCap && __capPeer) {
-            // ⚠️ 不能用 'dsh-qq-bot/session-registry' —— package.json 的 exports
+            // ⚠️ 不能用 'dsh-botqq/session-registry' —— package.json 的 exports
             //    里没暴露这个子路径（只有 channel-tools / sticker-store / schedule-store / client）。
             //    settings-host.js 就在包根，直接用相对路径最稳。
             const reg = await import('./dist/features/session-registry.js');

@@ -12,7 +12,7 @@
 # ── 插入 im-qqbot 插件行 ──
 - insert:
     - id: im-qqbot
-      name: 'dsh-qq-bot'
+      name: 'dsh-botqq'
       config:
         appId: __FROM_ENV__
         appSecret: __FROM_ENV__

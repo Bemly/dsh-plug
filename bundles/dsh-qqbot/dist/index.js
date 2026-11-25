@@ -207,7 +207,7 @@ export async function apply(ctx, config) {
             logger.warn('  ⚠️  dsh-qqbot 安装不完整：缺少 ' + miss.join(', '));
             logger.warn('      插件主功能可用，但设置面板 / 配置桥可能不工作。');
             logger.warn('      建议改用 npm 发布版安装（自带全部文件，无需构建）：');
-            logger.warn('        pnpm add dsh-qq-bot');
+            logger.warn('        pnpm add dsh-botqq');
             logger.warn('      （安装目录: ' + pkgRoot + '）');
             logger.warn('');
         }
