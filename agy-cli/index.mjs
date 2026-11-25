@@ -2850,10 +2850,6 @@ class Proc {
     // earlier message becomes a {{KIND_xxxxxxxx}} placeholder. The history
     // is the same one, so the session holds (yetone/magpie#7223).
     if (sameHistoryUpToMasking(this.expectedMessages, messages)) return true
-    // DSH/qq-bot and magpie image-slim can replace an image the live session
-    // already holds with text (or drop it from the translated request). The
-    // image is not new context; only the image-bearing metadata may differ.
-    if (sameHistoryUpToImages(this.expectedMessages, messages)) return true
     // A proxy between the client and magpie (billion-context's nudge) can
     // add text after a step's tool results for one request; the client never
     // had it, so the next request's history goes on without it
@@ -2872,6 +2868,9 @@ class Proc {
       if (historyKey(expectedStripped) === historyKey(actualStripped) ||
         sameHistoryUpToMasking(expectedStripped, actualStripped)) return true
     }
+    // magpie's image-slim swaps an earlier image for its placeholder text; agy
+    // has that image already, so the history it has is otherwise as it was.
+    if (sameHistoryUpToImages(this.expectedMessages, messages)) return true
     // A client that compacts its own context (billion-context in DeepSeek
     // Harness) folds earlier messages into a summary the live session never
     // saw. agy still holds those messages whole, so the session holds as long
@@ -3257,6 +3256,7 @@ class Proc {
       ready: true,
       socket,
       result: null,
+      rawResultKey: null,
       deferred: false,
       lateDelivered: false,
       deadline: null,
@@ -3343,19 +3343,19 @@ class Proc {
     turn.notifyLate()
   }
 
-  validateResults(results, { checkCommitted = true } = {}) {
+  validateResults(results) {
     const unique = new Map()
     for (const item of results) {
       const id = item.block.tool_use_id
-      const serialized = JSON.stringify(item.result)
+      const rawKey = item.rawKey ?? JSON.stringify(item.result)
       const previous = unique.get(id)
-      if ((previous && JSON.stringify(previous.result) !== serialized) ||
-        (checkCommitted && item.call.result && JSON.stringify(item.call.result) !== serialized)) {
+      const storedKey = item.call.rawResultKey ?? (item.call.result ? JSON.stringify(item.call.result) : null)
+      if ((previous && previous.rawKey !== rawKey) || (storedKey !== null && storedKey !== rawKey)) {
         const error = new Error(`agy bridge: conflicting duplicate result for ${id}`)
         error.statusCode = 409
         throw error
       }
-      if (!previous) unique.set(id, item)
+      if (!previous) unique.set(id, item.rawKey === rawKey ? item : { ...item, rawKey })
     }
     return unique
   }
@@ -3365,11 +3365,12 @@ class Proc {
     if (!turn || turn.finalized) throw new BusyError("agy bridge: no response is waiting for these tool results")
     turn.touchClient()
     let delivered = 0
-    for (const { call, result } of this.validateResults(results).values()) {
+    for (const { call, result, rawKey } of this.validateResults(results).values()) {
       clearTimeout(call.deadline)
       if (call.deferred) {
         if (!call.result) {
           call.result = result
+          call.rawResultKey = rawKey
           delivered++
           this.#deliverLate(turn, call)
         }
@@ -3377,6 +3378,7 @@ class Proc {
       }
       if (call.mcpResponded || !call.ready || turn.done) continue
       call.result = result
+      call.rawResultKey = rawKey
       delivered++
       this.#respondMcp(call, { result })
     }
@@ -4452,11 +4454,15 @@ function replayHistoryProblem(body, resultBlocks) {
 async function keepDroppedTurn(proc, turn, opts) {
   if (proc.toolsGrew(opts.tools) || proc.workDir !== opts.workDir ||
     !sameInstructions(proc.instructions, opts.instructions)) return false
-  const results = turn.calls.filter((call) => call.id && !call.result && !call.mcpResponded).map((call) => ({
-    block: { tool_use_id: call.id },
-    call,
-    result: { content: [{ type: "text", text: DROPPED_NOTE }], isError: true },
-  }))
+  const results = turn.calls.filter((call) => call.id && !call.result && !call.mcpResponded).map((call) => {
+    const result = { content: [{ type: "text", text: DROPPED_NOTE }], isError: true }
+    return {
+      block: { tool_use_id: call.id },
+      call,
+      result,
+      rawKey: JSON.stringify(result),
+    }
+  })
   try {
     return await proc.steerInSession(turn, results, opts.history)
   } catch {
@@ -5374,24 +5380,35 @@ function sameHistoryUpToMasking(expected, actual) {
   return sameUpToMasking(historyRows(expected), historyRows(actual))
 }
 
-// Magpie's image-slim placeholder (Codex view_image) and dsh-qqbot's own
-// aggregate-image placeholder. Both stand for an image the live agy session
-// already received; they are metadata, not new user text.
+// What magpie's image-slim middleware writes where it took out an image the
+// model has already seen: a text block, or on Codex a whole view_image output
+// set to it as a plain string.
 const IMAGE_SLIM_RE = /^\[\d+(?:\.\d+)? MB image left out here: [\s\S]*\]$/
+// magpie's gateway writes these where it leaves out an earlier image itself:
+// under a provider's byte cap (body_cap.go imageLeftOut), a model's image cap
+// (image_cap.go imageOverCap), or an image the request carries again later
+// (imageShownLater). agy has seen each of those images too.
+const MAGPIE_IMAGE_PLACEHOLDERS = new Set([
+  "[An earlier image was left out here to keep this request under its size limit.]",
+  "[An earlier image was omitted here to keep this request within the model's image limit.]",
+  "[This image is omitted here; the same image appears again later in this conversation.]",
+])
+// dsh-qqbot's aggregate-image offload writes Chinese metadata, sometimes as
+// separate blocks and sometimes glued into the main text block by the
+// Responses-to-Anthropic translation.
 const DSH_IMAGE_OMITTED_RE = /^\[图片已省略(?: [^\]\s]+)?(?: #[^\]\s]+)?\]$/u
 const DSH_IMAGE_ATTRIBUTION_RE = /^（↑ .* 发的图）$/u
 const DSH_IMAGE_AGGREGATE_RE = /^\[图片聚合\]/u
 const DSH_IMAGE_NOTE_RE = /^Image "[^"]+" \(sha256:[0-9a-f]+\)/u
 
-function imageMetadataText(value) {
+function dshImageMetadataText(value) {
   const text = String(value || "").trim()
-  return IMAGE_SLIM_RE.test(text) || DSH_IMAGE_OMITTED_RE.test(text) ||
-    DSH_IMAGE_ATTRIBUTION_RE.test(text) || DSH_IMAGE_AGGREGATE_RE.test(text)
+  return DSH_IMAGE_OMITTED_RE.test(text) || DSH_IMAGE_ATTRIBUTION_RE.test(text) || DSH_IMAGE_AGGREGATE_RE.test(text)
 }
 
-function containsImageMetadataText(value) {
+function containsDshImageMetadataText(value) {
   const text = String(value || "")
-  return imageMetadataText(text) || text.includes("[图片已省略") || text.includes("（↑") ||
+  return dshImageMetadataText(text) || text.includes("[图片已省略") || text.includes("（↑") ||
     text.includes("[图片聚合]") || DSH_IMAGE_NOTE_RE.test(text.trim())
 }
 
@@ -5403,38 +5420,66 @@ function stripDshImageMetadataText(value) {
     .replace(/Image "[^"]+" \(sha256:[0-9a-f]+\)[^\n]*/gu, "")
 }
 
-function imageMetadataMessageText(message) {
+function dshImageMessageText(message) {
   const content = message?.content
   if (typeof content === "string") return content
   if (!Array.isArray(content)) return ""
   return content.map((block) => {
     if (typeof block === "string") return block
     if (block?.type === "text") return String(block.text || "")
-    if (block?.type === "tool_result") return imageMetadataMessageText({ content: block.content })
+    if (block?.type === "tool_result") return dshImageMessageText({ content: block.content })
     return ""
   }).join("\n")
 }
 
-function contentHasImageMetadata(content) {
-  if (typeof content === "string") return containsImageMetadataText(content)
-  if (!Array.isArray(content)) return false
-  return content.some((block) => {
-    if (typeof block === "string") return containsImageMetadataText(block)
-    if (block?.type === "text") return containsImageMetadataText(block.text)
-    if (block?.type === "tool_result") return contentHasImageMetadata(block.content)
-    return false
-  })
+function dshImageMetadataMessage(message) {
+  const text = dshImageMessageText(message)
+  return containsDshImageMetadataText(message?.content) || DSH_IMAGE_NOTE_RE.test(text.trim()) ||
+    (/- Image: .* →/.test(text) && /(?:桥接视觉工具|modlens_read_image|analyze_image)/.test(text))
 }
 
-function dshImageMetadataMessage(message) {
-  const text = imageMetadataMessageText(message)
-  return contentHasImageMetadata(message?.content) || DSH_IMAGE_NOTE_RE.test(text.trim()) ||
-    (/- Image: .* →/.test(text) && /(?:桥接视觉工具|modlens_read_image|analyze_image)/.test(text))
+function isImagePlaceholder(text) {
+  if (typeof text !== "string") return false
+  const trimmed = text.trim()
+  return IMAGE_SLIM_RE.test(trimmed) || MAGPIE_IMAGE_PLACEHOLDERS.has(trimmed) || dshImageMetadataText(trimmed)
+}
+
+function isImageSlot(block) {
+  return block?.type === "image" || (block?.type === "text" && isImagePlaceholder(block.text))
+}
+
+function dshImagePlaceholderCount(content) {
+  if (typeof content === "string") return (content.match(/\[图片已省略[^\]]*\]/gu) || []).length
+  if (!Array.isArray(content)) return 0
+  let n = 0
+  for (const block of content) {
+    if (block?.type === "text") n += (String(block.text || "").match(/\[图片已省略[^\]]*\]/gu) || []).length
+    else if (block?.type === "tool_result") n += dshImagePlaceholderCount(block.content)
+  }
+  return n
+}
+
+// How many images a message has where they were, each counted as an image or
+// as the placeholder that stands for it, tool results' included.
+function contentImageSlots(content) {
+  if (typeof content === "string") return isImagePlaceholder(content) ? 1 : dshImagePlaceholderCount(content)
+  if (!Array.isArray(content)) return 0
+  let n = 0
+  for (const block of content) {
+    if (isImageSlot(block)) n++
+    else if (block?.type === "text") n += dshImagePlaceholderCount(block.text)
+    else if (block?.type === "tool_result") n += contentImageSlots(block.content)
+  }
+  return n
+}
+
+function imageSlots(message) {
+  return contentImageSlots(message?.content)
 }
 
 function withoutImageMetadataContent(content, messageMetadata) {
   if (typeof content === "string") {
-    if (imageMetadataText(content)) return []
+    if (isImagePlaceholder(content)) return []
     return messageMetadata ? stripDshImageMetadataText(content) : content
   }
   if (!Array.isArray(content)) return content
@@ -5442,7 +5487,7 @@ function withoutImageMetadataContent(content, messageMetadata) {
   for (const block of content) {
     if (block?.type === "image") continue
     if (block?.type === "text" && typeof block.text === "string") {
-      if (imageMetadataText(block.text)) continue
+      if (isImagePlaceholder(block.text)) continue
       const text = messageMetadata ? stripDshImageMetadataText(block.text) : block.text
       if (!text.trim()) continue
       kept.push(text === block.text ? block : { ...block, text })
@@ -5460,8 +5505,7 @@ function withoutImageMetadataContent(content, messageMetadata) {
 function withoutImages(messages) {
   return messages.map((message) => {
     if (!Array.isArray(message?.content)) return message
-    const metadata = dshImageMetadataMessage(message)
-    return { ...message, content: withoutImageMetadataContent(message.content, metadata) }
+    return { ...message, content: withoutImageMetadataContent(message.content, dshImageMetadataMessage(message)) }
   })
 }
 
@@ -5469,8 +5513,14 @@ function imagesInContent(content, out = []) {
   if (Array.isArray(content)) {
     for (const block of content) {
       if (block?.type === "image") {
-        const image = parseUserImage(block)
-        if (image) out.push(`${image.mimeType}:${digest(image.data)}`)
+        try {
+          const image = parseUserImage(block)
+          out.push(`${image.mimeType}:${digest(image.data)}`)
+        } catch {
+          // Synthetic or malformed image blocks still need a stable identity:
+          // equal raw sources compare equal, different ones do not.
+          out.push(`raw:${digest(stableJSON(block.source || block))}`)
+        }
       } else if (block?.type === "tool_result") {
         imagesInContent(block.content, out)
       }
@@ -5489,24 +5539,26 @@ function sameImageSequence(expected, actual) {
   return true
 }
 
+// The same history but for images swapped for placeholders. Magpie's own
+// placeholders keep one image slot per message. dsh-qqbot may also drop the
+// image block entirely from the translated request; that is tolerated only in
+// its aggregate-image metadata message. Real image changes still reject.
 function sameHistoryUpToImages(expected, actual) {
-  if (!Array.isArray(expected) || !Array.isArray(actual)) return false
-  const a = withoutImages(expected)
-  const b = withoutImages(actual)
-  if (historyKey(a) !== historyKey(b) && !sameHistoryUpToMasking(a, b)) return false
-  // Removing images must not hide a genuinely different or newly added image.
-  // A missing image is tolerated only in dsh-qqbot's aggregate-image metadata
-  // message, where the client intentionally keeps the text and drops the image.
-  for (let i = 0; i < Math.max(expected.length, actual.length); i++) {
+  if (!Array.isArray(expected) || !Array.isArray(actual) || expected.length !== actual.length) return false
+  for (let i = 0; i < expected.length; i++) {
     const e = expected[i]
     const t = actual[i]
+    const expectedSlots = imageSlots(e)
+    const actualSlots = imageSlots(t)
+    if (expectedSlots !== actualSlots &&
+      !(expectedSlots > actualSlots && (dshImageMetadataMessage(e) || dshImageMetadataMessage(t)))) return false
     const expectedImages = imagesInContent(e?.content)
     const actualImages = imagesInContent(t?.content)
     if (actualImages.length > expectedImages.length || !sameImageSequence(expectedImages, actualImages)) return false
-    if (actualImages.length < expectedImages.length &&
-      !dshImageMetadataMessage(e) && !dshImageMetadataMessage(t)) return false
   }
-  return true
+  const a = withoutImages(expected)
+  const b = withoutImages(actual)
+  return historyKey(a) === historyKey(b) || sameHistoryUpToMasking(a, b)
 }
 
 // One block as the history key reads it, or null for a block the key
@@ -6308,12 +6360,44 @@ function renderTurnMessage(message) {
   return out.join("\n\n")
 }
 
-function renderTurnMessageParts(message) {
-  if (message.role !== "user" || !Array.isArray(message.content)) {
-    let text = renderTurnMessage(message)
+function renderTurnMessageSegments(message) {
+  if (message.role !== "user") {
+    const blocks = Array.isArray(message.content) ? message.content : [message.content]
+    const reminders = []
+    const queuedParts = []
+    for (const block of blocks) {
+      const raw = blockText(block)
+      const trimmed = raw.trim()
+      if (!trimmed) continue
+      const queued = extractQueuedPrompt(trimmed)
+      if (queued !== null) {
+        if (queued) queuedParts.push(queued)
+      } else {
+        reminders.push(raw)
+      }
+    }
+    const out = []
     // a system or developer message later in the chat is system text too
-    if (message.role === "system" || message.role === "developer") text = outgoing(text)
-    return text === "" ? [] : [{ type: "text", text }]
+    const format = (text) => (message.role === "system" || message.role === "developer" ? outgoing(text) : text)
+    const joinedReminders = reminders.join("").trim()
+    if (joinedReminders) {
+      const wrapped = /^<system-reminder(?:\s[^>]*)?>[\s\S]*<\/system-reminder(?:\s[^>]*)?>$/.test(joinedReminders)
+        ? joinedReminders
+        : `<system-reminder>\n${joinedReminders}\n</system-reminder>`
+      const text = format(wrapped)
+      if (text) out.push({ type: "text", text, kind: "meta" })
+    }
+    for (const queued of queuedParts) {
+      const text = format(queued)
+      if (!text) continue
+      if (out.length) out.push({ type: "text", text: "\n\n", kind: "meta" })
+      out.push({ type: "text", text, kind: isMetaOnlyUserText(queued) ? "meta" : "user" })
+    }
+    return out
+  }
+  if (!Array.isArray(message.content)) {
+    const text = renderTurnMessage(message)
+    return text === "" ? [] : [{ type: "text", text, kind: isMetaOnlyUserText(text) ? "meta" : "user" }]
   }
   const parts = []
   let afterToolResult = false
@@ -6322,37 +6406,52 @@ function renderTurnMessageParts(message) {
       parts.push(parseUserImage(block))
       afterToolResult = false
     } else if (block?.type === "tool_result") {
-      appendPrompt(parts, `[tool result${block.tool_use_id ? " id=" + block.tool_use_id : ""}]\n`)
+      const toolParts = []
+      appendPrompt(toolParts, `[tool result${block.tool_use_id ? " id=" + block.tool_use_id : ""}]\n`)
       const result = toolResult(block)
-      for (const part of result.content) appendPrompt(parts, [part])
-      appendPrompt(parts, "\n[end of tool result]")
+      for (const part of result.content) appendPrompt(toolParts, [part])
+      appendPrompt(toolParts, "\n[end of tool result]")
+      for (const part of toolParts) {
+        parts.push(part.type === "text" ? { type: "text", text: part.text, kind: "tool" } : part)
+      }
       afterToolResult = true
     } else {
       const raw = blockText(block)
       const queued = block?.type === "text" ? extractQueuedPrompt(raw) : null
       const rendered = queued !== null ? queued : raw
-      appendPrompt(parts, rendered && afterToolResult && !rendered.startsWith("\n") ? "\n\n" + rendered : rendered)
-      if (rendered) afterToolResult = false
+      const text = rendered && afterToolResult && !rendered.startsWith("\n") ? "\n\n" + rendered : rendered
+      if (text) {
+        parts.push({ type: "text", text, kind: isMetaOnlyUserText(rendered) ? "meta" : "user" })
+        afterToolResult = false
+      }
     }
   }
-  return toPromptParts(parts)
+  return parts
 }
 
-function renderTurnMessagesParts(messages) {
+function renderTurnMessageParts(message) {
+  return toPromptParts(renderTurnMessageSegments(message))
+}
+
+function renderTurnMessagesSegments(messages) {
   // A trailing assistant prefill run renders as a continuation carrier rather
   // than the system-reminder treatment (see prefillRun above).
   const run = prefillTailEnabled() && messages.length ? prefillRun(messages) : null
   const prefillStart = run ? run.runStart : -1
   const groups = messages.map((message, index) =>
     prefillStart >= 0 && index >= prefillStart
-      ? renderPrefillCarrierParts(message)
-      : renderTurnMessageParts(message)).filter((group) => group.length > 0)
+      ? renderPrefillCarrierParts(message).map((part) => (part.type === "text" ? { ...part, kind: "user" } : part))
+      : renderTurnMessageSegments(message)).filter((group) => group.length > 0)
   const out = []
   for (let i = 0; i < groups.length; i++) {
-    if (i > 0) out.push({ type: "text", text: "\n\n" })
+    if (i > 0) out.push({ type: "text", text: "\n\n", kind: "meta" })
     out.push(...groups[i])
   }
-  return toPromptParts(out)
+  return out
+}
+
+function renderTurnMessagesParts(messages) {
+  return toPromptParts(renderTurnMessagesSegments(messages))
 }
 
 // agy's ACP server cuts a prompt and appends "<truncated N bytes>", which
@@ -6470,15 +6569,26 @@ function utf8Prefix(text, bytes) {
 function clipMiddle(text, limit, keep = Math.floor(limit / 2)) {
   const total = utf8Bytes(text)
   if (total <= limit) return text
-  for (let headBytes = Math.min(keep, limit), tries = 0; tries < 8; tries++) {
+  if (limit <= 0) return ""
+  const maxMarker = utf8Bytes(`\n[... ${total} bytes omitted ...]\n`)
+  if (limit <= maxMarker) return utf8Prefix(text, limit)
+  let bodyBudget = Math.min(limit - maxMarker, keep * 2)
+  for (let tries = 0; tries < 8 && bodyBudget > 0; tries++) {
+    const headBytes = Math.min(keep, Math.floor(bodyBudget / 2))
+    const tailBytes = Math.min(keep, bodyBudget - headBytes)
     const head = utf8Prefix(text, headBytes)
-    const tailStart = utf8Prefix(text, total - Math.max(0, Math.min(keep, limit - headBytes))).length
+    const tailStart = utf8Prefix(text, Math.max(0, total - tailBytes)).length
     const tail = text.slice(Math.max(tailStart, head.length))
-    const marker = `\n[... ${total - utf8Bytes(head) - utf8Bytes(tail)} bytes omitted ...]\n`
+    const omitted = total - utf8Bytes(head) - utf8Bytes(tail)
+    if (omitted <= 0) {
+      bodyBudget = Math.max(0, bodyBudget - 4)
+      continue
+    }
+    const marker = `\n[... ${omitted} bytes omitted ...]\n`
     const clipped = head + marker + tail
-    if (utf8Bytes(clipped) <= limit) return clipped
-    keep = Math.floor(keep * 0.75)
-    headBytes = Math.min(keep, limit)
+    const over = utf8Bytes(clipped) - limit
+    if (over <= 0) return clipped
+    bodyBudget = Math.max(0, bodyBudget - over)
   }
   return utf8Prefix(text, limit)
 }
@@ -6555,6 +6665,42 @@ function clipPartsToBytes(parts, limit) {
     largest.text = clipMiddle(largest.text, Math.max(0, size - excess))
   }
   return out
+}
+
+// Shrinks <current_turn> segments to fit `limit` bytes: meta reminders and
+// trailing system messages yield first, then tool results, and user text last
+// so a short user message sandwiched between post-compact reminders and a
+// trailing system block is not sliced out of the middle.
+function clipTurnSegments(segments, limit) {
+  const out = segments.map((part) => ({ ...part }))
+  if (promptTextBytes(out) <= limit) return out
+  for (const kind of ["meta", "tool", "user"]) {
+    const excess = promptTextBytes(out) - limit
+    if (excess <= 0) return out
+    const tier = out.filter((part) => part.type === "text" && part.kind === kind)
+    if (!tier.length) continue
+    const sizes = tier.map((part) => utf8Bytes(part.text))
+    const tierBytes = sizes.reduce((sum, size) => sum + size, 0)
+    if (tierBytes <= 0) continue
+    const tierBudget = Math.max(0, tierBytes - excess)
+    let rem = tierBudget
+    let cap = 0
+    const sorted = [...sizes].sort((a, b) => a - b)
+    for (let i = 0; i < sorted.length; i++) {
+      const share = Math.floor(rem / (sorted.length - i))
+      if (sorted[i] <= share) {
+        rem -= sorted[i]
+      } else {
+        cap = share
+        break
+      }
+    }
+    for (let i = 0; i < tier.length; i++) {
+      if (sizes[i] <= cap) continue
+      tier[i].text = cap <= 0 ? "" : clipMiddle(tier[i].text, cap)
+    }
+  }
+  return promptTextBytes(out) <= limit ? out : clipPartsToBytes(out, limit)
 }
 
 // Claude Code's and DeepSeek Harness's own user-role notes: reminders, context
@@ -6917,22 +7063,22 @@ function renderInitialPrompt(body, callerWorkDir, instructionsInSession, reserve
     if (system.trim()) appendPrompt(head, `<external_system_instructions>\n${outgoing(system)}\n</external_system_instructions>\n`)
     if (callerWorkDir) appendPrompt(head, `\n${workDirNote(callerWorkDir)}\n\n`)
   }
-  const currentParts = renderTurnMessagesParts(current)
+  const currentSegments = renderTurnMessagesSegments(current)
   // A fresh conversation needs no wrapper; it would only add tokens.
-  if (!head.length && !history.length) return { parts: clipPartsToBytes(currentParts, budget), stats: replayStats(history, [], [], []) }
+  if (!head.length && !history.length) return { parts: toPromptParts(clipTurnSegments(currentSegments, budget)), stats: replayStats(history, [], [], []) }
   const historyOpen = history.length ? "<conversation_history>\n" : ""
   const historyClose = history.length ? HISTORY_RECORD_NOTE + "</conversation_history>\n\n" : ""
   const turnOpen = "<current_turn>\n"
   const turnClose = "\n</current_turn>"
   const frame = utf8Bytes(historyOpen + historyClose + turnOpen + turnClose)
   // Mandatory segments first: instructions, the frame and the current turn.
-  // An oversized current turn keeps its head and tail; instructions shrink
-  // only when they alone would not leave the current turn any room.
+  // An oversized current turn clips meta/system reminders before user text;
+  // instructions shrink only when they alone would not leave the turn room.
   let headParts = head
-  let turn = currentParts
+  let turn = currentSegments
   if (promptTextBytes(headParts) + frame + promptTextBytes(turn) > budget) {
     const forTurn = Math.max(0, budget - frame - promptTextBytes(headParts))
-    turn = clipPartsToBytes(turn, Math.max(forTurn, Math.min(promptTextBytes(turn), Math.floor((budget - frame) / 2))))
+    turn = clipTurnSegments(turn, Math.max(forTurn, Math.min(promptTextBytes(turn), Math.floor((budget - frame) / 2))))
     headParts = clipPartsToBytes(headParts, Math.max(0, budget - frame - promptTextBytes(turn)))
   }
   const render = (message) => {
@@ -6955,7 +7101,7 @@ function renderInitialPrompt(body, callerWorkDir, instructionsInSession, reserve
     short = promptTextBytes(headParts) + promptTextBytes(turn) + historyWant - available
   }
   if (short > 0 && promptTextBytes(turn) > Math.floor(available * REPLAY_TURN_SHARE)) {
-    turn = clipPartsToBytes(turn, Math.max(Math.floor(available * REPLAY_TURN_SHARE), promptTextBytes(turn) - short))
+    turn = clipTurnSegments(turn, Math.max(Math.floor(available * REPLAY_TURN_SHARE), promptTextBytes(turn) - short))
   }
   let room = budget - frame - promptTextBytes(headParts) - promptTextBytes(turn)
   const overRoom = (list) => list.reduce((sum, entry) => sum + entry.bytes, 0) > room
@@ -7142,14 +7288,14 @@ function renderInitialPrompt(body, callerWorkDir, instructionsInSession, reserve
     appendPrompt(out, historyClose)
   }
   appendPrompt(out, turnOpen)
-  appendPrompt(out, turn)
+  appendPrompt(out, toPromptParts(turn))
   appendPrompt(out, turnClose)
   const stats = {
     ...replayStats(history, raw, keptIndices.map((i) => entries[i]), keptIndices),
     head_bytes: promptTextBytes(headParts),
     head_clipped: promptTextBytes(headParts) < promptTextBytes(head),
     turn_bytes: promptTextBytes(turn),
-    turn_clipped: promptTextBytes(turn) < promptTextBytes(currentParts),
+    turn_clipped: promptTextBytes(turn) < promptTextBytes(currentSegments),
   }
   const parts = promptTextBytes(out) <= budget ? out : clipPartsToBytes(out, budget)
   if (archive) parts.historyArchive = archive
@@ -8905,15 +9051,21 @@ export const AntigravityBridgePlugin = async () => {
                   if (proc.turn !== turn) return jsonError(409, "agy bridge: the tool response has already completed")
                   if (turn.attached) throw new BusyError("agy bridge: this conversation already has an active response")
                   if (turn.steering) throw new BusyError("agy bridge: this conversation is already steering this tool turn")
-                  const rawResults = matches.map(({ block, match }) => ({
-                    block,
-                    call: match.call,
-                    result: toolResult(block),
-                  }))
+                  // Notices appended by inspectToolTurn belong in call.result for
+                  // agy, while duplicate checks compare the raw tool_result (#1475).
+                  const rawResults = matches.map(({ block, match }) => {
+                    const result = toolResult(block)
+                    return {
+                      block,
+                      call: match.call,
+                      result,
+                      rawKey: JSON.stringify(result),
+                    }
+                  })
                   const directIdsMatch = matches.every((item) => item.match?.call?.id === item.block.tool_use_id)
-                  const isReplayCandidate = !prefillAfterResults && directIdsMatch && Boolean(turn.lastToolStep && sameCallIds(matches, turn.lastToolStep.callIds))
-                  if (isReplayCandidate) proc.validateResults(rawResults, { checkCommitted: false })
-                  else proc.validateResults(rawResults)
+                  // An identical retry passes: its results are the ones already
+                  // committed, compared raw (#1475).
+                  proc.validateResults(rawResults)
                   let interrupted = isInterruptedToolTurn(body)
                   let results = rawResults
                   if (!interrupted && !prefillAfterResults) {
@@ -8925,12 +9077,10 @@ export const AntigravityBridgePlugin = async () => {
                       if (error instanceof UnsupportedContent && canReplayFollowUpAfterResults(body, rawResults)) {
                         interrupted = true
                       } else {
-                        if (isReplayCandidate) proc.validateResults(rawResults)
                         throw error
                       }
                     }
                   }
-                  if (isReplayCandidate && interrupted) proc.validateResults(rawResults)
                   if (!interrupted && !prefillAfterResults) proc.validateResults(results)
                   // An image over MCP reaches agy's model as a path it can't
                   // read, so a result with one takes the steer's way: the call
