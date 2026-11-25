@@ -39,6 +39,7 @@ import { stripOutboundArtifacts } from './strip-artifacts.js';
 import { replaceFacePlaceholders } from './face-placeholder.js';
 import { resolveTurnErrorMessage } from './turn-error.js';
 import { isGoogleInputImagePolicyError, findGoogleImageOffloadTarget } from './google-image-policy.js';
+import { isRefusalText } from './upstream-error-filter.js';
 /**
  * 「正文被平台判违规」已经告知过 AI 的回合标记（2026-11-07 主人要的功能）。
  * 键＝SessionRecord 对象，值＝该回合的 turnStartAt；同一回合只提醒一次，免得连发刷屏。
@@ -132,6 +133,12 @@ export class OutboundRouter {
         }
         if (cur !== undefined && cur !== delta.attemptId)
             return; // 旧 attempt 的尾帧丢弃
+        const record = this.manager.findBySessionId(agentId);
+        const candidate = buffer.text + String(delta.text ?? '');
+        if (record && isRefusalText(candidate)) {
+            void this.rotateSessionOnRefusal(record, candidate);
+            return;
+        }
         this.streamSawText.add(agentId);
         if (delta.text)
             buffer.append(delta.text);
@@ -163,6 +170,8 @@ export class OutboundRouter {
      *   那些 "aborted" 是**有意行为**，一律不展示（否则聊天里刷一串假报错）。
      */
     gateSilenced = new Set();
+    /** 已因拒答关键词轮换掉的旧会话记录，避免同一旧会话后续事件继续出站。 */
+    refusalRotated = new WeakSet();
     /**
      * 回合级累积 —— 好感度**按回合结算**（2026-09-14 修）。
      *
@@ -191,6 +200,38 @@ export class OutboundRouter {
         this.toolsRegistry = toolsRegistry;
         // present 声明的交付物投递器（2026-10-27）：宿主在 turn/end 前发 deliverables/presented
         this.deliverables = new DeliverablesDeliverer(bot, config, logger, (r) => this.resolveTarget(r));
+    }
+    /** 命中拒答关键词：取消本轮缓冲，静默开启同预设/同模型新会话。 */
+    async rotateSessionOnRefusal(record, text) {
+        if (!isRefusalText(text))
+            return false;
+        if (this.refusalRotated.has(record))
+            return true;
+        this.refusalRotated.add(record);
+        const sessionId = record.sessionId ?? record.sessionKey;
+        const buffer = this.buffers.get(sessionId);
+        if (buffer !== undefined) {
+            buffer.cancel();
+            this.buffers.delete(sessionId);
+        }
+        this.streamSawText.delete(sessionId);
+        const scope = record.replyTarget.scope;
+        const peerId = record.replyTarget.targetId;
+        const preset = this.manager.getEffectivePreset(scope, peerId);
+        this.logger.warn(`im-qqbot: 命中拒答关键词，未发送并开启同预设新会话 session=${sessionId} preset=${preset || '(默认)'}`);
+        try {
+            const result = await this.manager.startNewSession(scope, peerId, false, preset || undefined, { replyTarget: record.replyTarget });
+            if (result === 'failed') {
+                this.logger.error(`im-qqbot: 拒答关键词轮换新会话失败 session=${sessionId}: ${this.manager.lastCreateError || 'unknown error'}`);
+            }
+            else {
+                this.logger.info(`im-qqbot: 拒答关键词轮换新会话完成 session=${sessionId} result=${result} preset=${preset || '(默认)'}`);
+            }
+        }
+        catch (err) {
+            this.logger.error(`im-qqbot: 拒答关键词轮换新会话异常 session=${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        return true;
     }
     /** 出站目标(每次实际发送前逐条调用, [RECALL] 除外):
      *  passive → 一律带 msg_id 回复(其余行为不变; 唯一例外: 回合主回复正文块>5 时
@@ -368,6 +409,8 @@ export class OutboundRouter {
             return;
         const record = this.manager.findBySessionId(session.header.id);
         if (record === undefined)
+            return;
+        if (this.refusalRotated.has(record))
             return;
         // ── 内部状态留档(观察期, 2026-09-13) ──
         // 与发送行为**完全无关**: 只写本地数据文件, 不进群、不进面板、不参与任何判定(设计稿 §9/§11 红线)。
@@ -572,6 +615,11 @@ export class OutboundRouter {
             (t) => this.processOutboundText(t));
             this.buffers.set(sessionId, buffer);
         }
+        const candidate = (buffer?.text ?? '') + String(event.text ?? '');
+        if (isRefusalText(candidate)) {
+            void this.rotateSessionOnRefusal(record, candidate);
+            return;
+        }
         buffer.append(event.text);
     }
     /** 是否启用流式：配置开启 + c2c + 有 msgId（群聊不支持流式） */
@@ -590,6 +638,10 @@ export class OutboundRouter {
         const fullText = textParts.join('\n');
         if (!fullText.trim())
             return;
+        if (isRefusalText(fullText)) {
+            void this.rotateSessionOnRefusal(record, fullText);
+            return;
+        }
         if (isGoogleInputImagePolicyError(fullText)) {
             const buffer = this.buffers.get(sessionId);
             if (buffer !== undefined) {
@@ -801,6 +853,10 @@ export class OutboundRouter {
     /** 统一发送：逐条自适应目标(适配主动) + 富媒体感知分块；媒体指令([MEDIA:..]/[RECALL])被剔除，失败降级记录 */
     async send(_record, text, tag, source) {
         try {
+            if (source === 'assistant/message' && isRefusalText(text)) {
+                await this.rotateSessionOnRefusal(_record, text);
+                return;
+            }
             if (source === 'assistant/message' && isGoogleInputImagePolicyError(text)) {
                 await this.recoverGoogleInputImagePolicy(_record);
                 return;
