@@ -1,6 +1,6 @@
 # dsh-qqbot 用户手册
 
-> [@zaofan/dsh-qqbot](../README.md) 的**详细文档**：配置项、内置命令、自定义扩展、群管理（含 🔨 锤子：禁言 / 踢人）、本地小模型、好感度系统、数据文件与日志、升级排障、架构与本地开发。
+> [dsh-qq-bot](../README.md) 的**详细文档**：配置项、内置命令、自定义扩展、群管理（含 🔨 锤子：禁言 / 踢人）、本地小模型、好感度系统、数据文件与日志、升级排障、架构与本地开发。
 > 只想看"它能干什么 + 怎么装" → 回 **[README](../README.md)**。
 
 **章节**：给AI的话 · 架构 · QQ 远程审批 · QQ 群管理（含 🔨 锤子：禁言 / 踢人）· 智能回复（本地小模型）· **好感度与熟识度** · 配置项 · 数据文件与日志 · 内置命令 · 用户扩展（含自定义界面卡片）· 富媒体指令 · 核心模块 · 会话路由 · 升级与兼容 · 常见问题 · 设计原则 · 本地开发
@@ -126,14 +126,14 @@ npx @deepseek-ai/dsh web --patch /path/to/dsh-qqbot/cordis.dev.yml
 
 **按关键词自动审批(v1.3.0+)**: 你说「自动审批, 关键词=早饭」这类指令 → AI 调 `group_join_auto` 执行: 官方待审列表里**验证消息命中任一关键词的放行、未命中的拒绝**(`rejectUnmatched:false` 只放行不清场, `dry_run:true` 只预览); 同一人重复申请**去重后按最新一条判**, 拒绝理由中性(默认"答非所问")。⚠️ 仅在主人明确要求时使用。
 
-**入群申请双通道(v1.1.4+)**: 
+**入群申请双通道(v1.1.4+)**:
 - **消息注记** = QQ 实时事件, 静默 append 到目标会话(web 可见、不唤醒 AI), 格式【入群申请】;
 - **系统提醒** = 轮询兜底, 唤醒 AI 起来处理, 格式【审批轮询】;
 - 申请群=群组管理器(hub)会话时只在 hub 注记; 普通群按下面开关决定是否也注记/唤醒。
 
 **群组管理四个独立开关(dock 设置, v1.1.4+)**: `唤醒AI`=唤醒群管会话 AI 处理; `注入群管会话`=hub web 注记(不唤醒); `通知普通群`=申请所在群 web 注记(不唤醒); `唤醒普通群AI`=唤醒申请所在群 AI——事件与轮询两条链路都生效, 互不干扰。
 
-**跨群/跨会话工具**(v1.1.0+ / **v1.2.0 扩充**): 
+**跨群/跨会话工具**(v1.1.0+ / **v1.2.0 扩充**):
 - `group_join_requests(gid=…)` / `group_approve_join(member_openids=…)`: 传 `gid` 可查询/审批**指定群**的入群申请(不限于当前会话群), 支持一次批量审批多人;
 - `session_list` / `session_wake`: 列出全部会话(含群注册表里的"潜在群", 重启后仍可靠)供寻址 / 向指定会话发消息并唤醒对方 LLM(可带 `media` 跨群发图);
 - **`broadcast_send`(v1.2.0)**: **一键群发** —— 同一段内容一次发到多个群/私聊, `targets` 直接写**分组名 / 群名 / 备注或 openid**; 走插件广播队列(串行+失败重试, 与 dock「📤 群发 · 广播」面板**同一份任务**), 默认直接发, 返回逐目标 `message_id`, 2 分钟内可 `action:"recall"` 撤回;
@@ -290,7 +290,7 @@ dock 里的「🔨 锤子」下面现在分四页：
 
 ```bash
 node scripts/download-model.mjs                                   # 源码分发(在插件仓库根目录跑)
-node node_modules/@zaofan/dsh-qqbot/scripts/download-model.mjs    # npm 装的插件(npm 目录内)
+node node_modules/dsh-qq-bot/scripts/download-model.mjs    # npm 装的插件(npm 目录内)
 ```
 
 默认**优先走国内镜像** `hf-mirror.com`（失败自动换官方源），下载完会校验体积并打印后续步骤。可选参数：
@@ -1454,7 +1454,7 @@ disabling profile plugin row …
 
 dsh / pnpm 有一条**「新版本冷却」**策略：**没进白名单的新版本会被当成"太新"而拒绝安装**，症状就是"命令跑成功、版本号却没变"。白名单就是 profile 里的 `minimumReleaseAgeExclude`。
 
-**排查**：打开你 profile 目录下的 `pnpm-workspace.yaml`，看白名单里**有没有你要的那个版本号**（形如 `@zaofan/dsh-qqbot@1.6.5`）；没有就会被退回旧版 —— 把版本号加进去再装一次。
+**排查**：打开你 profile 目录下的 `pnpm-workspace.yaml`，看白名单里**有没有你要的那个版本号**（形如 `dsh-qq-bot@1.6.5`）；没有就会被退回旧版 —— 把版本号加进去再装一次。
 
 ### ③ 设置页还在吗？入口在哪儿？
 
@@ -1490,7 +1490,7 @@ disabling profile plugin row …
 **处理分三步**：
 
 1. **把本插件升到最新版** —— 本插件自 **v1.6.4** 起适配 dsh 0.2.x（兼容范围无上界），升上去就不会被拦。
-2. **升完还是旧版？** 那是 dsh / pnpm 的**「新版本冷却」**：没进白名单的新版本会被当成"太新"而拒绝安装。去 profile 的 `pnpm-workspace.yaml` 看 `minimumReleaseAgeExclude` **白名单里有没有你要的版本号**（形如 `@zaofan/dsh-qqbot@1.6.5`），没有就加进去再装一次。
+2. **升完还是旧版？** 那是 dsh / pnpm 的**「新版本冷却」**：没进白名单的新版本会被当成"太新"而拒绝安装。去 profile 的 `pnpm-workspace.yaml` 看 `minimumReleaseAgeExclude` **白名单里有没有你要的版本号**（形如 `dsh-qq-bot@1.6.5`），没有就加进去再装一次。
 3. **插件在、但完全没有界面**（没有 dock 球、没有设置页）→ 确认插件装在 **`web` profile**（装到别的 profile 就是个"没有设置面板的裸环境"）。
 
 > 完整说明见上文「🆙 升级与兼容（dsh 0.2.x）」。

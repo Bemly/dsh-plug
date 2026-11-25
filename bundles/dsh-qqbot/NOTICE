@@ -1,7 +1,9 @@
 # NOTICE
 
-本项目（`@zaofan/dsh-qqbot`）自 **v1.12.13** 起以 **Academic Free License 3.0（AFL-3.0）** 发布，
+上游项目（`@zaofan/dsh-qqbot`）自 **v1.12.13** 起以 **Academic Free License 3.0（AFL-3.0）** 发布，
 并附带 [`LICENSE-ADDENDUM.md`](./LICENSE-ADDENDUM.md) 中的额外权限说明。
+
+本分发包名为 `dsh-qq-bot`，由 `Bemly/dsh-plug` 维护本地补丁版；上游版权与许可证声明保持不变。
 
 ```
 Copyright (c) 2026 zaofan-make

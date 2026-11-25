@@ -3547,7 +3547,7 @@ export async function apply(ctx, opts) {
  * 为什么不复用高层轮子: wakeSessionAgent 要先配"群组管理器会话"; injectSynthetic 是塞聚合窗口(要等人停口);
  *  而面板按钮要的是**立刻触发** —— 与"定时任务到点必须触发回合"同理, 直调 handleInbound 最贴合。
  *
- * host 半边(settings-host.js) 通过 import('@zaofan/dsh-qqbot/channel-tools') 调用(manager 只在插件侧)。
+ * host 半边(settings-host.js) 通过 import('dsh-qq-bot/channel-tools') 调用(manager 只在插件侧)。
  */
 export async function askAiToWriteSamples(ns, scope, peerId) {
     const root = (() => {
@@ -3626,7 +3626,7 @@ export async function askAiToWriteFakeMsg(ns, scope, peerId, senderName, prompt)
     }
 }
 // ── botplay 自定义事件: 面板出口(2026-10-05) ────────────────────────────────
-// host 半边(settings-host.js)只能 `import('@zaofan/dsh-qqbot/channel-tools')`, 拿不到 manager/controller;
+// host 半边(settings-host.js)只能 `import('dsh-qq-bot/channel-tools')`, 拿不到 manager/controller;
 // 所以自定义事件相关的三件事(模块状态 / 热重载 / 让AI写)都在这里做转发, 与 askAiToWriteSamples
 // 「桥只负责递话、实现留在插件侧」同一姿势。
 /**

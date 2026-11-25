@@ -1,4 +1,4 @@
-# @zaofan/dsh-qqbot
+# dsh-qq-bot
 
 [![License: AFL-3.0](https://img.shields.io/badge/License-AFL--3.0-blue.svg)](./LICENSE) ![Platform](https://img.shields.io/badge/platform-QQ%20Bot%20(dsh)-blue)
 
@@ -512,7 +512,7 @@ env.user / env.owners / env.peer · env.log() · env.kernel（全权限遥控器
 ### 方式一（发布到 npm 后）：一条命令
 
 ```powershell
-npx @deepseek-ai/dsh plugin --profile web add @zaofan/dsh-qqbot
+npx @deepseek-ai/dsh plugin --profile web add dsh-qq-bot
 ```
 
 > 尚未发布到 npm 前，请用下面的方式二。
@@ -520,7 +520,7 @@ npx @deepseek-ai/dsh plugin --profile web add @zaofan/dsh-qqbot
 > ⚠️ **从 GitHub 直装（`github:zaofan-make/dsh-qqbot`）需要编译产物 `dist/`，而仓库不提交 `dist`。**
 > 包已声明 `prepare` 脚本，pnpm 安装时会自动编译；
 > 若你的包管理器没自动跑（或报 `failed to import` / 找不到 `dist/index.js`），
-> 手动在插件目录执行一次 `npm run build` 即可。**最省事的做法是用 npm 上的发布版**（`@zaofan/dsh-qqbot`）。
+> 手动在插件目录执行一次 `npm run build` 即可。**最省事的做法是用 npm 上的发布版**（`dsh-qq-bot`）。
 
 ### 方式二：源码分发（当前推荐）
 

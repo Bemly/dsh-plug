@@ -1,5 +1,5 @@
 {
-  "name": "@zaofan/dsh-qqbot",
+  "name": "dsh-qq-bot",
   "version": "1.13.25",
   "description": "QQ Bot IM channel plugin for deepseek-harness (dsh)",
   "type": "module",
@@ -37,11 +37,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zaofan-make/dsh-qqbot.git"
+    "url": "git+https://github.com/Bemly/dsh-plug.git",
+    "directory": "bundles/dsh-qqbot"
   },
-  "homepage": "https://github.com/zaofan-make/dsh-qqbot#readme",
+  "homepage": "https://github.com/Bemly/dsh-plug/tree/main/bundles/dsh-qqbot#readme",
   "bugs": {
-    "url": "https://github.com/zaofan-make/dsh-qqbot/issues"
+    "url": "https://github.com/Bemly/dsh-plug/issues"
   },
   "keywords": [
     "deepseek-harness",
@@ -63,7 +64,7 @@
     "docs/botplay-contract.md",
     "docs/host-services.md",
     "examples",
-    "client",
+    "client/qqbot-settings.js",
     "cordis.patch.yml",
     "settings-host.js",
     "README.md",
