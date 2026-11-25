@@ -41,7 +41,12 @@ export const Config = ConfigSchema;
 export async function apply(ctx, config) {
     const agents = ctx.agents;
     const logger = ctx.logger ?? console;
-    setStickerVisionLlm(() => ctx.llm ?? ctx.root?.llm, config.sticker?.visionProvider || 'kfc', config.sticker?.visionModel || 'Qwen/Qwen3.6-27B-FP8');
+    setStickerVisionLlm(
+        () => ctx.llm ?? ctx.root?.llm,
+        config.sticker?.visionProvider || 'https://ai.bemly.moe',
+        config.sticker?.visionModel || 'Qwen/Qwen3.6-27B-FP8',
+        config.sticker?.visionApiKeyEnv || 'KFC_API_KEY',
+    );
     // 启动后后台补标所有历史未打标表情包（逐张调用宿主 kfc 视觉模型，不阻塞网关）
     if (config.sticker?.autoTagEnabled === true) {
         let backfillDisposed = false;

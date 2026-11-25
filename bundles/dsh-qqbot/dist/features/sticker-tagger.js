@@ -38,13 +38,20 @@ function resolveVisionApiKey() {
     return '';
 }
 
-/** 由 im-qqbot 启动时配置视觉模型参数（默认走宿主 kfc: https://ai.bemly.moe + KFC_API_KEY） */
-export function setStickerVisionLlm(_llmOrGetter, providerOrBaseUrl = 'https://ai.bemly.moe', model = 'Qwen/Qwen3.6-27B-FP8') {
+/** 由 im-qqbot 启动时配置视觉模型端点、模型和密钥环境变量 */
+export function setStickerVisionLlm(
+    _llmOrGetter,
+    providerOrBaseUrl = 'https://ai.bemly.moe',
+    model = 'Qwen/Qwen3.6-27B-FP8',
+    apiKeyEnv = 'KFC_API_KEY',
+) {
     if (providerOrBaseUrl && /^https?:\/\//i.test(String(providerOrBaseUrl))) {
         hostVisionBaseUrl = String(providerOrBaseUrl).replace(/\/+$/, '');
     }
     if (model)
         hostVisionModel = String(model);
+    if (apiKeyEnv)
+        hostVisionApiKeyEnv = String(apiKeyEnv);
 }
 
 async function autoTagViaHostLlm(localPath, logger) {
