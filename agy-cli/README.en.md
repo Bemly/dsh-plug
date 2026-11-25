@@ -42,7 +42,10 @@ channel: Antigravity's models over ACP. The differences:
   history as context. This plugin keeps a pool of agy processes, reuses one agy
   session for one conversation, and picks it up again with `session/resume`
   after a restart; only when that fails does it replay the history, within a
-  byte budget.
+  byte budget. When Magpie image-slim or DSH/qq-bot replaces an already-seen
+  historical image with a text placeholder (including
+  `[图片已省略 image/png #…]`), the session is still reused; a genuinely
+  different image still rebuilds it.
 - **Tool calls**: Antigravity ACP ends the turn with the call as the reply's
   `tool_calls`. This plugin feeds the client's result back into the same agy
   turn (see "Tool bridge" below).

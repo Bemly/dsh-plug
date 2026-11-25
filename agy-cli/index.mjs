@@ -2792,6 +2792,10 @@ class Proc {
     // earlier message becomes a {{KIND_xxxxxxxx}} placeholder. The history
     // is the same one, so the session holds (yetone/magpie#7223).
     if (sameHistoryUpToMasking(this.expectedMessages, messages)) return true
+    // DSH/qq-bot and magpie image-slim can replace an image the live session
+    // already holds with text (or drop it from the translated request). The
+    // image is not new context; only the image-bearing metadata may differ.
+    if (sameHistoryUpToImages(this.expectedMessages, messages)) return true
     // A proxy between the client and magpie (billion-context's nudge) can
     // add text after a step's tool results for one request; the client never
     // had it, so the next request's history goes on without it
@@ -5278,6 +5282,141 @@ function messageDiff(a, b) {
 // them.
 function sameHistoryUpToMasking(expected, actual) {
   return sameUpToMasking(historyRows(expected), historyRows(actual))
+}
+
+// Magpie's image-slim placeholder (Codex view_image) and dsh-qqbot's own
+// aggregate-image placeholder. Both stand for an image the live agy session
+// already received; they are metadata, not new user text.
+const IMAGE_SLIM_RE = /^\[\d+(?:\.\d+)? MB image left out here: [\s\S]*\]$/
+const DSH_IMAGE_OMITTED_RE = /^\[图片已省略(?: [^\]\s]+)?(?: #[^\]\s]+)?\]$/u
+const DSH_IMAGE_ATTRIBUTION_RE = /^（↑ .* 发的图）$/u
+const DSH_IMAGE_AGGREGATE_RE = /^\[图片聚合\]/u
+const DSH_IMAGE_NOTE_RE = /^Image "[^"]+" \(sha256:[0-9a-f]+\)/u
+
+function imageMetadataText(value) {
+  const text = String(value || "").trim()
+  return IMAGE_SLIM_RE.test(text) || DSH_IMAGE_OMITTED_RE.test(text) ||
+    DSH_IMAGE_ATTRIBUTION_RE.test(text) || DSH_IMAGE_AGGREGATE_RE.test(text)
+}
+
+function containsImageMetadataText(value) {
+  const text = String(value || "")
+  return imageMetadataText(text) || text.includes("[图片已省略") || text.includes("（↑") ||
+    text.includes("[图片聚合]") || DSH_IMAGE_NOTE_RE.test(text.trim())
+}
+
+function stripDshImageMetadataText(value) {
+  return String(value || "")
+    .replace(/\[图片已省略[^\]]*\]/gu, "")
+    .replace(/（↑ [^\n]* 发的图）/gu, "")
+    .replace(/\[图片聚合\][^\n]*/gu, "")
+    .replace(/Image "[^"]+" \(sha256:[0-9a-f]+\)[^\n]*/gu, "")
+}
+
+function imageMetadataMessageText(message) {
+  const content = message?.content
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+  return content.map((block) => {
+    if (typeof block === "string") return block
+    if (block?.type === "text") return String(block.text || "")
+    if (block?.type === "tool_result") return imageMetadataMessageText({ content: block.content })
+    return ""
+  }).join("\n")
+}
+
+function contentHasImageMetadata(content) {
+  if (typeof content === "string") return containsImageMetadataText(content)
+  if (!Array.isArray(content)) return false
+  return content.some((block) => {
+    if (typeof block === "string") return containsImageMetadataText(block)
+    if (block?.type === "text") return containsImageMetadataText(block.text)
+    if (block?.type === "tool_result") return contentHasImageMetadata(block.content)
+    return false
+  })
+}
+
+function dshImageMetadataMessage(message) {
+  const text = imageMetadataMessageText(message)
+  return contentHasImageMetadata(message?.content) || DSH_IMAGE_NOTE_RE.test(text.trim()) ||
+    (/- Image: .* →/.test(text) && /(?:桥接视觉工具|modlens_read_image|analyze_image)/.test(text))
+}
+
+function withoutImageMetadataContent(content, messageMetadata) {
+  if (typeof content === "string") {
+    if (imageMetadataText(content)) return []
+    return messageMetadata ? stripDshImageMetadataText(content) : content
+  }
+  if (!Array.isArray(content)) return content
+  const kept = []
+  for (const block of content) {
+    if (block?.type === "image") continue
+    if (block?.type === "text" && typeof block.text === "string") {
+      if (imageMetadataText(block.text)) continue
+      const text = messageMetadata ? stripDshImageMetadataText(block.text) : block.text
+      if (!text.trim()) continue
+      kept.push(text === block.text ? block : { ...block, text })
+      continue
+    }
+    if (block?.type === "tool_result" && (Array.isArray(block.content) || typeof block.content === "string")) {
+      kept.push({ ...block, content: withoutImageMetadataContent(block.content, messageMetadata) })
+    } else {
+      kept.push(block)
+    }
+  }
+  return kept
+}
+
+function withoutImages(messages) {
+  return messages.map((message) => {
+    if (!Array.isArray(message?.content)) return message
+    const metadata = dshImageMetadataMessage(message)
+    return { ...message, content: withoutImageMetadataContent(message.content, metadata) }
+  })
+}
+
+function imagesInContent(content, out = []) {
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block?.type === "image") {
+        const image = parseUserImage(block)
+        if (image) out.push(`${image.mimeType}:${digest(image.data)}`)
+      } else if (block?.type === "tool_result") {
+        imagesInContent(block.content, out)
+      }
+    }
+  }
+  return out
+}
+
+function sameImageSequence(expected, actual) {
+  let at = 0
+  for (const image of actual) {
+    while (at < expected.length && expected[at] !== image) at++
+    if (at === expected.length) return false
+    at++
+  }
+  return true
+}
+
+function sameHistoryUpToImages(expected, actual) {
+  if (!Array.isArray(expected) || !Array.isArray(actual)) return false
+  const a = withoutImages(expected)
+  const b = withoutImages(actual)
+  if (historyKey(a) !== historyKey(b) && !sameHistoryUpToMasking(a, b)) return false
+  // Removing images must not hide a genuinely different or newly added image.
+  // A missing image is tolerated only in dsh-qqbot's aggregate-image metadata
+  // message, where the client intentionally keeps the text and drops the image.
+  for (let i = 0; i < Math.max(expected.length, actual.length); i++) {
+    const e = expected[i]
+    const t = actual[i]
+    const expectedImages = imagesInContent(e?.content)
+    const actualImages = imagesInContent(t?.content)
+    if (actualImages.length > expectedImages.length || !sameImageSequence(expectedImages, actualImages)) return false
+    if (actualImages.length < expectedImages.length &&
+      !dshImageMetadataMessage(e) && !dshImageMetadataMessage(t)) return false
+  }
+  return true
 }
 
 // One block as the history key reads it, or null for a block the key
