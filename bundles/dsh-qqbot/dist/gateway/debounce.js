@@ -5,6 +5,8 @@ import { getHistoryStore, historyGroupKey, clearGroupHistory } from '../features
 import { lookupImagePath } from '../features/image-path-cache.js';
 import { pushAggImage } from '../features/image-aggregate.js';
 import { applyInjectRules } from '../transport/inject-rules.js';
+import { inferMediaKind } from '../transport/media-kind.js';
+import { prepareImagesForDispatch } from '../middleware/sticker-capture.js';
 import { appendFileSync } from 'node:fs';
 import { stripLeadingMentions } from '../shared/mention-clean.js';
 import { join } from 'node:path';
@@ -185,20 +187,19 @@ function attachmentNote(atts, processed) {
         const a = raw;
         const t = String(a?.content_type ?? a?.contentType ?? a?.type ?? '');
         const url = String(a?.url ?? '');
-        if (t.includes('image')) {
+        const kind = inferMediaKind(a);
+        if (kind === 'image') {
             const local = url ? lookupImagePath(url) : undefined;
             out.push(`[图片: ${local ?? (url || '（无链接）')}]`);
         }
-        else if (t === 'voice' || t.includes('audio')) {
+        else if (kind === 'voice') {
             const vt = voiceTextOf(processed);
             out.push(vt ? `[语音] ${vt}` : '[语音]');
         }
-        else if (t.includes('video')) {
-            // ★ 原来只有 "[视频]"、丢了链接 ⇒ 补上
+        else if (kind === 'video') {
             out.push(url ? `[视频: ${url}]` : '[视频]');
         }
-        else if (t.includes('file') || t.includes('application') || t.includes('zip') || t.includes('octet')) {
-            // ★ 原来只有文件名、丢了链接 ⇒ 补上（群友发压缩包时最关键）
+        else if (kind === 'file') {
             out.push(`[文件: ${String(a?.filename ?? '') || '未知'}${url ? ' ' + url : ''}]`);
         }
         else if (t) {
@@ -249,7 +250,7 @@ function buildInterjectText(entries, note, quoteByMsg, stickerDir = '') {
  * (不唤醒、不拆 tool_calls → 宿主在下个 step 组包时带上, 她本轮就读到了)。
  * @returns true=已插进去(调用方清窗口); false=没有注入能力 / 注入抛错(调用方回落原排队逻辑, 消息不丢)
  */
-function interjectBatch(rec, entries, logger, quoteByMsg, stickerDir = '', agg, 
+async function interjectBatch(rec, entries, config, logger, quoteByMsg, stickerDir = '', agg,
 /**
  * ★ 2026-11-07 主人实测：**插话不走 handleInbound**，于是「自定义小提醒」不会触发。
  *   这里把配置传进来，在拼完插话文本后补跑一遍规则（与正常入站同一套）。
@@ -260,6 +261,12 @@ injectRules) {
         return false;
     // 逐次缩短提示(2026-10-09): 本回合第 n 次插话就用第 n 档; 注入成功后才 +1（失败回落排队，不算插过）
     const seq = Number(rec.interjectSeq) || 0;
+    try {
+        await Promise.all(entries.map((entry) => prepareImagesForDispatch(entry.msg?.attachments, entry.msg, config, logger)));
+    }
+    catch (err) {
+        logger.warn(`[debounce] 插话图片预备失败(继续走URL回退): ${err instanceof Error ? err.message : String(err)}`);
+    }
     // ★ 2026-11-02：把窗口上按 messageId 存的引用一起带上（否则插话里"这条"指代不明）
     let text = buildInterjectText(entries, interjectNoteFor(seq, rec.sessionId), quoteByMsg, stickerDir);
     if (!text)
@@ -286,8 +293,7 @@ injectRules) {
                 const atts = Array.isArray(m.attachments) ? m.attachments : [];
                 for (const raw of atts) {
                     const a = raw;
-                    const t = String(a?.content_type ?? a?.contentType ?? a?.type ?? '');
-                    if (!t.includes('image'))
+                    if (inferMediaKind(a) !== 'image')
                         continue;
                     const url = String(a?.url ?? '');
                     let p = url ? lookupImagePath(url) : undefined;
@@ -414,7 +420,7 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                     //   ⚠️ 插话是"即时补料"不是"派发回复": 不唤醒 ⇒ 不消耗群冷却, 也不在这里走冷却判断。
                     if (busySendModeOf(config) === 'interject') {
                         const _aggCfg = config.imageAggregate;
-                        if (interjectBatch(busyRec, pre, logger, w.quoteByMsg, (() => { try {
+                        if (await interjectBatch(busyRec, pre, config, logger, w.quoteByMsg, (() => { try {
                             return stickerDirOf(config);
                         }
                         catch {

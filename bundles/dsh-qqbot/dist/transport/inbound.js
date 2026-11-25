@@ -16,6 +16,7 @@ import { registerMsgIndex } from './msg-index.js';
 import { createValueScorer, appendScoreLog, OTHER_MENTION_PENALTY } from '../features/value-score.js';
 import { getStickerStore, computeDHash } from '../features/sticker-store.js';
 import { lookupImagePath, rememberImagePath } from '../features/image-path-cache.js';
+import { prepareImagesForDispatch } from '../middleware/sticker-capture.js';
 import { pushAggImage, buildAggregateBlocks } from '../features/image-aggregate.js';
 import { noteSegmentScore } from '../features/segment-score.js';
 import { extractFaceImageUrls, slimQuoteText } from './quote-text.js';
@@ -137,6 +138,12 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
         }
         catch { /* 台账落盘失败不影响消息流 */ }
     }
+    try {
+        await prepareImagesForDispatch(msg.attachments, msg, config, logger);
+    }
+    catch (err) {
+        logger.warn(`im-qqbot: 当前消息图片预备失败(继续走URL回退): ${err instanceof Error ? err.message : String(err)}`);
+    }
     // ⚠️ 2026-09-24 修复「当前消息的图片只显示长 URL、拿不到本地路径」(主人多次反馈)：
     //   原代码顺序是 assembleAgentBody(拼消息，其中 Layer4 会查 lookupImagePath) **之后**
     //   才做图片预检并 rememberImagePath —— 等于拼消息时缓存永远是空的，只能回退 QQ 长 URL；
@@ -147,8 +154,7 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
         const _imgUrls = [];
         for (const _a of (Array.isArray(msg.attachments) ? msg.attachments : [])) {
             const _u = String(_a?.url ?? '').trim();
-            const _ct = String(_a?.content_type ?? '').toLowerCase();
-            if (_u && /image/.test(_ct) && !_imgUrls.includes(_u))
+            if (_u && inferMediaKind(_a) === 'image' && !_imgUrls.includes(_u))
                 _imgUrls.push(_u);
         }
         const _first = _imgUrls[0];
@@ -211,8 +217,7 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
             }
             // 再录本条消息自己的图
             for (const _a of (Array.isArray(msg.attachments) ? msg.attachments : [])) {
-                const _ct = String(_a?.content_type ?? '').toLowerCase();
-                if (!/image/.test(_ct))
+                if (inferMediaKind(_a) !== 'image')
                     continue;
                 const _url = String(_a?.url ?? '').trim();
                 // ① 中间件已经下载到本地的（按 filename 对上号）
@@ -505,16 +510,16 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                 for (const a of (Array.isArray(msg.attachments) ? msg.attachments : [])) {
                     const at = a;
                     const u = String(at?.url ?? '').trim();
-                    const ct = String(at?.content_type ?? '').toLowerCase();
-                    if (/image/.test(ct))
+                    const kind = inferMediaKind(at);
+                    if (kind === 'image')
                         attKinds.image = true;
-                    else if (/video/.test(ct))
+                    else if (kind === 'video')
                         attKinds.video = true;
-                    else if (/voice|audio|record|amr|silk/.test(ct))
+                    else if (kind === 'voice')
                         attKinds.voice = true;
-                    else if (/file/.test(ct))
+                    else if (kind === 'file')
                         attKinds.file = true;
-                    if (u && /image/.test(ct) && !imgUrls.includes(u))
+                    if (u && kind === 'image' && !imgUrls.includes(u))
                         imgUrls.push(u);
                 }
                 // ② 当前消息正文(合并转发/引用会把图写在文本里) —— 文本里认不出类型，按"图片"处理（历史行为）

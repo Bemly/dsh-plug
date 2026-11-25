@@ -1,125 +1,209 @@
 import { stickerDirOf } from '../gateway/data-root.js';
-import { getStickerStore } from '../features/sticker-store.js';
+import { getStickerStore, extractQqFileId } from '../features/sticker-store.js';
 import { autoTagImage } from '../features/sticker-tagger.js';
-import { rememberImagePath } from '../features/image-path-cache.js';
+import { lookupImagePath, rememberImagePath } from '../features/image-path-cache.js';
 import { recordImageUrl } from '../features/image-url-ledger.js';
-/** 同进程并发下载上限，防止群图轰炸时打爆连接 */
-let inflight = 0;
-const MAX_INFLIGHT = 3;
-/** 候选区软上限(2026-09-13 主人定: 300 → 500) —— 超出的最久未见条目滚进回收站 */
+import { inferMediaKind } from '../transport/media-kind.js';
+
+export const IMAGE_DOWNLOAD_ATTEMPTS = Object.freeze([
+    Object.freeze({ concurrency: 1, timeoutMs: 30_000 }),
+    Object.freeze({ concurrency: 2, timeoutMs: 120_000 }),
+    Object.freeze({ concurrency: 4, timeoutMs: 300_000 }),
+    Object.freeze({ concurrency: 8, timeoutMs: 600_000 }),
+]);
+
 const MAX_CANDIDATES = 500;
-/** 单条消息里最多顺手收几张图 */
-/**
- * 回收站条数上限（2026-10-05 主人要求）：trash 层超过它就按"进回收站时间"从旧到新真删。
- * 之前回收站无上限，一路涨到 4000 张 —— 它是"软删除的缓冲"，不该当永久仓库。
- * 想保留更多就调大这个数；想更狠就调小。
- */
 const MAX_TRASH = 800;
 const MAX_PER_MSG = 3;
-/** 图片 URL 是否可收藏（仅 https + 看似 QQ 图片下载链接） */
+const FAILURE_COOLDOWN_MS = 5 * 60_000;
+const GLOBAL_MAX_INFLIGHT = 32;
+const captureTasks = new Map();
+const captureFailures = new Map();
+let activeDownloads = 0;
+const downloadWaiters = [];
+
+async function acquireDownloadSlot() {
+    if (activeDownloads < GLOBAL_MAX_INFLIGHT) {
+        activeDownloads += 1;
+        return;
+    }
+    await new Promise((resolve) => downloadWaiters.push(resolve));
+}
+
+function releaseDownloadSlot() {
+    activeDownloads -= 1;
+    const next = downloadWaiters.shift();
+    if (next) {
+        activeDownloads += 1;
+        next();
+    }
+}
+
 function isCollectableImage(url) {
     return !!url && /^https:\/\//i.test(url) && /multimedia|qq\.com|download/i.test(url);
 }
-/**
- * 类型粗筛：SDK 的 content_type 是 MIME(如 image/jpeg —— 已实测不是 'image')。
- * 明确非图片(音/视频)的排除；未知/缺失交给 store 的魔数校验兜底(非图不入库)。
- */
-function isNonImageContentType(ct) {
-    if (!ct)
-        return false;
-    const t = ct.toLowerCase();
-    return t.startsWith('audio/') || t.startsWith('video/') || t === 'voice';
+
+function captureKey(url) {
+    return extractQqFileId(url) || String(url);
 }
-/** 收藏一张图（落盘 + 记住本地路径）；返回本地路径（失败/并发超限返回 undefined） */
-async function captureOne(url, contentType, ctx, config, logger) {
-    if (inflight >= MAX_INFLIGHT)
-        return undefined;
-    inflight += 1;
-    const msg = ctx.message;
-    const stickerDir = stickerDirOf(config);
-    const store = getStickerStore(stickerDir, logger);
-    const senderId = msg.senderId;
-    const senderName = msg.senderName;
-    const sourceGroup = ctx.message.kind === 'group' ? msg.groupOpenid : undefined;
-    const msgText = (msg.content ?? '').trim().slice(0, 120) || undefined;
-    let resolved;
-    try {
-        resolved = await store.capture(url, { sourceGroup, senderId, senderName, msgText, sourceUrl: url }, contentType);
+
+export async function downloadWithRetry(url, download, logger, attempts = IMAGE_DOWNLOAD_ATTEMPTS) {
+    for (let index = 0; index < attempts.length; index += 1) {
+        const attempt = attempts[index];
+        const concurrency = Math.max(1, Math.floor(attempt.concurrency));
+        const timeoutMs = Math.max(1, Math.floor(attempt.timeoutMs));
+        const controllers = Array.from({ length: concurrency }, () => new AbortController());
+        let winner;
+        let settled = false;
+        const jobs = controllers.map((controller) => Promise.resolve()
+            .then(() => download(url, timeoutMs, controller.signal))
+            .then((buf) => {
+            if (settled)
+                return;
+            winner = buf;
+            settled = true;
+            for (const other of controllers) {
+                if (other !== controller)
+                    other.abort();
+            }
+        })
+            .catch((err) => {
+            if (!settled) {
+                logger?.debug?.(`[sticker] 图片下载失败 attempt=${index + 1} concurrency=${concurrency}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }));
+        let timer;
+        const timeout = new Promise((resolve) => {
+            timer = setTimeout(() => {
+                if (settled)
+                    return;
+                settled = true;
+                for (const controller of controllers)
+                    controller.abort();
+                resolve(undefined);
+            }, timeoutMs);
+        });
+        await Promise.race([Promise.all(jobs), timeout]);
+        clearTimeout(timer);
+        if (winner)
+            return winner;
+        logger?.warn?.(`[sticker] 图片下载第 ${index + 1} 轮未成功 concurrency=${concurrency} timeout=${timeoutMs}ms`);
     }
-    catch (err) {
-        inflight -= 1;
-        logger.debug(`[sticker] capture error: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+}
+
+async function captureOne(url, contentType, msg, config, logger) {
+    const cached = lookupImagePath(url, logger);
+    if (cached)
+        return cached;
+    const key = captureKey(url);
+    const failUntil = captureFailures.get(key) ?? 0;
+    if (Date.now() < failUntil) {
+        logger?.debug?.(`[sticker] 图片下载失败冷却中 key=${key.slice(0, 16)}…`);
         return undefined;
     }
-    inflight -= 1;
-    if (!resolved.id) {
-        if (resolved.status === 'error')
-            logger.debug(`[sticker] capture failed: ${resolved.error}`);
-        return undefined;
-    }
-    // 台账兜底(2026-09-13 主人要求, 只图片): 记「图库 id → 这条 QQ 链接」——
-    //   本地文件日后被清理/搬层/删掉时, dock 还能拿这条链接把图显示出来。上限 1000 条。
-    recordImageUrl(stickerDir, resolved.id, url);
-    const localPath = store.pathOf(resolved.id);
-    if (localPath)
-        rememberImagePath(url, localPath);
-    if (resolved.status === 'new') {
-        logger.debug(`[sticker] captured #${resolved.id} → ${localPath ?? '(path?)'}`);
-        // 候选区软上限 + 回收站物理清理（纯本地操作，同步做完很快）
-        try {
-            store.cleanupCandidates(MAX_CANDIDATES);
+    const running = captureTasks.get(key);
+    if (running)
+        return running;
+    const store = getStickerStore(stickerDirOf(config), logger);
+    const sourceGroup = msg.kind === 'group' ? msg.groupOpenid : undefined;
+    const input = {
+        sourceGroup,
+        senderId: msg.senderId,
+        senderName: msg.senderName,
+        msgText: (msg.content ?? '').trim().slice(0, 120) || undefined,
+        sourceUrl: url,
+    };
+    const task = (async () => {
+        const buf = await downloadWithRetry(url, async (downloadUrl, timeoutMs, signal) => {
+            await acquireDownloadSlot();
+            try {
+                return await store.download(downloadUrl, timeoutMs, signal);
+            }
+            finally {
+                releaseDownloadSlot();
+            }
+        }, logger);
+        if (!buf) {
+            captureFailures.set(key, Date.now() + FAILURE_COOLDOWN_MS);
+            logger?.warn?.(`[sticker] 图片下载四轮均失败 key=${key.slice(0, 16)}…`);
+            return undefined;
         }
-        catch { /* ignore */ }
-        try {
-            store.cleanupTrash(MAX_TRASH);
+        const resolved = await store.captureBuffer(buf, input, contentType, url);
+        if (!resolved.id) {
+            captureFailures.set(key, Date.now() + FAILURE_COOLDOWN_MS);
+            logger?.warn?.(`[sticker] 图片写库失败 key=${key.slice(0, 16)}…: ${resolved.error || 'unknown error'}`);
+            return undefined;
         }
-        catch { /* ignore */ } // 回收站超限 → 旧的物理删
-        try {
-            store.purgeTrashed();
-        }
-        catch { /* ignore */ }
-        // 后台自动打标(可配视觉CLI 生成 tags+desc; 无可用引擎则保持 needsDescribe 待 agent 视觉补)
-        if (localPath && config.sticker.autoTagEnabled !== false) {
-            void (async () => {
-                try {
-                    const tag = await autoTagImage(localPath, config.sticker.visionCli ?? '', logger);
-                    if (tag) {
-                        store.setDescTags(resolved.id, tag.tags, tag.desc);
-                        logger.debug(`[sticker] 自动打标 #${resolved.id}: tags=${tag.tags.join('/') || '(启发)'} desc=${tag.desc.slice(0, 40)}…`);
+        captureFailures.delete(key);
+        recordImageUrl(stickerDirOf(config), resolved.id, url);
+        const localPath = store.pathOf(resolved.id);
+        if (localPath)
+            rememberImagePath(url, localPath);
+        if (resolved.status === 'new') {
+            logger.debug(`[sticker] captured #${resolved.id} → ${localPath ?? '(path?)'}`);
+            try {
+                store.cleanupCandidates(MAX_CANDIDATES);
+            }
+            catch { /* ignore */ }
+            try {
+                store.cleanupTrash(MAX_TRASH);
+            }
+            catch { /* ignore */ }
+            try {
+                store.purgeTrashed();
+            }
+            catch { /* ignore */ }
+            if (localPath && config.sticker.autoTagEnabled !== false) {
+                void (async () => {
+                    try {
+                        const tag = await autoTagImage(localPath, config.sticker.visionCli ?? '', logger);
+                        if (tag) {
+                            store.setDescTags(resolved.id, tag.tags, tag.desc);
+                            logger.debug(`[sticker] 自动打标 #${resolved.id}: ${tag.tags.join('/') || '(启发)'}`);
+                        }
                     }
-                }
-                catch (err) {
-                    logger.debug(`[sticker] autotag error: ${err instanceof Error ? err.message : String(err)}`);
-                }
-            })();
+                    catch (err) {
+                        logger.debug(`[sticker] autotag error: ${err instanceof Error ? err.message : String(err)}`);
+                    }
+                })();
+            }
         }
-    }
-    else {
-        logger.debug(`[sticker] dup #${resolved.id} (已在库, 只刷新 lastSeenAt)`);
-    }
-    return localPath;
+        return localPath;
+    })().finally(() => {
+        if (captureTasks.get(key) === task)
+            captureTasks.delete(key);
+    });
+    captureTasks.set(key, task);
+    return task;
 }
+
+export async function prepareImagesForDispatch(attachments, msg, config, logger) {
+    const images = (Array.isArray(attachments) ? attachments : [])
+        .filter((att) => isCollectableImage(att?.url) && inferMediaKind(att) === 'image')
+        .slice(0, MAX_PER_MSG);
+    const seen = new Set();
+    const tasks = [];
+    for (const image of images) {
+        const url = String(image.url);
+        if (seen.has(url))
+            continue;
+        seen.add(url);
+        tasks.push(captureOne(url, image.content_type, msg, config, logger));
+    }
+    const paths = await Promise.all(tasks);
+    return paths.filter(Boolean);
+}
+
 export function stickerCapture(config, logger) {
     return async (ctx, next) => {
-        // 先"发起"下载（不等它完成），再走主链 —— 保证被后续截断(未@被门控吞)也照样收藏。
-        // ⚠️ 2026-09-13 主人定稿：主链**0 等待**，落盘后路径才异步补进 image-path-cache，
-        //   所以这条消息未必用得上本地路径(检索不到就回退 QQ 链接) —— 这是刻意取舍：宁可用链接也不拖入站。
         if (config.sticker.collectEnabled) {
             try {
-                const msg = ctx.message;
-                // content_type 是 MIME(image/jpeg 等)，不能 == 'image'（踩坑修正）
-                const images = (msg.attachments ?? [])
-                    .filter(a => isCollectableImage(a.url) && !isNonImageContentType(a.content_type))
-                    .slice(0, MAX_PER_MSG);
-                for (const img of images) {
-                    void captureOne(img.url, img.content_type, ctx, config, logger).catch(() => undefined);
-                }
+                void prepareImagesForDispatch(ctx.message?.attachments, ctx.message, config, logger)
+                    .catch((err) => logger.debug(`[sticker] 后台采集失败: ${err instanceof Error ? err.message : String(err)}`));
             }
-            catch {
-                // 收藏调度失败不影响主链
-            }
+            catch { /* 收藏调度失败不影响主链 */ }
         }
         await next();
     };
 }
-//# sourceMappingURL=sticker-capture.js.map

@@ -370,7 +370,10 @@ export class StickerStore {
         catch (err) {
             return { status: 'error', error: err instanceof Error ? err.message : String(err) };
         }
-        // 魔数校验：非图片(误收的语音/视频/未知)直接拒，不入库
+        return this.captureBuffer(buf, input, contentType, url);
+    }
+    /** 已下载字节入库；并发下载只让胜者调用一次，避免争写 index。 */
+    async captureBuffer(buf, input, contentType, url) {
         if (!isImageBuffer(buf)) {
             return { status: 'error', error: 'not an image (magic bytes mismatch)' };
         }
@@ -384,7 +387,6 @@ export class StickerStore {
             return { status: 'dup', id };
         }
         const fromUrl = extname(new URL(url).pathname).replace(/^\./, '').slice(0, 5) || 'jpg';
-        // ★ 2026-11-13（issue #47）：**真实字节优先**，content_type / URL 后缀只做兜底。
         const ext = extFromMagic(buf) ?? ((contentType && MIME_EXT[contentType.toLowerCase()]) || fromUrl);
         const meta = {
             id,
@@ -404,7 +406,6 @@ export class StickerStore {
             desc: input.desc,
             needsDescribe: !input.desc,
             sourceUrl: input.sourceUrl,
-            // 感知哈希(2026-09-13): 入库即算, 供"重压缩/改尺寸也算同一张"的去重; sharp 不可用则为 undefined
             dhash: await computeDHash(buf),
         };
         try {
@@ -421,21 +422,34 @@ export class StickerStore {
         return { status: 'new', id };
     }
     /** 安全下载：仅 HTTPS + SSRF + 上限 + 超时 */
-    async download(url) {
+    async download(url, timeoutMs = DOWNLOAD_TIMEOUT_MS, signal) {
         const parsed = new URL(url);
         if (parsed.protocol !== 'https:')
             throw new Error(`Only HTTPS allowed: ${parsed.protocol}`);
         await assertSafeHostname(parsed.hostname);
-        const resp = await fetch(url, {
-            signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-        });
-        if (!resp.ok)
-            throw new Error(`HTTP ${resp.status}`);
-        const buf = Buffer.from(await resp.arrayBuffer());
-        if (buf.length > MAX_IMAGE_BYTES)
-            throw new Error(`Image exceeds 10MB (${buf.length})`);
-        return buf;
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        if (signal?.aborted)
+            controller.abort();
+        else
+            signal?.addEventListener('abort', abort, { once: true });
+        const timer = setTimeout(abort, Math.max(1, timeoutMs));
+        try {
+            const resp = await fetch(url, {
+                signal: controller.signal,
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+            });
+            if (!resp.ok)
+                throw new Error(`HTTP ${resp.status}`);
+            const buf = Buffer.from(await resp.arrayBuffer());
+            if (buf.length > MAX_IMAGE_BYTES)
+                throw new Error(`Image exceeds 10MB (${buf.length})`);
+            return buf;
+        }
+        finally {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', abort);
+        }
     }
     /** 从本地已有文件入库（后续升级/负样本用） */
     addLocalFile(srcPath, meta) {
