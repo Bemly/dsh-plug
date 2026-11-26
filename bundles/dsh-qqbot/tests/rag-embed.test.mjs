@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createSemanticEmbedder, setRagServiceResolver } from '../dist/features/rag-embed.js';
+import { createSemanticEmbedder, setRagOvmsTarget, setRagServiceResolver } from '../dist/features/rag-embed.js';
 
 test('uses the shared conan RAG service for embeddings and value scoring', async () => {
     const calls = [];
@@ -35,9 +35,28 @@ test('skips semantic work when OVMS returns no vector', async () => {
     assert.equal(await embedder.scoreValue({ text: 'hello', samples: [{ m: 'a', y: 1 }] }), undefined);
 });
 
-test('skips semantic work when the RAG service is absent', async () => {
+test('falls back to direct OVMS HTTP when the RAG service is absent', async () => {
     setRagServiceResolver(() => undefined);
+    setRagOvmsTarget({});
+    const requests = [];
+    globalThis.fetch = async (url, init) => {
+        requests.push({ url, body: JSON.parse(init.body) });
+        return { ok: true, json: async () => ({ data: [{ index: 0, embedding: [1, 2, 3] }] }) };
+    };
     const embedder = createSemanticEmbedder();
-    assert.equal(embedder.available(), false);
+    // ★ 2026-11-26 语义变更：conanRag 挂在预设子作用域，根作用域永远取不到；
+    //   取不到服务不再等于"智能回复不可用"，改为按 localModel.ovmsEndpoint 直连 OVMS。
+    assert.equal(embedder.available(), true);
+    assert.deepEqual(await embedder.embedQuery('hello'), [1, 2, 3]);
+    assert.equal(requests[0].url, 'http://127.0.0.1:8765/v3/embeddings');
+});
+
+test('still skips semantic work when OVMS itself is unreachable', async () => {
+    setRagServiceResolver(() => undefined);
+    setRagOvmsTarget({});
+    globalThis.fetch = async () => {
+        throw new Error('ECONNREFUSED');
+    };
+    const embedder = createSemanticEmbedder();
     assert.equal(await embedder.embedQuery('hello'), undefined);
 });

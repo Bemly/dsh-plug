@@ -9,6 +9,7 @@
  */
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { rootOf } from './shared/root-ctx.js';
+import { mirrorLogger } from './shared/log-mirror.js';
 import { uploadMarkdownImage, listMarkdownImages, deleteMarkdownImage } from './features/md-media.js';
 import { setMaterialTargetFactory } from './features/md-media-rewrite.js';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -51,16 +52,16 @@ function loggerLike(exec) {
     try {
         const a = exec.agent;
         if (a?.ctx?.logger)
-            return a.ctx.logger;
+            return mirrorLogger(a.ctx.logger);
     }
     catch { /* 忽略 */ }
     const c = console;
-    return {
+    return mirrorLogger({
         info: (m, ...args) => c.info(m, ...args),
         warn: (m, ...args) => c.warn(m, ...args),
         error: (m, ...args) => c.error(m, ...args),
         debug: (m, ...args) => c.debug(m, ...args),
-    };
+    });
 }
 /**
  * 把后台任务结果作为 user/message 写回会话(不唤醒, 与入群申请通知同款; 失败静默)。

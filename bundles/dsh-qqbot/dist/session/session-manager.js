@@ -782,7 +782,7 @@ export class SessionManager {
             this.logger.info(`getOrCreate(forceNew): 弃档重开 key=${key} new=${rotated}`);
         }
         // 2026-09-11: 先定 sessionId, 再按「会话级」查模型路由 —— 新会话(sessionId 无 override)回落全局默认
-        const sessionId = SessionId(this.currentSessionId(key));
+        let sessionId = SessionId(this.currentSessionId(key));
         const route = this.modelResolver.getEffectiveRoute(key, sessionId);
         this.logger.info(`getOrCreate: key=${key} route=${route ? `${route.provider}/${route.model}` : 'host-default'} sessionId=${sessionId}`);
         let agent;
@@ -859,6 +859,11 @@ export class SessionManager {
                         this.modelResolver.setSessionId(key, rotated);
                     }
                     catch { /* ignore */ }
+                    // ★ 2026-11-26 修：轮换后**必须把身份换成 rotated**。原来 record.sessionId / 工作区挂载 /
+                    //   isStale 全部还用旧 sessionId —— 旧档已被宿主判"已存在"，真身 agent 属于 rotated，
+                    //   于是活跃记录与磁盘会话对不上：每条入站都重演一遍"resume 失败 → 轮换"，
+                    //   侧边栏堆空档(实测 15:22~16:13 每条消息一个空档)，悬浮窗也再命不中会话。
+                    sessionId = rotated;
                     try {
                         this.modelResolver.setSessionCfg(key, { cwd: wantCwd });
                     }

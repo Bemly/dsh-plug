@@ -24,6 +24,25 @@ export const DEFAULT_VARIABLE = 'conan_rag_memory';
 export const DEFAULT_SERVICE = 'conanRag';
 export const DEFAULT_DREAM_TIMES = ['12:30', '23:30'];
 
+/**
+ * 注册跨插件服务 `conanRag`，注册失败只降级、不抛错。
+ *
+ * ★ 2026-11-26（QQ 入站全断的根因）：本插件挂在 **dsh-loli 预设**里，每个用该预设的会话
+ * 都会实例化一次；Cordis 的 provide 遇同名已存在会抛
+ * `service "conanRag" has been registered at <fiber>`（cordis/src/reflect.ts）。
+ * 裸调用 ⇒ 第二个及之后的 dsh-loli 会话**整个预设实例化失败** ⇒ agents.resume/create 全挂
+ * ⇒ 入站消息被丢掉、每轮换出一个空壳会话。服务注册只影响语义评分这条路，不该拖垮会话本身。
+ */
+export function provideSharedService(ctx, service) {
+  if (typeof ctx?.provide !== 'function') return undefined;
+  try {
+    return ctx.provide(DEFAULT_SERVICE, service);
+  } catch (err) {
+    console.warn(`[conan-rag-memory] conanRag 注册跳过(同名已存在): ${err?.message ?? err}`);
+    return undefined;
+  }
+}
+
 function resolveDshHome() {
   if (process.env.DSH_HOME && process.env.DSH_HOME.trim()) {
     return process.env.DSH_HOME.trim();
@@ -539,10 +558,7 @@ export function apply(ctx, config = {}) {
     },
   };
 
-  ctx.effect(() => {
-    if (typeof ctx.provide !== 'function') return undefined;
-    return ctx.provide(DEFAULT_SERVICE, ragService);
-  }, 'conan-rag-memory.service');
+  ctx.effect(() => provideSharedService(ctx, ragService), 'conan-rag-memory.service');
 
   // 串行写队列，防止并发读写丢数据
   let writeChain = Promise.resolve();

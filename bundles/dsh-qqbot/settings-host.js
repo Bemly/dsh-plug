@@ -665,7 +665,7 @@ export function apply(ctx) {
     );
   } catch { /* 诊断失败不影响装载 */ }
   // ── 临时诊断(排查"设置读取失败"): settings 服务可用性 + 已注册命名空间 ──
-  route(ctx, 'GET', '/api/qqbot-settings/_debug', async (_req, res) => {
+  route(ctx, 'GET', '/api/qqbot-settings/_debug', async (req, res) => {
     try {
       const hasSettings = !!ctx.settings;
       let nss = [];
@@ -3664,8 +3664,12 @@ export function apply(ctx) {
     if (now - wsSessionsCache.at < 5000) return wsSessionsCache.list;
     const out = [];
     try {
-      const home = process.env.USERPROFILE || process.env.HOME || '';
-      const root = home ? join(home, '.dsh', 'sessions') : '';
+      // ★ 2026-11-26 修：会话根目录跟宿主同源 —— DSH_HOME 指到哪，sessions 就在哪。
+      //   原来固定拼 `$HOME/.dsh/sessions`，而应用容器（NAS 等）会把 DSH_HOME 指到应用自己的目录，
+      //   会话实际在 `$DSH_HOME/sessions` ⇒ 这里恒为空表，面板拿不到"各会话最后活动时间"。
+      const home = (process.env.DSH_HOME || '').trim()
+        || ((process.env.USERPROFILE || process.env.HOME || '') ? join(process.env.USERPROFILE || process.env.HOME, '.dsh') : '');
+      const root = home ? join(home, 'sessions') : '';
       if (root && existsSync(root)) {
         for (const wsDir of readdirSync(root)) {
           const wsPath = join(root, wsDir);

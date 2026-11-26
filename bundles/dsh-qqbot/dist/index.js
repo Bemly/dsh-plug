@@ -18,11 +18,12 @@ import { describeNsConflict, nsPathsOf, scanNsOwners } from './features/ns-guard
 void getProfileDir;
 import { runQrSetup, persistCredentialsToProfile } from './setup.js';
 import { diagWrite } from './shared/diag.js';
+import { mirrorLogger } from './shared/log-mirror.js';
 // 2026-09-24 关闭"启动自动扫码"后，这些符号保留给设置页路径使用；此处显式引用避免 TS 未使用报错。
 void runQrSetup;
 void persistCredentialsToProfile;
 import { setOutboundModeWriter } from './features/outbound-mode-switch.js';
-import { setRagServiceResolver } from './features/rag-embed.js';
+import { setRagOvmsTarget, setRagServiceResolver } from './features/rag-embed.js';
 import { autoTagImage, setStickerVisionLlm } from './features/sticker-tagger.js';
 import { getStickerStore } from './features/sticker-store.js';
 import { stickerDirOf } from './gateway/data-root.js';
@@ -41,8 +42,9 @@ export const Config = ConfigSchema;
 // ── 插件主体 ──
 export async function apply(ctx, config) {
     const agents = ctx.agents;
-    const logger = ctx.logger ?? console;
+    const logger = mirrorLogger(ctx.logger ?? console);
     setRagServiceResolver(() => ctx.get?.('conanRag'));
+    setRagOvmsTarget(config.localModel); // 服务取不到时的直连目标(conanRag 挂在预设子作用域, 根作用域恒取不到)
     setStickerVisionLlm(
         () => ctx.llm ?? ctx.root?.llm,
         config.sticker?.visionProvider || 'https://ai.bemly.moe',
@@ -525,6 +527,7 @@ export async function apply(ctx, config) {
                 const next = readOwnSettings();
                 Object.assign(resolvedConfig, mergeDeep(resolvedConfig, next));
                 logger.info(`设置已热更新(${ns}): ${Object.keys(next).length} 项`);
+                setRagOvmsTarget(resolvedConfig.localModel); // OVMS 端点/模型改完即生效(无需重启)
                 // ★ 2026-10-12：**连接相关字段变了就拆旧建新**。
                 //   不加这步的话，下面的 tryStartGateway() 会被 `gatewayStarted` 守卫直接挡回
                 //   ⇒ 表现成"改了 appSecret/preset 却永远不重连，非得重启宿主"（主人 2026-10-12 实测反馈：
@@ -757,8 +760,10 @@ async function installLiveSettings(ctx, live, logger, nsOverride) {
             }
             if (typeof next.latexHint === 'boolean')
                 live.latexHint = next.latexHint;
-            if (next.localModel && typeof next.localModel === 'object')
+            if (next.localModel && typeof next.localModel === 'object') {
                 live.localModel = next.localModel;
+                setRagOvmsTarget(live.localModel); // 同上: settings 服务路径也要让 OVMS 目标热生效
+            }
             if (typeof next.groupPrompt === 'string')
                 live.groupPrompt = next.groupPrompt;
             if (next.schedule)

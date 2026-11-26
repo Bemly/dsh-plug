@@ -74,6 +74,10 @@ export function diagEnabled() {
 }
 /** 某个诊断文件的绝对路径（**不看开关**，面板展示用） */
 export function diagPathFor(name) {
+    // root 平时由 configureDiag 设；logger 镜像可能比它更早用到 ⇒ 这里兜底解析一次，
+    // 否则会拼出相对路径、写到进程 cwd 去。
+    if (!state.root)
+        state.root = resolveRoot();
     return join(state.root, `${safeName(name)}.log`);
 }
 /** 文件名消毒：只允许字母/数字/`._-`，防路径逃逸 */
@@ -128,6 +132,20 @@ function rotateIfNeeded(file, incoming) {
 export function diagWrite(name, line) {
     if (!state.enabled)
         return;
+    appendRow(name, line);
+}
+/**
+ * **不看开关**必定落盘的一行。
+ *
+ * 只给"错过就再也拿不到"的信号用（插件 warn/error 的镜像）。诊断开关关着时宿主 stdout 也可能等于没有：
+ * fnOS 网关只在 app 重启时才重开日志 fd，而 `/etc/logrotate.d/app-center` 没有 `copytruncate` ⇒
+ * 轮转后长驻进程一直往"已改名并压缩删除"的 inode 写，`/var/log/apps/<app>.log` 就此恒 0 字节，
+ * `resume 失败(改走 create): … err=` 这类关键一行完全无处可查（2026-11-26 实测踩到）。
+ */
+export function diagWriteAlways(name, line) {
+    appendRow(name, line);
+}
+function appendRow(name, line) {
     try {
         const file = diagPathFor(name);
         const row = `${new Date().toISOString()} ${String(line ?? '')}\n`;

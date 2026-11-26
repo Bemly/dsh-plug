@@ -81,7 +81,7 @@
 发图/撤消息用纯文本就能驱动（回复里写 `[MEDIA:image|路径]` / `[RECALL]`）；仓库不含任何机器人凭据与隐私。
 
 **📱 不用开电脑 —— 手机也能 7×24 挂着**
-配合社区的 [dsh-mobile-apk](https://github.com/kelai141/dsh-mobile-apk)（**dsh 安卓壳 APK**：WebView UI + 内嵌 Termux 运行时快照，解压即跑），把 dsh 和这只鲸鱼一起装进手机，就是一台**随身在线**的 QQ 机器人 —— 不用为了挂机常开一台电脑。（智能回复走 conan RAG / OVMS；安卓没有 OVMS 时会跳过语义评分，不做本地兜底。）
+配合社区的 [dsh-mobile-apk](https://github.com/kelai141/dsh-mobile-apk)（**dsh 安卓壳 APK**：WebView UI + 内嵌 Termux 运行时快照，解压即跑），把 dsh 和这只鲸鱼一起装进手机，就是一台**随身在线**的 QQ 机器人 —— 不用为了挂机常开一台电脑。（智能回复走 conan RAG 服务或直连 OVMS；两者都不可用时跳过语义评分，不做本地兜底。）
 
 ### 📸 效果展示
 
@@ -586,7 +586,7 @@ npm install --legacy-peer-deps     # 仅安装期解析策略, 不改运行行�
 > ⚠️ **安卓上务必允许后台运行**：
 >
 > **系统设置 → 电池 → 允许后台运行 / 加入省电白名单**，否则系统会在息屏后杀掉 Termux 进程。
-> 智能回复依赖 conan RAG / OVMS；服务不可用时本次跳过语义评分，机器人照常收发消息。
+> 智能回复优先用 conan RAG 服务；服务不在同一作用域取不到时，按 `localModel.ovmsEndpoint` 直连 OVMS（默认本机 `8765/v3/embeddings`）。两条路都不通才跳过本次语义评分，机器人照常收发消息。
 
 ### 首次启动与绑定
 

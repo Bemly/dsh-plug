@@ -74,6 +74,11 @@ export const REFERENCE_CONTEXT = [
 /** 智能回复: 复用 conan RAG 的 OVMS 语义服务; OVMS 故障时本次跳过，不做本地兜底 */
 const localModelSchema = Schema.object({
     enabled: Schema.boolean().default(true).description('智能回复(省 token): 开=用 conan RAG/OVMS 做价值评分与语义检索; OVMS 故障时跳过'),
+    // ★ 2026-11-26: conanRag 服务挂在预设子作用域, 根作用域取不到 ⇒ 支持直接打 OVMS HTTP。
+    //   留空 = 内置默认(本机 8765 的 conan-embedding-v1), 与 dsh-chat-loli 的 RAG 配置同源。
+    ovmsEndpoint: Schema.string().default('').description('OVMS 嵌入端点(留空=默认 http://127.0.0.1:8765/v3/embeddings); conanRag 服务不可用时按此直连'),
+    ovmsModel: Schema.string().default('').description('OVMS 嵌入模型名(留空=默认 conan-embedding-v1)'),
+    ovmsTimeoutMs: Schema.number().default(15000).description('单次嵌入请求超时(毫秒, 默认 15000): 超时只跳过本次语义判定, 不拦消息'),
     valueGate: Schema.union(['off', 'log', 'block']).default('log').description('价值评分模式(账号默认): off=不评分 / log=只记录分数 / block=低分不唤醒AI(消息仍进上下文)'),
     valueMinScore: Schema.number().min(0).max(1).default(0.5).description('价值评分门槛(0~1, 越高越安静): 近邻相似度低于此值视为不值得回应'),
     // 附件唤醒开关（2026-09-15 主人："视频和文件不算是图片，为什么也默认唤醒了"）
@@ -90,6 +95,9 @@ const localModelSchema = Schema.object({
     overrides: Schema.any().default({}).description('单会话覆盖(dock「单会话设置」保存到这里)'),
 }).default({
     enabled: true,
+    ovmsEndpoint: '',
+    ovmsModel: '',
+    ovmsTimeoutMs: 15000,
     valueGate: 'log',
     valueMinScore: 0.5,
     attachmentPassthrough: { image: true, video: false, voice: false, file: false },
