@@ -408,6 +408,7 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
      *  @ 消息(窗口含@)/私聊: 随时派发。 */
     async function flush(key, w) {
         const pre = w.entries;
+        dbg(`flush 进入 key=${key} n=${pre.length} dbgOn=${dbgEnabled()}`);
         if (pre.length === 0) {
             clearTimer(w);
             windows.delete(key);
@@ -434,6 +435,8 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                 : String(f0.msg.senderId ?? '');
             if (recPeer) {
                 const busyRec = manager.findByPeer(fKind === 'group' ? 'group' : 'c2c', recPeer);
+                // 诊断：每次 flush 都留一条，看清到底卡在哪一步（排查"插话退化成排队"）
+                dbg(`flush 判定 key=${key} kind=${fKind} peer=${recPeer} rec=${!!busyRec} turnActive=${busyRec?.turnActive} status=${busyRec?.agent?.status} mode=${busySendModeOf(config)} n=${pre.length}`);
                 // 2026-11-23 修复：防止 /new 或异常中止后残留的幻影 turnActive=true 导致插话模式永久卡死在 next-step
                 if (busyRec?.turnActive && busyRec.agent?.status === 'idle') {
                     busyRec.turnActive = false;
