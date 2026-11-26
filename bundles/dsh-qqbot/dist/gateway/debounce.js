@@ -393,10 +393,14 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
         }
         catch { /* ignore */ }
     }
-    const cfg = () => {
-        const d = config.behavior?.debounce;
-        return d ?? DEFAULTS;
-    };
+    /**
+     * ★★ 2026-11-26 修（重要）：必须**逐字段**合并默认值。
+     * 原来 `return d ?? DEFAULTS` 只在 debounce 整块缺失时才用默认值；
+     * 一旦配置里存在 debounce 对象但少了某个字段（实测 `enabled` 丢失），
+     * `cfg().enabled` 就是 undefined → 整个延迟聚合被当成关闭 →
+     * flush 永不执行 → 插话/排队逻辑全部失效（表现为"消息全排队、插话不生效"）。
+     */
+    const cfg = () => ({ ...DEFAULTS, ...(config.behavior?.debounce ?? {}) });
     function clearTimer(w) {
         if (w.timer) {
             clearTimeout(w.timer);
