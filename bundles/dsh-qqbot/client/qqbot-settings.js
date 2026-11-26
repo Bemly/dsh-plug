@@ -3123,7 +3123,7 @@ var QQS_THEME_CSS = [
       }, 30000)
 
       // ── 面板状态(每个实例独立保存, 切回不丢) ──
-      var state = { ns: '', accts: [], gid: '', groups: [], tab: 'chat', sendScope: 'group', sendTo: '', sendName: '', sendText: '', insertCtx: true, targetQ: '', c2cs: [], joins: null, mutes: null, members: null, muteSecs: '60', bindGid: '', bindName: '', msg: '', busy: '', wantPeer: null, lookedUp: false, detected: null, detectedHit: null, chatItems: [], chatMore: false, chatBusy: '', chatErr: '', chatOldest: 0, chatText: '', chatIns: true, outMode: '', outRev: undefined, bpEvents: [], bpSel: null, bpDraft: null, bpExt: null, bpExtBusy: '', bpReq: '', bpReqHint: '', bpSrcText: null, bpSrcPath: '', rosterSel: {}, rosterScope: 'all', rosterQ: '', hubSid: '', hubRev: undefined, hubBusy: '', hubMsg: '', gaEnabled: false, gaPoll: false, gaPollWake: true, gaHubNotify: true, gaNotifyGroup: true, gaInterval: 5, gaMinCount: 1, gaMsg: '', gaBusy: '', bcDraft: null, bcTasks: null, cardMd: '', cardBtns: '', cardGid: '', cardBusy: '', cardQ: '', tgGroups: [], tgCur: '', hammerSub: 'mute', arOn: false, arMode: 'keep', arKws: '', arKinds: [], arMute: 0, arDry: false, arMsg: '', qunLogged: null, qunUin: '', qunGroups: [], qunGc: '', qunKw: '', qunMembers: [], qunCount: 0, qunQr: false, qunMsg: '', qunBusy: false, qunLoading: false }
+      var state = { ns: '', accts: [], gid: '', groups: [], tab: 'chat', sendScope: 'group', sendTo: '', sendName: '', sendText: '', insertCtx: true, targetQ: '', c2cs: [], joins: null, mutes: null, members: null, blockedUsers: null, blockMembers: null, blockOwners: [], blockBusy: '', blockOpenid: '', blockMsg: '', muteSecs: '60', bindGid: '', bindName: '', msg: '', busy: '', wantPeer: null, lookedUp: false, detected: null, detectedHit: null, chatItems: [], chatMore: false, chatBusy: '', chatErr: '', chatOldest: 0, chatText: '', chatIns: true, outMode: '', outRev: undefined, bpEvents: [], bpSel: null, bpDraft: null, bpExt: null, bpExtBusy: '', bpReq: '', bpReqHint: '', bpSrcText: null, bpSrcPath: '', rosterSel: {}, rosterScope: 'all', rosterQ: '', hubSid: '', hubRev: undefined, hubBusy: '', hubMsg: '', gaEnabled: false, gaPoll: false, gaPollWake: true, gaHubNotify: true, gaNotifyGroup: true, gaInterval: 5, gaMinCount: 1, gaMsg: '', gaBusy: '', bcDraft: null, bcTasks: null, cardMd: '', cardBtns: '', cardGid: '', cardBusy: '', cardQ: '', tgGroups: [], tgCur: '', hammerSub: 'mute', arOn: false, arMode: 'keep', arKws: '', arKinds: [], arMute: 0, arDry: false, arMsg: '', qunLogged: null, qunUin: '', qunGroups: [], qunGc: '', qunKw: '', qunMembers: [], qunCount: 0, qunQr: false, qunMsg: '', qunBusy: false, qunLoading: false }
       // ★ 2026-10-27：把 state 暴露到 window —— 模块级的 mountDockCard 拿不到这个闭包变量，
       //   扩展卡片要读当前 ns / gid 只能从这里取。
       try { window.__qqsDockState = state } catch (e) { /* ignore */ }
@@ -4665,6 +4665,43 @@ var QQS_THEME_CSS = [
           loadMutes(); refreshBadge()
         })
       }
+      function loadBlocklist() {
+        state.blockedUsers = null; state.blockMembers = null; state.blockMsg = ''; paintBody()
+        var nsq = state.ns ? 'ns=' + encodeURIComponent(state.ns) : ''
+        api('read', nsq).then(function (d) {
+          var v = (d && d.value) || {}
+          state.blockedUsers = Array.isArray(v.access && v.access.groupBlockedUsers) ? v.access.groupBlockedUsers : []
+          state.blockOwners = Array.isArray(v.groupAdmin && v.groupAdmin.owners) ? v.groupAdmin.owners : []
+          paintBody()
+        }).catch(function () { state.blockedUsers = []; paintBody() })
+        if (!state.gid) { state.blockMembers = []; paintBody(); return }
+        var q = 'gid=' + encodeURIComponent(state.gid) + (nsq ? '&' + nsq : '')
+        api('group/members_local', q).then(function (d) {
+          state.blockMembers = (d && d.ok && Array.isArray(d.members) ? d.members : []).map(function (m) { return { mid: m.mid, name: m.name || '' } })
+          paintBody()
+        }).catch(function () { state.blockMembers = []; paintBody() })
+      }
+      function saveBlocklist(list) {
+        state.blockBusy = 'save'; state.blockMsg = ''; paintBody()
+        apiPost('update', { ns: state.ns || undefined, patch: { access: { groupBlockedUsers: list } } }).then(function (d) {
+          state.blockBusy = ''
+          if (d && !d.error && d.value) {
+            state.blockedUsers = list
+            state.blockMsg = '已保存并热更新'
+          } else {
+            state.blockMsg = '保存失败: ' + ((d && (d.error || d.msg)) || '未知错误')
+          }
+          paintBody()
+        }).catch(function (e) { state.blockBusy = ''; state.blockMsg = '保存异常: ' + e.message; paintBody() })
+      }
+      function toggleBlock(mid) {
+        var id = String(mid || '').trim().toUpperCase()
+        if (!/^[0-9A-F]{32}$/.test(id)) { state.blockMsg = 'openid 必须是 32 位十六进制字符串'; paintBody(); return }
+        var list = (state.blockedUsers || []).slice()
+        var blocked = list.indexOf(id) >= 0
+        if (!blocked && state.blockOwners.indexOf(id) >= 0) { state.blockMsg = '主人白名单用户不能被屏蔽'; paintBody(); return }
+        saveBlocklist(blocked ? list.filter(function (x) { return x !== id }) : [...new Set([...list, id])])
+      }
       function doBind() {
         var g = (state.bindGid || '').trim()
         if (!g) { state.msg = '先粘贴 group_openid'; paintBody(); return }
@@ -4819,6 +4856,7 @@ var QQS_THEME_CSS = [
           + '<button data-t="chat" class="' + (state.tab === 'chat' ? 'on' : '') + '">💬 聊天</button>'
           + '<button data-t="join" class="' + (state.tab === 'join' ? 'on' : '') + '">📥 入群审批<span class="dk-join-badge" style="display:none;background:#ff4d4f;color:#fff;border-radius:8px;font-size:11px;padding:0 5px;margin-left:4px">0</span></button>'
           + '<button data-t="mute" class="' + (state.tab === 'mute' ? 'on' : '') + '">🔨 锤子</button>'
+          + '<button data-t="block" class="' + (state.tab === 'block' ? 'on' : '') + '">🚫 屏蔽群员</button>'
           + '<button data-t="out" class="' + (state.tab === 'out' ? 'on' : '') + '">⚙️ 出站</button>'
           + '<button data-t="send" class="' + (['send','broadcast','bp','card'].indexOf(state.tab) >= 0 ? 'on' : '') + '">📤 群发</button>'
           + '<button data-t="session" class="' + (state.tab === 'session' ? 'on' : '') + '">⚙ 单会话设置</button>'
@@ -4931,6 +4969,48 @@ var QQS_THEME_CSS = [
             body += hammerApiKickHtml()
           } else {
             body += hammerAutoRecallHtml()
+          }
+        } else if (state.tab === 'block') {
+          body += '<div class="dk-row">目标群: ' + groupSelHtml
+            + '<button class="dk-btn" id="dk-block-refresh">🔄 刷新</button></div>'
+          body += '<div class="dk-msg">被屏蔽者的群聊消息不会进历史、不评分、不唤醒 AI；主人白名单优先。名单对本机器人的所有群生效。</div>'
+          body += '<div class="dk-row" style="gap:6px;margin:4px 0">'
+            + '<input class="qqs-txt" id="dk-block-openid" placeholder="输入 32 位成员 openid" value="' + esc(state.blockOpenid || '') + '" style="flex:1;box-sizing:border-box;font-size:12px;padding:4px 8px">'
+            + '<button class="dk-btn no" id="dk-block-add">➕ 屏蔽该 openid</button></div>'
+          body += '<div class="dk-msg" id="dk-block-hint" style="color:#2f9e44">' + esc(state.blockMsg || '') + '</div>'
+          if (!state.gid) {
+            body += '<div class="dk-empty">先在上方选择一个群</div>'
+          } else if (state.blockedUsers === null || state.blockMembers === null) {
+            body += '<div class="dk-empty">加载中…</div>'
+          } else {
+            var blockBusy = !!state.blockBusy
+            var blockedSet = new Set(state.blockedUsers)
+            var memberById = {}
+            state.blockMembers.forEach(function (m) { memberById[m.mid] = m })
+            var blockRows = state.blockMembers.slice().sort(function (a, b) {
+              return (blockedSet.has(b.mid) ? 1 : 0) - (blockedSet.has(a.mid) ? 1 : 0)
+            })
+            body += '<div style="font-weight:700;font-size:13px;margin:8px 0 4px">群员名单（已屏蔽 ' + state.blockedUsers.length + ' 人）</div>'
+            if (!blockRows.length && !state.blockedUsers.length) body += '<div class="dk-empty">还没有本地成员记录；群友发言后会自动出现</div>'
+            body += '<div class="dk-list">'
+            blockRows.forEach(function (m) {
+              var mid = String(m.mid || '')
+              var isBlocked = blockedSet.has(mid)
+              var isOwner = state.blockOwners.indexOf(mid) >= 0
+              var action = isBlocked ? 'unblock' : 'block'
+              body += '<div class="dk-item">'
+                + '<span style="font-weight:700;font-size:12px">' + esc(m.name || '(未知名)') + (isOwner ? ' [主人]' : '') + '</span>'
+                + '<span class="dk-msg" style="flex:1;font-size:11px;color:#888">' + esc(mid) + '</span>'
+                + '<button class="dk-btn ' + (isBlocked ? 'ok' : 'no') + '" data-block-mid="' + esc(mid) + '" data-block-action="' + action + '"' + (blockBusy || isOwner ? ' disabled' : '') + '>'
+                + (isBlocked ? '解除屏蔽' : '屏蔽') + '</button></div>'
+            })
+            state.blockedUsers.forEach(function (mid) {
+              if (memberById[mid]) return
+              body += '<div class="dk-item"><span style="font-weight:700;font-size:12px">(本地未见过)</span>'
+                + '<span class="dk-msg" style="flex:1;font-size:11px;color:#888">' + esc(mid) + '</span>'
+                + '<button class="dk-btn ok" data-block-mid="' + esc(mid) + '" data-block-action="unblock"' + (blockBusy ? ' disabled' : '') + '>解除屏蔽</button></div>'
+            })
+            body += '</div>'
           }
         } else if (state.tab === 'roster') {
           body += '<div class="dk-row" style="font-weight:700;font-size:13px;margin:2px 0">📇 会话台账:机器人聊过的对象</div>'
@@ -5737,6 +5817,19 @@ var QQS_THEME_CSS = [
       }
 
       function bindBodyEvents() {
+        var blockRefresh = panel.querySelector('#dk-block-refresh')
+        if (blockRefresh) blockRefresh.onclick = function () { loadBlocklist() }
+        var blockInput = panel.querySelector('#dk-block-openid')
+        if (blockInput) blockInput.oninput = function () { state.blockOpenid = blockInput.value }
+        var blockAdd = panel.querySelector('#dk-block-add')
+        if (blockAdd) blockAdd.onclick = function () {
+          var id = String(state.blockOpenid || '').trim().toUpperCase()
+          if ((state.blockedUsers || []).indexOf(id) >= 0) { state.blockMsg = '该 openid 已在屏蔽名单中'; paintBody(); return }
+          toggleBlock(id)
+        }
+        panel.querySelectorAll('[data-block-mid]').forEach(function (btn) {
+          btn.onclick = function () { toggleBlock(btn.getAttribute('data-block-mid')) }
+        })
         // ── 🚫 无上下文模式（2026-09-27）──
         // 照抄本文件既有模式：paintBody() 渲染完 → 调 bindBodyEvents() 统一绑事件
         // （DOM 每次重绘都是新的，所以必须绑在"渲染后"，而不是 loadCtxless 里）。
@@ -5879,6 +5972,7 @@ var QQS_THEME_CSS = [
           btn.onclick = function () {
             state.tab = btn.getAttribute('data-t'); state.msg = ''
             if (state.tab === 'join') loadJoins(); else if (state.tab === 'mute') loadMutes()
+            else if (state.tab === 'block') loadBlocklist()
             else if (state.tab === 'out') loadOutMode()
             else if (state.tab === 'session') { loadLocalModel(); bindLocalModel() }
             else if (state.tab === 'bp') loadBotplay()
@@ -5899,6 +5993,7 @@ var QQS_THEME_CSS = [
         if (gsel) gsel.onchange = function (e) {
           state.gid = e.target.value; state.msg = ''
           if (state.tab === 'join') loadJoins(); else if (state.tab === 'mute') loadMutes()
+          else if (state.tab === 'block') loadBlocklist()
           else if (state.tab === 'chat') { state.chatItems = []; state.chatErr = ''; state.chatBusy = ''; paintBody(); loadChat(true) }
           else paintBody()
         }
