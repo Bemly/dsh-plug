@@ -10,6 +10,7 @@
   "keywords": [
     "magpie",
     "magpie-middleware",
+    "magpie-plugin",
     "image-slim",
     "dsh",
     "cache"
