@@ -39,6 +39,7 @@ import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'no
 import { createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { scanExtFiles } from './ext-packs.js';
+import { BUILTIN_OUTBOUND } from './builtin-outbound.js';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 /** 扩展文件允许的扩展名（与 extension-store 的 ALLOWED_EXT 同款） */
@@ -180,13 +181,35 @@ export async function loadOutboundExtensions(opts) {
     // ★ 2026-10-24：内置目录 + 所有扩展包（只取直接子文件）
     const hits = scanExtFiles(dataRoot, 'outbound', ALLOWED_EXT);
     const bucket = buckets.get(obKey(dataRoot));
+    // ★ 2026-11-27：内置出站扩展常驻，不依赖数据目录文件。
+    //   数据目录里若还有同名扩展，按「内置优先」跳过（见下方 builtinNames）。
+    const builtinExts = BUILTIN_OUTBOUND.map((b) => ({
+        file: b.file ?? '(builtin)',
+        path: '(builtin)',
+        name: b.name,
+        middleware: b.middleware,
+        ...(typeof b.onSent === 'function' ? { onSent: b.onSent } : {}),
+    }));
+    const builtinNames = new Set(builtinExts.map((e) => e.name));
     if (hits.length === 0) {
         if (bucket)
-            bucket.loaded = [];
-        return emptyResult();
+            bucket.loaded = builtinExts;
+        return {
+            total: builtinExts.length,
+            skipped: 0,
+            middleware: builtinExts.map((e) => e.middleware),
+            extensions: builtinExts,
+            files: [],
+            cachedPaths: [],
+            scannedPaths: [],
+        };
     }
     const files = hits.map((h) => h.name);
     const result = emptyResult(files);
+    // 内置扩展先入列（不占 files，避免被当成"文件扩展"记录）
+    result.extensions.push(...builtinExts);
+    result.middleware.push(...builtinExts.map((e) => e.middleware));
+    result.total += builtinExts.length;
     // ★ 2026-11-21（issue #78 / CodeRabbit #80）：装载期间标出"这批回调属于哪个实例"，
     //   这样 `/tools_reload` 只清掉本实例的思考回调（别的实例不重载，清了就再也回不来）。
     //
@@ -213,6 +236,12 @@ export async function loadOutboundExtensions(opts) {
             bucket?.urls.set(abs, url);
             const ext = normalizeOutbound(mod, f, abs, logger);
             if (!ext) {
+                result.skipped += 1;
+                continue;
+            }
+            // ★ 2026-11-27：与内置扩展同名 → 内置优先，跳过文件版，避免同一规则被跑两遍。
+            if (builtinNames.has(ext.name)) {
+                logger.info(`[ext-outbound] ${f} 与内置扩展同名(${ext.name})，内置优先，已跳过该文件（可删除该文件）`);
                 result.skipped += 1;
                 continue;
             }

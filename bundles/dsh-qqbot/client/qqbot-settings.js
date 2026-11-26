@@ -7574,7 +7574,7 @@ var QQS_THEME_CSS = [
         // 头部
         h('div', { style: S.head },
           h('div', null,
-            h('div', { style: S.title }, 'QQ 扩展功能'),
+            h('div', { style: S.title }, 'QQ'),
             h('div', { style: S.sub }, '把「市场」放第一位：想装扩展先看这里。下面也有怎么写自己的扩展')),
           h('button', { style: S.btn, onClick: function () { setTick(tick + 1) } }, loading ? '刷新中…' : '刷新')),
 
@@ -8381,7 +8381,7 @@ var QQS_THEME_CSS = [
           try {
             _extTabDisposed = slots.inject('conversation.view', function () {
               return slots.register(
-                { name: 'conversation.view', id: 'qqbot-ext', order: 81, label: 'QQ 扩展功能' },
+                { name: 'conversation.view', id: 'qqbot-ext', order: 81, label: 'QQ' },
                 ExtPanel)
             }) || null
             if (!_extTabDisposed) _extTabDisposed = function () {}
