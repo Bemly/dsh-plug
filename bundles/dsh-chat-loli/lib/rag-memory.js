@@ -181,7 +181,7 @@ function isSystemInjectedText(text) {
 
 function extractLocalPathsFromText(text) {
   const found = new Set();
-  // Unix absolute paths (e.g. /vol1/..., /tmp/..., /home/...)
+  // Unix absolute paths (e.g. /data/..., /tmp/..., /home/...)
   const unixRe = /(?:^|[\s→:("'`])(\/(?:vol\d+|tmp|home|var|etc|Users|mnt|data|opt)[^\s"'`<>|)\]]+)/g;
   let m;
   while ((m = unixRe.exec(text)) !== null) {
