@@ -1,20 +1,22 @@
 /**
- * magpie-image-slim v0.1.2（2026-11-26 重写）
+ * magpie-image-slim v0.1.3（2026-11-26 重写）
  *
  * 职责：出站时把**历史轮次**的 ImageBlock 换成极短占位符，避免每轮重算视觉 token。
  *
  * v0.1.2 相对 v0.1.1 的变化：
- *   1. 识别**只用通用 image-slim 占位符正则** `[X.XX MB image left out here: …]`，
- *      不再认 v1 的 `[图片聚合]` / `Image "aggregate.jpg"` / `（↑…发的图）` 标记。
- *      dsh-botqq v2.1 把打标内容写进这个通用占位符，任何插件写的都认。
+ *   1. 识别两种格式：通用 image-slim 槽位 `[X.XX MB image left out here: …]`，
+ *      以及 DSH 宿主自带的图片句柄文本（`Image "…" (sha256:…) … Normalized copy (read-only…): "/path"`）。
+ *      dsh-botqq v2.2 起不再注入任何打标文本，路径完全由宿主生成。
  *   2. 历史图片块 → **1 块换 1 块**的 `[image]`，块数恒定 ⇒ 缓存前缀稳定。
  *      带打标的占位符文本原样保留，模型仍知道图内容。
  *   3. `splitPlaceholders` 默认**关闭**：v1 拆块改变 block_count，触发 agy-bridge
  *      判定 history 不一致 → session_new → 缓存清零（实测 63 次）。
  *   4. 保留 `keepCurrentTurn`（默认开）：本回合新图不瘦。
  */
-/** 通用占位符正则：dsh-botqq 写入的打标文本就是这种格式，不绑定任何插件/渠道 */
+/** 通用占位符正则（本中间件自己产出的格式，幂等认） */
 const SLOT_RE = /^\[\d+(?:\.\d+)? MB image left out here: [^\]\r\n]*\]$/;
+/** DSH 宿主为每张图生成的句柄文本（含 sha256 与 Normalized copy 本地路径） */
+const DSH_HANDLE_RE = /^Image "[^"]*"\s*\(sha256:[0-9a-f]{8,}\)[\s\S]*Normalized copy \(read-only/;
 /** 旧格式识别（仅用于 opt-in 的拆块功能，不再用于判定消息是否聚合） */
 const IMAGE_SLIM_RE = /\[\d+(?:\.\d+)? MB image left out here: [^\]\r\n]*\]/g;
 const TEXT_TYPES = new Set(['input_text', 'output_text', 'text']);
@@ -59,7 +61,7 @@ export function onRequest(body, ctx) {
     }
 
     if (changed && options.log) {
-        console.log(`image-slim v0.1.2: [${ctx.agent || 'unknown'}] replaced ${replaced} image(s), split ${split} text block(s)`);
+        console.log(`image-slim v0.1.3: [${ctx.agent || 'unknown'}] replaced ${replaced} image(s), split ${split} text block(s)`);
     }
     return changed ? body : undefined;
 }
@@ -96,10 +98,19 @@ function textOf(content) {
     return content.map((block) => TEXT_TYPES.has(block?.type) ? String(block.text || '') : '').join('\n');
 }
 
-/** 只认通用 image-slim 占位符；不再兼容 v1 的任何标记。 */
+/**
+ * 两种格式都认（2026-11-26 v0.1.3）：
+ *  ① 通用 image-slim 槽位 `[X.XX MB image left out here: …]`（本中间件产出，幂等）
+ *  ② DSH 宿主句柄 `Image "xxx" (sha256:…); … Normalized copy (read-only…): "/path"…`
+ *     —— dsh-botqq v2.2 起不再自带文本，路径完全由宿主生成为独立 text 块，
+ *        我们只把同消息里的图片数据换掉，路径文本原样保留供模型 read_image。
+ */
 function isAggregateMessage(content) {
     for (const block of content) {
-        if (TEXT_TYPES.has(block?.type) && typeof block.text === 'string' && SLOT_RE.test(block.text.trim()))
+        if (!TEXT_TYPES.has(block?.type) || typeof block.text !== 'string')
+            continue;
+        const t = block.text.trim();
+        if (SLOT_RE.test(t) || DSH_HANDLE_RE.test(t))
             return true;
     }
     return false;
@@ -131,5 +142,6 @@ export const _internal = {
     isAggregateMessage,
     splitImageSlimText,
     SLOT_RE,
+    DSH_HANDLE_RE,
     PLACEHOLDER,
 };

@@ -32,7 +32,7 @@ async function loadJimp() {
 export const MAX_EDGE = 2560;
 /** 网格候选列数（1=竖排，2~4=网格/横排） */
 const COLS_CANDIDATES = [1, 2, 3, 4];
-/** 打标文本采用 image-slim 通用占位符格式，无自定义标记（见 describeImages） */
+/** 打标文本已彻底移除（2026-11-26 v2.2）：路径由 DSH 宿主自带，不再重复写。 */
 /** 会话 → 待注入的图（保留缓冲，仅用于去重，不再限制张数） */
 const buffers = new Map();
 /**
@@ -94,15 +94,11 @@ export function isOurAttachment(id) {
 }
 let probeImageInput;
 let saveImage;
-/** 打标查询钩子：bootstrap 注入，输入本地路径，返回 { desc, tags } 或 undefined */
-let lookupTags;
 export function setImageAggregateHooks(hooks) {
     if (hooks.probeImageInput)
         probeImageInput = hooks.probeImageInput;
     if (hooks.saveImage)
         saveImage = hooks.saveImage;
-    if (hooks.lookupTags)
-        lookupTags = hooks.lookupTags;
 }
 function bufferOf(key) {
     let arr = buffers.get(key);
@@ -293,29 +289,16 @@ export async function stitchAggImages(items) {
     };
 }
 /**
- * 生成**固定**的打标描述文本，采用 image-slim 通用占位符格式：
- *   [X.XX MB image left out here: 图1 <desc>；图2 <desc>]
- *
- * 为什么不自造标记：magpie-image-slim 已用标准正则识别这种占位符，
- * 直接复用 ⇒ 不绑定 QQ / 不绑定具体插件，任何一路图片都能被同一套机制瘦身。
- * 打标内容写进占位符的说明部分，历史轮次图块被 slim 掉后仍保留这段文字。
- * bytes 传实际附件字节数（拿不到时 0），保证格式与 image-slim 一致。
- */
-export function describeImages(items, bytes) {
-    const parts = items.map((it, idx) => {
-        const meta = it.tags && typeof it.tags === 'object' ? it.tags : {};
-        const desc = typeof meta.desc === 'string' ? meta.desc.trim() : '';
-        const tags = Array.isArray(meta.tags) ? meta.tags.filter((t) => typeof t === 'string' && t.trim()).slice(0, 5) : [];
-        const text = desc || tags.join('、') || '未打标图片';
-        return `图${idx + 1} ${text}`;
-    });
-    const mb = (Number(bytes) / 1048576 || 0).toFixed(2);
-    return `[${mb} MB image left out here: ${parts.join('；')}]`;
-}
-/**
  * 真正干活：模型支持读图时，把待注入的图变成 content blocks。
- * - 单图：原图直给（长边 >2560 才缩），后跟固定打标文本。
- * - 多图：合成一张，后跟固定打标文本。
+ *
+ * 2026-11-26 v2.2（主人定）：**只注入 ImageBlock，不再附带任何文本**。
+ * 图片的本地路径由 DSH 宿主自己生成（dsh-llm-pi-ai 的 requestImageHandleText：
+ * `Image "xxx" (sha256:…); … Normalized copy (read-only…): "/path/…"`），
+ * 那段文本每轮随 image block 现生成、内容恒定，模型可据此 read_image。
+ * 我们自己再写一份打标/路径只会重复烧 token，且打标是异步的（入站时常常还没打完，
+ * 曾出现"未打标图片"）。所以这里彻底不写文本。
+ * - 单图：原图直给（长边 >2560 才缩）。
+ * - 多图：合成一张。
  */
 export async function buildAggregateBlocks(key, agent, logger) {
     const items = pendingAggImages(key);
@@ -338,13 +321,8 @@ export async function buildAggregateBlocks(key, agent, logger) {
         return [];
     }
     // 每张图的打标结果（入站时固定下来）
-    const tagged = items.map((it) => {
-        let meta;
-        try { meta = lookupTags?.(it.path); } catch { meta = undefined; }
-        return { ...it, tags: meta };
-    });
-    if (tagged.length === 1) {
-        const one = tagged[0];
+    if (items.length === 1) {
+        const one = items[0];
         try {
             let buf = readFileSync(one.path);
             const jimp = await loadJimp();
@@ -368,7 +346,6 @@ export async function buildAggregateBlocks(key, agent, logger) {
             logger?.debug?.(`[图片聚合v2] 单图直给: ${one.path}`);
             return [
                 { type: 'image', attachment: saved.attachment },
-                { type: 'text', text: describeImages([one], saved.attachment?.bytes) },
             ];
         }
         catch (e) {
@@ -376,7 +353,7 @@ export async function buildAggregateBlocks(key, agent, logger) {
             return [];
         }
     }
-    const stitched = await stitchAggImages(tagged);
+    const stitched = await stitchAggImages(items);
     if (!stitched)
         return [];
     let saved;
@@ -394,7 +371,6 @@ export async function buildAggregateBlocks(key, agent, logger) {
     logger?.debug?.(`[图片聚合v2] 合成 ${stitched.used.length} 张 → ${stitched.width}x${stitched.height} (${stitched.layout})`);
     return [
         { type: 'image', attachment: saved.attachment },
-        { type: 'text', text: describeImages(tagged, saved.attachment?.bytes) },
     ];
 }
 /** 媒体类型：先看真实字节，后缀兜底 */
