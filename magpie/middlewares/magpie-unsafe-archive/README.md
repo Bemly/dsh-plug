@@ -114,5 +114,5 @@ magpie plugin add ./unsafe-archive.hooks.js
 
 ## 源码与提交规则
 
-源码在本仓库 `magpie/` 目录，与 npm 包同源。
-**每次修改先按 [`magpie/AGENTS.md`](./magpie/AGENTS.md) 脱敏，再提交推送。**
+源码在本仓库 `magpie/middlewares/magpie-unsafe-archive/` 目录，与 npm 包同源。
+**每次修改先按 [`magpie/AGENTS.md`](../../AGENTS.md) 脱敏，再提交推送。**

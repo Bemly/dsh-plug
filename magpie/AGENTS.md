@@ -1,6 +1,7 @@
 # magpie 插件（本目录）
 
-本目录存放 magpie 的网关钩子插件源码，与 npm 包 `magpie-unsafe-archive` 同源。
+本目录按插件类型分类：`provider/` 放模型提供商，`middlewares/` 放网关中间件与钩子。
+`magpie-unsafe-archive` 的源码位于 `middlewares/magpie-unsafe-archive/`，与同名 npm 包同源。
 
 ## 命名与运行时（改之前先读）
 
@@ -85,7 +86,7 @@ git diff --cached | grep -nE 'sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|xox[baprs]-
 走 npm 可信发布（GitHub Actions OIDC），**仓库里没有 npm token**：
 
 ```
-npm version 0.1.1 --no-git-tag-version      # 在 magpie/ 里改版本
+npm version 0.1.1 --no-git-tag-version      # 在 magpie/middlewares/magpie-unsafe-archive/ 里改版本
 git commit -am 'magpie: 0.1.1 …' && git push
 git tag magpie-unsafe-archive-v0.1.1 && git push --tags
 ```

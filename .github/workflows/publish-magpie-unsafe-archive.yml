@@ -37,7 +37,7 @@ jobs:
       - name: 发包前脱敏自查
         run: |
           set -euo pipefail
-          cd magpie
+          cd magpie/middlewares/magpie-unsafe-archive
           pattern='sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|xox[baprs]-|Bearer [A-Za-z0-9]|/(Users|vol[0-9])/|192\.168\.|@appdata|/home/runner'
           if grep -rnE "$pattern" README.md package.json *.hooks.js; then
             echo '::error::包里出现凭据或本机路径，拒绝发布'
@@ -48,7 +48,7 @@ jobs:
       - name: 只打包不发布，核对包内容与版本
         run: |
           set -euo pipefail
-          cd magpie
+          cd magpie/middlewares/magpie-unsafe-archive
           tarball=$(npm pack --silent)
           echo "tarball: $tarball"
           test "$tarball" = "magpie-unsafe-archive-$(node -p "require('./package.json').version").tgz"
@@ -63,12 +63,12 @@ jobs:
 
       - name: npm publish
         run: npm publish --provenance
-        working-directory: magpie
+        working-directory: magpie/middlewares/magpie-unsafe-archive
 
       - name: 核对已发布的版本
         run: |
           set -euo pipefail
-          want=$(node -p "require('./magpie/package.json').version")
+          want=$(node -p "require('./magpie/middlewares/magpie-unsafe-archive/package.json').version")
           got=$(npm view magpie-unsafe-archive version)
           echo "published: $got (expected $want)"
           test "$got" = "$want"

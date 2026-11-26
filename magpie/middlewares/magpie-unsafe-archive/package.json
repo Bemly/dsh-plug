@@ -31,6 +31,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Bemly/dsh-plug.git",
-    "directory": "magpie"
+    "directory": "magpie/middlewares/magpie-unsafe-archive"
   }
 }
