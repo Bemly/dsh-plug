@@ -7,7 +7,7 @@ import { pushAggImage } from '../features/image-aggregate.js';
 import { applyInjectRules } from '../transport/inject-rules.js';
 import { inferMediaKind } from '../transport/media-kind.js';
 import { prepareImagesForDispatch } from '../middleware/sticker-capture.js';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, statSync, writeFileSync } from 'node:fs';
 import { stripLeadingMentions } from '../shared/mention-clean.js';
 import { join } from 'node:path';
 const DEFAULTS = {
@@ -257,8 +257,19 @@ async function interjectBatch(rec, entries, config, logger, quoteByMsg, stickerD
  */
 injectRules) {
     const a = rec.agent;
-    if (!a || typeof a.inject !== 'function' || a.status === 'idle')
+    if (!a) {
+        rec.__interjectSkip = 'no-agent';
         return false;
+    }
+    if (typeof a.inject !== 'function') {
+        rec.__interjectSkip = 'no-inject';
+        return false;
+    }
+    if (a.status === 'idle') {
+        rec.__interjectSkip = 'idle';
+        return false;
+    }
+    rec.__interjectSkip = '';
     // 逐次缩短提示(2026-10-09): 本回合第 n 次插话就用第 n 档; 注入成功后才 +1（失败回落排队，不算插过）
     const seq = Number(rec.interjectSeq) || 0;
     try {
@@ -350,14 +361,34 @@ export function injectSynthetic(scope, peerId, text, opts, owner) {
 }
 export function debounceLayer(config, manager, logger, cooldownAt) {
     const windows = new Map();
-    /** 调序调试日志(排查官方帧序用): 默认**关闭** —— 需要时设环境变量 `DSH_QQBOT_DEBOUNCE_DBG=1` 才写
-     *  → {dataRoot}/.qqbot/debounce-dbg.log。(2026-09-12: 该文件曾涨到 3.8MB, 改用开关按需开) */
-    const dbgOn = !!process.env.DSH_QQBOT_DEBOUNCE_DBG && process.env.DSH_QQBOT_DEBOUNCE_DBG !== '0';
+    /**
+     * 调试日志（排查"插话退化成排队"）：
+     *  开关 = 设置项 `behavior.debounce.debug`（热更生效，改设置即开即用），
+     *  环境变量 `DSH_QQBOT_DEBOUNCE_DBG=1/0` 可强制开/关（优先级高于设置）。
+     *  → {dataRoot}/.qqbot/debounce-dbg.log，超过 2MB 自动清空（历史曾涨到 3.8MB）。
+     */
     const dbgFile = join(dataRootOf(config), '.qqbot', 'debounce-dbg.log');
+    const DBG_MAX_BYTES = 2 * 1024 * 1024;
+    function dbgEnabled() {
+        const env = process.env.DSH_QQBOT_DEBOUNCE_DBG;
+        if (env === '0')
+            return false;
+        if (env)
+            return true;
+        try {
+            return config.behavior?.debounce?.debug === true;
+        }
+        catch {
+            return false;
+        }
+    }
     function dbg(line) {
-        if (!dbgOn)
+        if (!dbgEnabled())
             return;
         try {
+            const st = statSync(dbgFile, { throwIfNoEntry: false });
+            if (st && st.size > DBG_MAX_BYTES)
+                writeFileSync(dbgFile, '', 'utf8');
             appendFileSync(dbgFile, `${new Date().toISOString()} ${line}\n`, 'utf8');
         }
         catch { /* ignore */ }
@@ -445,7 +476,7 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                             dbg(`flush 插话 inject(回合中) key=${key} n=${pre.length}`);
                             return; // 已插进当前回合, 窗口清空
                         }
-                        dbg(`flush 插话不可用(无 inject 能力) → 回落排队 key=${key} n=${pre.length}`);
+                        dbg(`flush 插话不可用(${busyRec.__interjectSkip || 'unknown'}; agentStatus=${busyRec.agent?.status}; turnActive=${busyRec.turnActive}) → 回落排队 key=${key} n=${pre.length}`);
                     }
                     // 回合忙：本来"一直等到 turn/end"。2026-09-15 起加**超时兜底** ——
                     //   卡死的回合会把该会话的消息通道永久堵住（主人实测"发完语音后消息全不进"），

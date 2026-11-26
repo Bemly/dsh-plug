@@ -109,12 +109,14 @@ const debounceSchema = Schema.object({
     maxMsgs: Schema.number().min(1).default(10).description('窗口攒满几条立即开口(默认10), 不等对方停'),
     mentionDelayed: Schema.boolean().default(true).description('@bot 消息是否也走延迟(默认是; 不勾=@到秒回)'),
     busySendMode: Schema.union(['queue', 'interject']).default('queue').description('回合进行中(她正在思考/输出)群友新消息怎么办: 排队=攒着等这轮回完再整批看(默认, 现状); 插话=照样先聚合, 但不等回合结束, 直接在回合内的轮次之间插进去(每次插话都带一句"先做完当前任务"的轻提示)'),
+    debug: Schema.boolean().default(false).description('调试日志(排查"插话退化成排队"用): 开启后把每条消息走了哪条分支、为什么没插进去写到 数据目录/.qqbot/debounce-dbg.log（超过 2MB 自动清空）'),
 }).default({
     enabled: true,
     silenceSec: 3,
     maxMsgs: 10,
     mentionDelayed: true,
     busySendMode: 'queue',
+    debug: false,
 }).description('延迟聚合(独立于冷却的另一套机制)');
 const behaviorSchema = Schema.object({
     freeIntervalSec: Schema.number().min(0).default(60).description('群普通消息回复间隔(秒),0=不限制'),
