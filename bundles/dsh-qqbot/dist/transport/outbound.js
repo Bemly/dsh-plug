@@ -34,7 +34,7 @@ export function shouldWakeInterjectAfterAbort(isAborted, hadInterject, gateSilen
 import { parseEvent, extractTurnError, } from './events.js';
 import { DeliverablesDeliverer } from './deliverables.js';
 import { feedReasoning, endReasoningTurn } from '../features/reasoning-bus.js';
-import { rewriteLocalMarkdownImages, localMarkdownImagesToMediaMarkers, stripMarkdownImagesForPlainText, normalizeMarkdownImages } from '../features/md-media-rewrite.js';
+import { rewriteLocalMarkdownImages, localMarkdownImagesToMediaMarkers, stripMarkdownImagesForPlainText, normalizeMarkdownImages, rewriteBareImagePaths } from '../features/md-media-rewrite.js';
 import { botAvatarMarkdown } from '../features/bot-avatar.js';
 import { stripOutboundArtifacts } from './strip-artifacts.js';
 import { replaceFacePlaceholders } from './face-placeholder.js';
@@ -351,7 +351,11 @@ export class OutboundRouter {
         const withFaces = this.config.stripFacePlaceholder === true
             ? text // 明确要洗 → 不转表情，交给 strip 删
             : replaceFacePlaceholders(text, dataRootOf(this.config)); // 默认 → 彩蛋：换成真表情
-        return stripOutboundArtifacts(withFaces, this.config);
+        const cleaned = stripOutboundArtifacts(withFaces, this.config);
+        // 2026-11-26: 裸图片路径兜底 —— 模型把 list_stickers 的路径当正文贴出来时，
+        //   QQ 只当纯文本发（图没到、路径还泄漏）。转成 [MEDIA:image|…] 让富媒体通道真发图。
+        //   只匹配"独占整行 + 本地绝对路径 + 图片扩展名 + 文件存在"，不碰工具结果/正文讨论路径。
+        return rewriteBareImagePaths(cleaned);
     }
     recoverGoogleInputImagePolicy(record) {
         const agent = record?.agent;

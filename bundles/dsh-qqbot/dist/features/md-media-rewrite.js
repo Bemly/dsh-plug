@@ -8,7 +8,7 @@
  * 兼容各种写法：正/反斜杠、尖括号、路径带空格、file://、尾部标题。
  * 只处理本地路径；http(s)/qqbot-media 原样放过。失败保留原样，绝不吞正文。
  */
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { uploadMarkdownImage, listMarkdownImages, deleteMarkdownImage } from './md-media.js';
@@ -262,6 +262,54 @@ export async function rewriteLocalMarkdownImages(text, explicitTarget) {
     setLast({ matched: matches.length, converted, failed, at: Date.now() });
     return out;
 }
+
+/**
+ * 出站兜底（2026-11-26）：模型把 list_stickers 返回的本地路径当正文贴出来（裸路径独占一行），
+ * QQ 只会当纯文本发 —— 图没发出去还泄漏内网绝对路径。
+ * 这里把「独占一整行的本地图片绝对路径」改写成 [MEDIA:image|路径]，
+ * 交给下游富媒体通道真发图（SDK 内部完成素材上传拿 file_info）。
+ *
+ * 严格条件，避免误伤正文里讨论路径或工具结果里的 `→ /path`：
+ *  - 必须独占整行（前后除空白外没有别的字符）；
+ *  - 必须是本地绝对路径（/ 或 file:// 或 X:\）且图片扩展名；
+ *  - 文件必须真实存在；
+ *  - 已经是 [MEDIA:…] / ![](…) / <…> 的行不碰。
+ */
+const BARE_IMAGE_EXTS = /\.(?:gif|png|jpe?g|webp|bmp)$/i;
+export function rewriteBareImagePaths(text) {
+    const src = String(text ?? '');
+    if (!src || (src.indexOf('/') < 0 && src.indexOf('\\') < 0))
+        return src;
+    let changed = false;
+    const out = src.split('\n').map((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || (trimmed.indexOf('/') < 0 && trimmed.indexOf('\\') < 0))
+            return line;
+        if (/^[\[!<]/.test(trimmed))
+            return line;
+        let p = trimmed;
+        if (/^file:\/\//i.test(p)) {
+            // 原有 fromFileUrl 对 Linux file:///abs/path 会误删一个前导斜杠(变成相对路径)，
+            // 这里自己解析：Windows 盘符沿用原函数，Linux 绝对路径保留开头的 /。
+            p = /^file:\/\/\/?[A-Za-z]:[\\/]/i.test(p)
+                ? fromFileUrl(p)
+                : decodeURIComponent(p.replace(/^file:\/\//i, ""));
+        }
+        if (!isLocalImagePath(p) || !BARE_IMAGE_EXTS.test(p))
+            return line;
+        try {
+            if (!existsSync(p))
+                return line;
+        }
+        catch { return line; }
+        changed = true;
+        const lead = line.slice(0, line.indexOf(trimmed));
+        const tail = line.slice(line.indexOf(trimmed) + trimmed.length);
+        return lead + '[MEDIA:image|' + p.replace(/\|/g, '') + ']' + tail;
+    }).join('\n');
+    return changed ? out : src;
+}
+
 // 暴露给扩展工具（send_md 等）做"先重写、再决定发不发"
 try {
     globalThis[Symbol.for('im-qqbot.md-media.rewrite')] =
