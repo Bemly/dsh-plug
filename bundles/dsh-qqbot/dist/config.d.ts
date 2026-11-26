@@ -16,6 +16,8 @@ export interface AccessControlConfig {
     groupMode: 'open' | 'allowlist' | 'disabled';
     /** 群聊白名单（group openid） */
     groupAllow: string[];
+    /** 群聊成员屏蔽名单（member openid；对所有群生效，主人白名单优先） */
+    groupBlockedUsers: string[];
 }
 /** 延迟聚合(debounce)配置 — 独立于群冷却的另一套机制 */
 export interface DebounceConfig {

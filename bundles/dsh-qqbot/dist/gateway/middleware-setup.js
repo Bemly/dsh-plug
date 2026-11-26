@@ -17,6 +17,7 @@ import { loadInboundExtensions, runEarlyInboundExtensions, runInboundExtensions,
 import { makeExtCaps } from '../features/ext-capabilities.js';
 import { stickerActivityRecorder } from '../features/sticker-gate.js';
 import { chatLedgerRecorder } from '../features/chat-ledger.js';
+import { isGroupUserBlocked } from '../features/user-blocklist.js';
 import { debounceLayer, injectSynthetic } from './debounce.js';
 import { faceTagResolver } from '../features/face-tags.js';
 export async function setupMiddlewares(bot, config, manager, logger, 
@@ -136,6 +137,15 @@ pluginCtx) {
             }
         },
     }));
+    bot.use(async (ctx, next) => {
+        if (isGroupUserBlocked(config, ctx.message)) {
+            if (config.debug)
+                logger.debug(`Access blocked: group user ${String(ctx.message?.senderId ?? '').slice(0, 8)}…`);
+            ctx.stop('access:blocked-group-user');
+            return;
+        }
+        await next();
+    });
     // 3.9. 引用消息解析（记录每条消息 + 解析被引用原文）
     //   ⚠️ 2026-10-01 **前移**（原在第 11 步）: 群历史缓冲在第 4 步, 而它记 content 时要读
     //   `ctx.state.quote` —— 顺序反了的话这里永远是 undefined, 历史行里就永远没有 `[引]…[/引]`,

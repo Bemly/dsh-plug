@@ -9,6 +9,7 @@ import { permissionCommand } from './permission.js';
 import { botplayCommand } from './botplay.js';
 import { injectCommand } from './inject.js';
 import { botRestartCommand, botExitCommand } from './exit.js';
+import { blockCommand, unblockCommand, blockedCommand } from './block.js';
 import { withOwnerOnly } from './auth.js';
 /**
  * 构建标准命令列表
@@ -54,6 +55,10 @@ export function buildCommandList(deps) {
         pingCommand(),
         versionCommand(deps),
         stopCommand(),
+        // 群聊成员屏蔽（主人专用）
+        withOwnerOnly(blockCommand(deps), deps.config, deps.logger),
+        withOwnerOnly(unblockCommand(deps), deps.config, deps.logger),
+        withOwnerOnly(blockedCommand(deps), deps.config, deps.logger),
         // 开发: 工具热刷新
         toolsReloadCommand(deps),
     ];

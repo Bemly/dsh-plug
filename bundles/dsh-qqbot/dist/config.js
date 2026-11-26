@@ -393,11 +393,13 @@ const ConfigSchemaRaw = Schema.object({
         c2cAllow: Schema.array(Schema.string()).default([]).description('C2C白名单'),
         groupMode: Schema.union(['open', 'allowlist', 'disabled']).default('open').description('群聊访问模式'),
         groupAllow: Schema.array(Schema.string()).default([]).description('群聊白名单'),
+        groupBlockedUsers: Schema.array(Schema.string()).default([]).description('群聊成员屏蔽名单(member openid；对所有群生效，主人白名单优先)'),
     }).default({
         c2cMode: 'open',
         c2cAllow: [],
         groupMode: 'open',
         groupAllow: [],
+        groupBlockedUsers: [],
     }).description('访问控制'),
     behavior: behaviorSchema,
     sticker: Schema.object({
