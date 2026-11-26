@@ -19,9 +19,10 @@ let hostVisionModel = 'Qwen/Qwen3.6-27B-FP8';
 function resolveVisionApiKey() {
     if (process.env[hostVisionApiKeyEnv])
         return process.env[hostVisionApiKeyEnv];
+    const dshHome = process.env.DSH_HOME || '';
     const candidates = [
-        '/vol1/@apphome/fn-deepseek-harness/.credentials.yaml',
-        '/vol1/@apphome/fn-deepseek-harness/profiles/web/.credentials.yaml',
+        dshHome ? `${dshHome}/.credentials.yaml` : '',
+        dshHome ? `${dshHome}/profiles/web/.credentials.yaml` : '',
         `${process.env.HOME || ''}/.credentials.yaml`,
     ];
     for (const p of candidates) {
