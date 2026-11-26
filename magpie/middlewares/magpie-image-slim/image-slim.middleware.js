@@ -1,5 +1,5 @@
 /**
- * magpie-image-slim v0.1.5（2026-11-26 重写）
+ * magpie-image-slim v0.1.6（2026-11-26 重写）
  *
  * 职责：出站时把**历史轮次**的 ImageBlock 换成极短占位符，避免每轮重算视觉 token。
  *
@@ -92,7 +92,7 @@ export function onRequest(body, ctx) {
     }
 
     if (changed && options.log) {
-        console.log(`image-slim v0.1.5: [${ctx.agent || 'unknown'}] replaced ${replaced} image(s), split ${split} text block(s)`);
+        console.log(`image-slim v0.1.6: [${ctx.agent || 'unknown'}] replaced ${replaced} image(s), split ${split} text block(s)`);
     }
     return changed ? body : undefined;
 }

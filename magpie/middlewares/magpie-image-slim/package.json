@@ -1,11 +1,12 @@
 {
   "name": "magpie-image-slim",
-  "version": "0.1.5",
-  "description": "Magpie gateway middleware: slim historical inline images into the STANDARD image-slim placeholder (agy-bridge only masks that format, so the session is not rebuilt), keeping the DSH local path inside the placeholder.",
+  "version": "0.1.6",
+  "description": "Magpie gateway middleware: replace historical inline images with the standard image-slim placeholder so the prompt cache keeps hitting. Matching that exact format matters: an agy-cli bridge only recognises it as an image slot, and any other marker makes it rebuild the session and recompute the whole prompt.",
   "license": "MIT",
   "type": "module",
   "files": [
     "image-slim.middleware.js",
+    "README.md",
     "icon.png"
   ],
   "keywords": [
