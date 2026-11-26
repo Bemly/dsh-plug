@@ -1,21 +1,8 @@
 import { inferMediaKind } from './media-kind.js';
 /** 单轮累计注入预算(字符), 防爆上下文 */
 const BUDGET_CHARS = 1500;
-/** 原写死读图提示(内置兜底规则: 用户未配任何 enabled 的 hasImage 规则时自动追加) */
-const LEGACY_IMAGE_RULE = {
-    id: 'builtin-image',
-    enabled: true,
-    conditions: {
-        hasImage: true,
-        hasLink: false,
-        contentRegex: '',
-        contentKeywords: [],
-        matchScope: 'any',
-    },
-    // ⚠️ 2026-09-13 改文案: 图片给的是**本地路径**(下载没成功时才回退成 QQ 链接) ——
-    //    所以别说死"URL"或"路径", 统一说"地址(本地路径或链接)", 两种都能覆盖。
-    prompt: '上方消息里的图片会给出地址（本地文件路径；下载失败时是 QQ 链接）。请用 read_image({file_path:"本地路径"}) 查看本地图片，如果看不了直接说qq图片过期了下载不了，不要说看不了图。',
-};
+// 2026-11-26 v2.1：原内置读图提示规则（builtin-image）已删除 —— 图片由 image-aggregate v2
+// 作为 ImageBlock 直接注入，不再需要让模型自己 read_image。用户自己配的 hasImage 规则不受影响。
 /** 消息是否含附件图片。
  *  ⚠️ 2026-09-10 根因修复（主人实测：自定义小提醒配了「消息里带图片」却**永不触发**）：
  *     QQ 群聊里图片附件的 `content_type` 实测是 `'file'`（不是 `image/jpeg`），
@@ -69,13 +56,12 @@ function matchRule(rule, text, msg, logger) {
 }
 /**
  * 对组装好的 agentBody 应用全部启用的注入规则, 返回新 body。
- * 规则数组里没有任何 enabled 的 hasImage 规则时, 自动追加内置读图兜底(默认行为与旧版一致)。
+ * 2026-11-26 v2.1：内置读图兜底已移除，只应用用户自己配的规则。
+ * imageHintAuto 参数保留但不再使用（兼容旧调用方）。
  */
 export function applyInjectRules(body, msg, rules, logger, imageHintAuto = true) {
     const text = (msg.content ?? '') || '';
-    const enabled = (rules ?? []).filter(r => r.enabled);
-    const hasUserImageRule = enabled.some(r => r.conditions.hasImage);
-    const active = hasUserImageRule || !imageHintAuto ? enabled : [...enabled, LEGACY_IMAGE_RULE];
+    const active = (rules ?? []).filter(r => r.enabled);
     let budget = BUDGET_CHARS;
     let out = body;
     for (const rule of active) {

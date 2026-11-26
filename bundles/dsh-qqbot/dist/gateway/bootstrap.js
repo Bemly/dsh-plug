@@ -15,7 +15,7 @@ import { configureDiag, diagWrite } from '../shared/diag.js';
 import { dataRootOf, migrateLegacyData, stickerDirOf } from './data-root.js';
 import { setAvatarFetcher, kickAvatarRefresh } from '../features/bot-avatar.js';
 import { setImageAggregateHooks, initAggregateRegistry, noteOurAttachment } from '../features/image-aggregate.js';
-import { configureStickerStore } from '../features/sticker-store.js';
+import { configureStickerStore, getStickerStore } from '../features/sticker-store.js';
 import { initStickerGate, bindStickerGates, flushStickerGate, getStickerGate, StickerGateDenied } from '../features/sticker-gate.js';
 import { startScheduler } from '../features/scheduler.js';
 import { rememberUserName, prefetchUserName, prefetchGroupName } from '../features/session-kind.js';
@@ -248,6 +248,15 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
                 }
                 catch { /* ignore */ }
                 return ref ? { attachment: ref } : undefined;
+            },
+            // 2026-11-26 v2.1：按本地路径查表情库打标，入站时写成固定文本随图注入。
+            lookupTags: (path) => {
+                try {
+                    return getStickerStore(stickerDirOf(config), logger).tagsByPath(path);
+                }
+                catch {
+                    return undefined;
+                }
             },
         });
         try {

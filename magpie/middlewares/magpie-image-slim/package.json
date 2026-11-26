@@ -1,7 +1,7 @@
 {
   "name": "magpie-image-slim",
-  "version": "0.1.1",
-  "description": "Magpie gateway middleware for DSH aggregate images: replace historical inline images with standard image-slim placeholders and split glued placeholder text blocks.",
+  "version": "0.1.2",
+  "description": "Magpie gateway middleware: slim historical inline images into a stable [image] slot while keeping generic image-slim placeholder text; cache-safe (no block-count changes).",
   "license": "MIT",
   "type": "module",
   "files": [
@@ -26,7 +26,7 @@
       "models": [],
       "keepCurrentTurn": true,
       "replaceImages": true,
-      "splitPlaceholders": true,
+      "splitPlaceholders": false,
       "log": true
     }
   },

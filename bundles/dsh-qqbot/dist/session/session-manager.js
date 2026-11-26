@@ -24,7 +24,9 @@ import { takePendingMemo, recallLines } from '../features/people-memo.js';
 import { isContextlessActive, contextlessSmartOf, contextlessMemoMaxOf, contextlessWindowOf, getContextless, listContextless, describeStorePath } from '../features/contextless-store.js';
 import { contextlessSegmentOf, contextlessSegmentKeepOf, contextlessSegmentScoreMinOf } from '../features/contextless-store.js';
 import { getSegmentScore } from '../features/segment-score.js';
-import { offloadHistoryImages } from '../features/image-offload.js';
+// 2026-11-26 v2.1：DSH 侧历史图片压缩已彻底移除（原 image-offload 模块及调用已删）。
+// 历史图片瘦身改由 magpie-image-slim v0.2 在出站时完成（通用 image-slim 占位符格式），
+// 不再产生 compaction 事件，消除「上下文已压缩」折叠块与 agy-bridge 误判导致的缓存清零。
 import { trimHistoryForContextless } from '../features/contextless-trim.js';
 import { memoForInject, setMemoMaxItems } from '../features/context-memo.js';
 import { traceContextless } from '../features/contextless-store.js';
@@ -1674,19 +1676,8 @@ export class SessionManager {
                     catch (e) {
                         this.logger?.debug?.('[model-sync] 异常(已忽略): ' + (e instanceof Error ? e.message : String(e)));
                     }
-                    // ── 历史图片不重发（2026-11-07 主人定）──
-                    //   每轮第一步：把**本插件聚合出来**的图片在历史里换成文字占位，
-                    //   只保留「本回合新来的那几张」。别的插件/功能塞的图一律不动。
-                    try {
-                        if (this.config.imageOffload !== false && (!Number.isFinite(currentStep) || currentStep <= 1)) {
-                            const n = await offloadHistoryImages(agent, this.logger, Number.isFinite(currentTurn) ? currentTurn : undefined);
-                            if (n > 0)
-                                this.logger?.info?.(`[img-offload] 本轮已省略 ${n} 张历史图片`);
-                        }
-                    }
-                    catch (e) {
-                        this.logger?.debug?.('[img-offload] 异常(已忽略): ' + (e instanceof Error ? e.message : String(e)));
-                    }
+                    // ── 历史图片不重发：2026-11-26 v2.1 起由出站 magpie-image-slim 处理 ──
+                    //   不再在 DSH 侧改历史（那会产生 compaction 事件 → agy-bridge 误判 → 缓存清零）。
                     if (!ctxSmartOn && !segOn0 && isContextlessActive(ctxKey0, this.config.contextlessMode)) {
                         const win0 = contextlessWindowOf(sk0, this.config.contextlessWindow ?? 5);
                         this.logger?.info?.('[contextless] 登记: 会话 ' + sk0 + ' 开启中, 带 @ 前 ' + win0 + ' 条 → 本轮内清理');

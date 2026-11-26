@@ -1,5 +1,24 @@
+/**
+ * magpie-image-slim v0.1.2（2026-11-26 重写）
+ *
+ * 职责：出站时把**历史轮次**的 ImageBlock 换成极短占位符，避免每轮重算视觉 token。
+ *
+ * v0.1.2 相对 v0.1.1 的变化：
+ *   1. 识别**只用通用 image-slim 占位符正则** `[X.XX MB image left out here: …]`，
+ *      不再认 v1 的 `[图片聚合]` / `Image "aggregate.jpg"` / `（↑…发的图）` 标记。
+ *      dsh-botqq v2.1 把打标内容写进这个通用占位符，任何插件写的都认。
+ *   2. 历史图片块 → **1 块换 1 块**的 `[image]`，块数恒定 ⇒ 缓存前缀稳定。
+ *      带打标的占位符文本原样保留，模型仍知道图内容。
+ *   3. `splitPlaceholders` 默认**关闭**：v1 拆块改变 block_count，触发 agy-bridge
+ *      判定 history 不一致 → session_new → 缓存清零（实测 63 次）。
+ *   4. 保留 `keepCurrentTurn`（默认开）：本回合新图不瘦。
+ */
+/** 通用占位符正则：dsh-botqq 写入的打标文本就是这种格式，不绑定任何插件/渠道 */
+const SLOT_RE = /^\[\d+(?:\.\d+)? MB image left out here: [^\]\r\n]*\]$/;
+/** 旧格式识别（仅用于 opt-in 的拆块功能，不再用于判定消息是否聚合） */
 const IMAGE_SLIM_RE = /\[\d+(?:\.\d+)? MB image left out here: [^\]\r\n]*\]/g;
 const TEXT_TYPES = new Set(['input_text', 'output_text', 'text']);
+const PLACEHOLDER = '[image]';
 
 export function onRequest(body, ctx) {
     const options = readOptions(ctx?.options);
@@ -19,7 +38,8 @@ export function onRequest(body, ctx) {
         const content = [];
         for (const block of item.content) {
             if (aggregate && (!protectCurrentTurn || index < turnStart) && options.replaceImages && isInlineImage(block)) {
-                content.push({ type: 'input_text', text: imageSlimPlaceholder(imageBytes(block)) });
+                // 1 块换 1 块：块数不变，缓存稳定；打标文本在相邻 text 块里原样保留。
+                content.push({ type: 'input_text', text: PLACEHOLDER });
                 replaced++;
                 changed = true;
                 continue;
@@ -39,7 +59,7 @@ export function onRequest(body, ctx) {
     }
 
     if (changed && options.log) {
-        console.log(`image-slim: [${ctx.agent || 'unknown'}] replaced ${replaced} image(s), split ${split} text block(s)`);
+        console.log(`image-slim v0.1.2: [${ctx.agent || 'unknown'}] replaced ${replaced} image(s), split ${split} text block(s)`);
     }
     return changed ? body : undefined;
 }
@@ -57,7 +77,8 @@ function readOptions(raw) {
         models: Array.isArray(value.models) ? value.models.filter((x) => typeof x === 'string' && x) : [],
         keepCurrentTurn: value.keepCurrentTurn !== false,
         replaceImages: value.replaceImages !== false,
-        splitPlaceholders: value.splitPlaceholders !== false,
+        // 2026-11-26：默认关闭拆块，避免 block_count 变化打断缓存
+        splitPlaceholders: value.splitPlaceholders === true,
         log: value.log !== false,
     };
 }
@@ -75,24 +96,17 @@ function textOf(content) {
     return content.map((block) => TEXT_TYPES.has(block?.type) ? String(block.text || '') : '').join('\n');
 }
 
+/** 只认通用 image-slim 占位符；不再兼容 v1 的任何标记。 */
 function isAggregateMessage(content) {
-    const text = textOf(content);
-    return text.includes('[图片聚合]') || text.includes('Image "aggregate.jpg"') ||
-        (/（↑ [^\n]* 发的图）/u.test(text) && content.some(isInlineImage));
+    for (const block of content) {
+        if (TEXT_TYPES.has(block?.type) && typeof block.text === 'string' && SLOT_RE.test(block.text.trim()))
+            return true;
+    }
+    return false;
 }
 
 function isInlineImage(block) {
     return block?.type === 'input_image' && typeof block.image_url === 'string' && block.image_url.startsWith('data:');
-}
-
-function imageBytes(block) {
-    const comma = block.image_url.indexOf(',');
-    return comma < 0 ? 0 : Math.max(0, block.image_url.length - comma - 1);
-}
-
-function imageSlimPlaceholder(bytes) {
-    const mb = (bytes / 1048576).toFixed(2);
-    return `[${mb} MB image left out here: an image the user attached, already seen earlier in this conversation. Rely on what you already said about it.]`;
 }
 
 function splitImageSlimText(block) {
@@ -115,6 +129,7 @@ export const _internal = {
     readOptions,
     currentTurnStart,
     isAggregateMessage,
-    imageSlimPlaceholder,
     splitImageSlimText,
+    SLOT_RE,
+    PLACEHOLDER,
 };

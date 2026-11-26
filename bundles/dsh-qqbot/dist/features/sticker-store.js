@@ -359,6 +359,21 @@ export class StickerStore {
         return it ? this.filePathOf(it) : undefined;
     }
     /**
+     * 2026-11-26 v2.1：按本地图片路径反查打标 { id, desc, tags }。
+     * 给 image-aggregate v2 用 —— 入站时把描述写成固定文本，历史轮次 slim 掉图片后仍保留。
+     */
+    tagsByPath(path) {
+        if (!path)
+            return undefined;
+        const target = resolve(String(path));
+        for (const it of this.items.values()) {
+            const p = this.filePathOf(it);
+            if (p && resolve(p) === target)
+                return { id: it.id, desc: it.desc, tags: it.tags ?? [] };
+        }
+        return undefined;
+    }
+    /**
      * 收藏一张图：安全下载 → SHA-1 去重 → 存候选区 → 记 index。
      * 返回 'new' | 'dup' | 'error'。
      */
