@@ -72,8 +72,9 @@ test('v0.1.3: DSH handle slim is cache-safe (block count stable)', () => {
     assert.equal(body.input[0].content[1].text, DSH_HANDLE);
     // 必须是标准 image-slim 格式（agy-bridge 靠它把图片和占位符认成同一槽位）
     assert.match(body.input[0].content[2].text, /^\[\d+\.\d+ MB image left out here: [\s\S]*\]$/);
-    // 且带上 DSH 给的本地路径
-    assert.ok(body.input[0].content[2].text.includes('/vol1/@appdata/fn-deepseek-harness/attachments/v1/objects/e6/'));
+    // 占位符正文**不含路径**（路径由 DSH 句柄文本提供；塞进占位符是纯浪费）
+    assert.ok(!body.input[0].content[2].text.includes('/vol1/'), '占位符里不该重复路径');
+    assert.ok(body.input[0].content[2].text.length < 80, '占位符应保持极短');
 });
 
 test('v0.1.3: output format matches agy-bridge IMAGE_SLIM_RE (no session reset)', () => {

@@ -1,6 +1,6 @@
 {
   "name": "magpie-image-slim",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Magpie gateway middleware: slim historical inline images into the STANDARD image-slim placeholder (agy-bridge only masks that format, so the session is not rebuilt), keeping the DSH local path inside the placeholder.",
   "license": "MIT",
   "type": "module",
