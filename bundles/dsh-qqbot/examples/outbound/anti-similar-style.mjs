@@ -93,9 +93,7 @@ export default async function onOutbound(ctx, next) {
     if (killed && typeof ctx.appendWake === 'function') {
       const wakeMsg = [
         `[系统风格检查 · 已拒绝发送]`,
-        `你刚才准备发出的消息「${rawText.slice(0, 60)}」没有发出去。`,
-        `拒绝原因：${reasonText}。`,
-        `请立刻换一种完全不同的开头、结尾和表达方式重新回复（不要每句话都带 www 或重复相同口癖）。`,
+        `原因：${reasonText}，请换一种不同的表达方式重新回复，不要每句话重复相同口癖。`,
       ].join('\n');
       try {
         await ctx.appendWake(wakeMsg);
