@@ -510,7 +510,6 @@ export class OutboundRouter {
                 think: event.reasoning,
                 tool: toolText,
                 reply: replyText,
-                modelDir: this.config.localModel?.modelDir,
                 logger: this.logger,
             });
             // ③ 回合级累积（好感度按回合结算用）—— 只在**本回合第一次**取一次"在跟谁说话"，
@@ -587,7 +586,7 @@ export class OutboundRouter {
                     attitudeKey: acc.senderId ? `person:${acc.senderId}` : undefined,
                     attitudeName: acc.senderName,
                     userEmo: acc.userEmo,
-                }, { think: thinkAll, reply: replyAll, tool: toolAll, modelDir: this.config.localModel?.modelDir, logger: this.logger });
+                }, { think: thinkAll, reply: replyAll, tool: toolAll, logger: this.logger });
             }
         }
         else if (event.type === 'assistant/chunk' || event.type === 'assistant/message'

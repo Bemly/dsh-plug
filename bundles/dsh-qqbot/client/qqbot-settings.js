@@ -3550,10 +3550,7 @@ var QQS_THEME_CSS = [
         state.lmBusy = true
         var nsq = state.ns ? '?' + outNsQ() : ''
         state.valueScores = null
-        // 先让宿主重置本地模型状态，再查状态
-        fetch('api/qqbot-settings/local-model/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
-          .catch(function () { /* reset 失败也继续查 */ })
-          .then(function () { return fetch('api/qqbot-settings/local-model/status' + nsq) }).then(function (r) { return r.json() }).then(function (d) {
+        fetch('api/qqbot-settings/local-model/status' + nsq).then(function (r) { return r.json() }).then(function (d) {
           state.localModel = d && d.ok ? d : null
           paintBody()
         }).catch(function () { state.localModel = null; paintBody() })
@@ -3583,12 +3580,10 @@ var QQS_THEME_CSS = [
       function saveLocalModel() {
         var hint = panel ? panel.querySelector('#dk-lm-hint') : null
         var onEl = panel ? panel.querySelector('#dk-lm-on') : null
-        var dirEl = panel ? panel.querySelector('#dk-lm-dir') : null
         var gateEl = panel ? panel.querySelector('input[name="dk-lm-gate"]:checked') : null
         var minEl = panel ? panel.querySelector('#dk-lm-min') : null
         var ovKey = curOvKey()
-        // ⚠️ 2026-09-13 会话级(主人要求): 评分模式/门槛/启用 存进 **当前会话** 的覆盖项;
-        //    模型目录是账号级(模型只有一份), 仍写账号默认。
+        // 评分模式/门槛/启用存进当前会话的覆盖项。
         if (!ovKey) {
           if (hint) hint.textContent = '✗ 当前会话不是 QQ 会话 —— 单会话设置需先切到与 bot 的群/私聊(顶栏「当前会话」要命中)'
           return
@@ -3603,11 +3598,6 @@ var QQS_THEME_CSS = [
         fetch(READ + (state.ns ? '?' + outNsQ() : '')).then(function (r) { return r.json() }).then(function (d) {
           var cur = (d && d.value) || {}
           var lm = Object.assign({}, cur.localModel || {})
-          if (dirEl) lm.modelDir = String(dirEl.value || '').trim()      // 账号级
-          {
-            var fbEl = panel ? panel.querySelector('#dk-lm-fb') : null
-            if (fbEl) lm.lexicalFallback = !!fbEl.checked                  // 账号级(程序兜底开关)
-          }
           // 附件唤醒开关（账号级，2026-09-15）：勾了 = 该类附件无视分数直接唤醒
           {
             var apEls = panel ? panel.querySelectorAll('.dk-lm-ap') : []
@@ -3631,7 +3621,6 @@ var QQS_THEME_CSS = [
             var lm2 = Object.assign({}, state.lmCfg || {})
             lm2.overrides = Object.assign({}, (lm2.overrides || {}))
             lm2.overrides[ovKey] = ovNext
-            if (dirEl) lm2.modelDir = String(dirEl.value || '').trim()
             if (apNext) lm2.attachmentPassthrough = apNext   // 附件唤醒(账号级): 保存后立刻回填, 否则重绘又跳回默认勾选
             state.lmCfg = lm2
             paintBody()
@@ -3758,18 +3747,6 @@ var QQS_THEME_CSS = [
             if (v === 'cl') loadCtxless()
           }
         })
-        var dlBtn = panel.querySelector('#dk-lm-dl')
-        if (dlBtn) dlBtn.onclick = function () {
-          dlBtn.disabled = true
-          hint('下载中…(约 23MB, 1~2 分钟, 面板别关)')
-          fetch('api/qqbot-settings/local-model/download', {
-            method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ ns: state.ns }),
-          }).then(function (r) { return r.json() }).then(function (d) {
-            if (d && d.ok) { hint('下载完成 ✓'); state.localModel = null; paintBody(); loadLocalModel() }
-            else { hint('下载失败: ' + ((d && d.error) || JSON.stringify(d))); dlBtn.disabled = false }
-          }).catch(function (e) { hint('下载异常: ' + e.message); dlBtn.disabled = false })
-        }
       }
       // ⚙️ 出站方式: 读当前账号(ns)配置
       function loadOutMode() {
@@ -5161,12 +5138,11 @@ var QQS_THEME_CSS = [
               + '</div>'
           } else {
           var lm = state.localModel
-          body += '<div class="dk-msg" style="line-height:1.6">让机器人在本机跑一个 23MB 的中文小模型(<b>零 token</b>): 价值评分(她该不该开口) + 表情包语义搜索 —— <b>模型缺失时自动关闭, 不影响任何现有功能</b>。</div>'
+          body += '<div class="dk-msg" style="line-height:1.6">智能回复复用 <b>conan RAG / OVMS</b>：群聊价值评分、相关度与表情包语义检索。<b>OVMS 故障时本次直接跳过，不做本地兜底</b>。</div>'
           if (!lm) {
             body += '<div class="dk-empty">读取中…(若长时间不动, 点「🔄 重新检测」)</div>'
           } else {
-            var lmMb = lm.bytes ? (Math.round((lm.bytes / 1048576) * 10) / 10) : 0
-            var lmState = lm.available ? ('✅ 已就绪' + (lmMb ? ' · ' + lmMb + ' MB' : '')) : ('⚠️ 未安装(缺 ' + (lm.missing || []).length + ' 个文件) —— 点右边「⬇️ 下载模型」即可')
+            var lmState = lm.available ? ('✅ 已接入 OVMS · ' + (lm.model || 'conan-embedding-v1')) : '⚠️ OVMS/conanRag 不可用（本次跳过语义评分）'
             // ⚠️ 2026-09-13 会话级: 评分模式/门槛/启用 **优先取当前会话的覆盖项**(overrides[group:xxx]),
             //    没有则继承账号级默认; 界面用"继承/已单独设置"标出来。
             var lmCfg = state.lmCfg || {}
@@ -5178,10 +5154,9 @@ var QQS_THEME_CSS = [
             var minV = (typeof ov.valueMinScore === 'number') ? ov.valueMinScore
               : ((typeof lmCfg.valueMinScore === 'number') ? lmCfg.valueMinScore
                 : (typeof lm.valueMinScore === 'number' ? lm.valueMinScore : 0.5))
-            var fbV = (lmCfg.lexicalFallback === true) || (lm.lexicalFallback === true)
             var onV = (typeof ov.enabled === 'boolean') ? ov.enabled
               : ((typeof lmCfg.enabled === 'boolean') ? lmCfg.enabled : (lm.enabled !== false))
-            body += '<div class="dk-row" style="font-weight:700;font-size:13px;margin:10px 0 2px">🧠 智能回复（本地小模型） · bge-small-zh-v1.5</div>'
+            body += '<div class="dk-row" style="font-weight:700;font-size:13px;margin:10px 0 2px">🧠 智能回复（RAG · OVMS） · conan-embedding-v1</div>'
             // 本会话标识 + 继承状态(让"单会话"名副其实: 一眼看出这套值是谁的)
             body += '<div class="dk-row" style="gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 4px">'
               + '<span class="dk-msg" style="font-size:12px;color:#7c6bd6">本会话: ' + esc(curHitLabel()) + '</span>'
@@ -5191,14 +5166,11 @@ var QQS_THEME_CSS = [
               + '</div>'
             body += '<div class="dk-row" style="gap:8px;flex-wrap:wrap;align-items:center">'
               + '<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer"><input type="checkbox" id="dk-lm-on"' + (onV ? ' checked' : '') + '> 启用智能回复(省 token)</label>'
-              + '<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer" title="本地小模型跑不起来时(例如安卓缺 ONNX 原生后端)的兜底: 用纯程序按字符 n-gram 算向量 —— 零依赖、微秒级; 只衡量字面相似(不是真语义), 门槛建议先用「只记录」观察"><input type="checkbox" id="dk-lm-fb"' + (fbV ? ' checked' : '') + '> 🧮 程序兜底(不依赖小模型)</label>'
               + '<span class="dk-msg" style="font-size:12px;color:' + (lm.available ? '#2f9e44' : '#c23131') + '">' + esc(lmState) + '</span>'
               + '</div>'
             body += '<div class="dk-row" style="gap:6px;margin:4px 0;flex-wrap:wrap">'
-              + '<input class="qqs-inp" id="dk-lm-dir" style="flex:1;min-width:200px" placeholder="模型目录(留空=默认 ~/.dsh/models/bge-small-zh)" value="' + esc(lm.modelDir || '') + '">'
               + '<button class="dk-btn" id="dk-lm-save">💾 保存</button>'
               + '<button class="dk-btn" id="dk-lm-check">🔄 重新检测</button>'
-              + (lm.available ? '' : '<button class="dk-btn ok" id="dk-lm-dl">⬇️ 下载模型(自动)</button>')
               + '</div>'
             // 评分模式 + 门槛(2026-09-13): off=不评分 / log=只记录(默认观察期) / block=低分不唤醒
             body += '<div class="dk-row" style="gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 2px">'

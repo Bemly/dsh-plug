@@ -319,7 +319,7 @@ export interface EditableConfig {
      * 旧档仍可被 QQ 消息拉回可见（unarchiveSession 那条腿不动）。
      */
     archiveOnNewSession?: boolean;
-    /** 历史图片不重发(默认开): 只把**本插件聚合出来**的图片在历史里换成文字占位, 别的图一律不动 */
+    /** 历史图片不重发(默认关): 开启会在 DSH 历史里删图；当前由 Magpie image-slim 出站处理 */
     imageOffload?: boolean;
     /** 图片聚合(issue #40): 把连续收到的几张图拼成一张长图, 随唤醒消息一起进上下文。仅对**声明 image 输入**的模型生效 */
     imageAggregate?: {
@@ -330,7 +330,7 @@ export interface EditableConfig {
     };
     /** 引用消息总开关(默认 true): 开=入站消息带短消息号(台账索引) + 引用消息附原文 + 注入引用指令, 出站支持 [rf:短号] 标签 */
     messageReference?: boolean;
-    /** 本地小模型(省 token; 2026-09-13 主人定): 开=本地先筛(价值评分/语义搜索), 模型缺失/加载失败则静默关闭 */
+    /** 智能回复(省 token): 复用 conan RAG/OVMS; OVMS 故障时跳过，不做本地兜底 */
     localModel?: {
         enabled?: boolean;
         /**
@@ -350,15 +350,11 @@ export interface EditableConfig {
             voice?: boolean;
             file?: boolean;
         };
-        /** 模型目录(留空=默认 {DSH_HOME|~/.dsh}/models/bge-small-zh) */
-        modelDir?: string;
         /** 价值评分模式(账号默认): off=不评分 / log=只记录(默认) / block=低分不唤醒 */
         valueGate?: 'off' | 'log' | 'block';
         /** 价值评分门槛(0~1): 近邻相似度低于此值视为不值得回应 */
         valueMinScore?: number;
         /** 单会话覆盖(2026-09-13): key = "group:<群openid>" / "c2c:<私聊openid>"; 未覆盖则继承账号默认 */
-        /** 兜底: 小模型不可用时改用纯程序(字符 n-gram)算向量(安卓等无 ONNX 环境仍可用) */
-        lexicalFallback?: boolean;
         overrides?: Record<string, {
             enabled?: boolean;
             valueGate?: 'off' | 'log' | 'block';
@@ -535,7 +531,7 @@ export interface ImQQBotConfig {
      * 取不到就只写渠道，不编名字。
      */
     sessionKindHint?: boolean;
-    /** 历史图片不重发(默认开): 只把**本插件聚合出来**的图片在历史里换成文字占位, 别的图一律不动 */
+    /** 历史图片不重发(默认关): 开启会在 DSH 历史里删图；当前由 Magpie image-slim 出站处理 */
     imageOffload?: boolean;
     /** 图片聚合(issue #40): 连续收到的几张图拼成一张长图, 随唤醒消息一起进上下文。仅对**声明 image 输入**的模型生效 */
     imageAggregate?: {
@@ -566,15 +562,11 @@ export interface ImQQBotConfig {
             voice?: boolean;
             file?: boolean;
         };
-        /** 模型目录(留空=默认 {DSH_HOME|~/.dsh}/models/bge-small-zh) */
-        modelDir?: string;
         /** 价值评分模式(账号默认): off=不评分 / log=只记录 / block=低分不唤醒 */
         valueGate?: 'off' | 'log' | 'block';
         /** 价值评分门槛(0~1) */
         valueMinScore?: number;
         /** 单会话覆盖: key = "group:<群openid>" / "c2c:<私聊openid>" */
-        /** 兜底: 小模型不可用时改用纯程序(字符 n-gram)算向量(安卓等无 ONNX 环境仍可用) */
-        lexicalFallback?: boolean;
         overrides?: Record<string, {
             enabled?: boolean;
             valueGate?: 'off' | 'log' | 'block';

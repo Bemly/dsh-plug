@@ -105,7 +105,6 @@ export interface TurnSignalText {
     tool?: string;
     /** 本回合真正发给群友的正文（text 块拼接） */
     reply?: string;
-    modelDir?: string;
     logger?: Logger;
 }
 /**

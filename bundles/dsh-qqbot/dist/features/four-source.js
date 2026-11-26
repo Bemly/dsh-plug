@@ -242,7 +242,7 @@ export async function noteTurnSignals(dataRoot, entry, text = {}) {
         // ① 空回合不留痕（内心与正文都空 = 纯流程步，没有可观测的状态）
         if (think.trim() === '' && tool.trim() === '' && reply.trim() === '')
             return;
-        const opts = { modelDir: text.modelDir, logger: text.logger };
+        const opts = { logger: text.logger };
         // 内心活动 = 思考 (+ 工具调用里的中文，默认不参与判定 —— 见 TENDENCY_INCLUDE_TOOL)
         const toolPart = TENDENCY_INCLUDE_TOOL ? tool.trim() : '';
         const inner = [think.trim(), toolPart].filter((s) => s !== '').join('\n');
@@ -316,7 +316,7 @@ export async function applyTurnAttitude(dataRoot, entry, text = {}) {
         const judgeSource = [think, toolPart].filter((s) => s !== '').join('\n');
         if (think === '' && reply === '')
             return; // 空回合不留痕（与 noteTurnSignals 同口径）
-        const opts = { modelDir: text.modelDir, logger: text.logger };
+        const opts = { logger: text.logger };
         const [innerTen, replyEmo] = await Promise.all([
             judgeSource ? classifyTendency(judgeTextOf(judgeSource), opts) : Promise.resolve(undefined),
             reply ? classifyEmo(reply, opts) : Promise.resolve(undefined),

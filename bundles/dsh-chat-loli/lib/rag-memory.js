@@ -8,6 +8,7 @@
  *    独立调用 ctx.llm 通读新增短期记忆，将重要事实/偏好/约定提炼升格到长期记忆。
  * 3. 长期记忆（items）：由会话内模型通过 rag_memory_add / rag_memory_search / rag_memory_delete 自主管理，
  *    也接收定时做梦提炼的记忆（source: "dream"）。
+ * 4. 运行时服务 `conanRag`：向 QQ 插件提供 OVMS 嵌入与群聊价值评分，OVMS 故障时返回空，不做兜底。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -20,6 +21,7 @@ export const DEFAULT_ENDPOINT = 'http://127.0.0.1:8765/v3/embeddings';
 export const DEFAULT_MODEL = 'conan-embedding-v1';
 export const DEFAULT_STORE_FILE = 'conan-rag-loli.json';
 export const DEFAULT_VARIABLE = 'conan_rag_memory';
+export const DEFAULT_SERVICE = 'conanRag';
 export const DEFAULT_DREAM_TIMES = ['12:30', '23:30'];
 
 function resolveDshHome() {
@@ -126,18 +128,25 @@ function cosineSimilarity(a, b) {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-function keywordScore(query, text) {
-  const q = query.toLowerCase().trim();
-  const t = text.toLowerCase();
-  if (!q) return 0;
-  if (t.includes(q)) return 0.9;
-  const tokens = q.split(/[\s,，。！？、;；]+/).filter((w) => w.length >= 2);
-  if (tokens.length === 0) return 0;
-  let hits = 0;
-  for (const tok of tokens) {
-    if (t.includes(tok)) hits++;
+export function scoreValueKnn(queryVec, samples, sampleVecs, { minScore = 0.5, k = 5, weightPow = 8 } = {}) {
+  if (!Array.isArray(queryVec) || !Array.isArray(samples) || !Array.isArray(sampleVecs) || samples.length !== sampleVecs.length) return null;
+  const scored = samples.map((sample, index) => ({
+    m: sample?.m ?? '',
+    y: sample?.y,
+    s: cosineSimilarity(queryVec, sampleVecs[index]),
+  })).sort((a, b) => b.s - a.s);
+  const top = scored.slice(0, Math.max(1, Math.floor(k)));
+  let w1 = 0;
+  let w0 = 0;
+  for (const neighbor of top) {
+    const weight = Math.max(0, neighbor.s) ** weightPow;
+    if (neighbor.y === 1) w1 += weight;
+    else w0 += weight;
   }
-  return (hits / tokens.length) * 0.7;
+  const total = w1 + w0;
+  const score = total > 0 ? w1 / total : 0;
+  const confidence = top[0]?.s ?? 0;
+  return { score, worth: score >= minScore, confidence, lowConfidence: confidence < 0.5, top: top.slice(0, 3) };
 }
 
 async function embedText(endpoint, model, text, timeoutMs = 15000) {
@@ -160,6 +169,34 @@ async function embedText(endpoint, model, text, timeoutMs = 15000) {
       throw new Error('OVMS embedding response missing data[0].embedding');
     }
     return vec;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function embedBatch(endpoint, model, texts, timeoutMs = 15000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, input: texts }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`OVMS embedding HTTP ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const json = await res.json();
+    const rows = Array.isArray(json?.data)
+      ? [...json.data].sort((a, b) => (Number(a?.index) || 0) - (Number(b?.index) || 0))
+      : [];
+    const vectors = texts.map((_, index) => rows[index]?.embedding);
+    if (vectors.some((vec) => !Array.isArray(vec) || vec.length === 0)) {
+      throw new Error('OVMS embedding response missing one or more vectors');
+    }
+    return vectors;
   } finally {
     clearTimeout(timer);
   }
@@ -460,6 +497,52 @@ export function apply(ctx, config = {}) {
   const dailySummary = createDailySummaryCache(() =>
     formatSummary(loadStore(storePath, model), { maxPinned, maxRecent, maxChars })
   );
+
+  const valueSampleCache = new Map();
+  const ragService = {
+    model,
+    endpoint,
+    async embedText(text) {
+      if (typeof text !== 'string' || !text.trim()) return null;
+      try {
+        return await embedText(endpoint, model, text);
+      } catch (err) {
+        console.warn(`[conan-rag-memory] OVMS embed skipped: ${err?.message || err}`);
+        return null;
+      }
+    },
+    async embedBatch(texts) {
+      if (!Array.isArray(texts) || texts.length === 0) return [];
+      try {
+        return await embedBatch(endpoint, model, texts);
+      } catch (err) {
+        console.warn(`[conan-rag-memory] OVMS batch embed skipped: ${err?.message || err}`);
+        return null;
+      }
+    },
+    async scoreValue({ text, samples, sampleKey = '', minScore = 0.5, k = 5, weightPow = 8 } = {}) {
+      if (typeof text !== 'string' || !text.trim() || !Array.isArray(samples) || samples.length === 0) return null;
+      const key = sampleKey || JSON.stringify(samples);
+      let sampleVecs = valueSampleCache.get(key);
+      if (!sampleVecs) {
+        sampleVecs = await ragService.embedBatch(samples.map((sample) => String(sample?.m ?? '')));
+        if (!sampleVecs) return null;
+        valueSampleCache.set(key, sampleVecs);
+        if (valueSampleCache.size > 32) valueSampleCache.delete(valueSampleCache.keys().next().value);
+      }
+      const queryVec = await ragService.embedText(text);
+      if (!queryVec) return null;
+      return scoreValueKnn(queryVec, samples, sampleVecs, { minScore, k, weightPow });
+    },
+    status() {
+      return { available: true, configured: true, model, endpoint, mode: 'ovms', reason: 'OVMS 故障时跳过语义评分' };
+    },
+  };
+
+  ctx.effect(() => {
+    if (typeof ctx.provide !== 'function') return undefined;
+    return ctx.provide(DEFAULT_SERVICE, ragService);
+  }, 'conan-rag-memory.service');
 
   // 串行写队列，防止并发读写丢数据
   let writeChain = Promise.resolve();
@@ -869,21 +952,18 @@ export function apply(ctx, config = {}) {
         try {
           queryVec = await embedText(endpoint, model, query);
         } catch (err) {
-          console.warn(`[conan-rag-memory] embed failed on search, fallback to keyword: ${err?.message || err}`);
+          console.warn(`[conan-rag-memory] OVMS search skipped: ${err?.message || err}`);
+          return { mode: 'unavailable', hits: [] };
         }
 
-        const mode = queryVec ? 'vector' : 'keyword';
+        const mode = 'vector';
         const scored = candidates
-          .map(({ layer, item }) => {
-            let score = 0;
-            if (queryVec && Array.isArray(item.embedding)) {
-              score = cosineSimilarity(queryVec, item.embedding);
-            } else {
-              score = keywordScore(query, item.text);
-            }
-            return { layer, item, score };
-          })
-          .filter((x) => (mode === 'vector' ? x.score > 0.25 : x.score > 0))
+          .map(({ layer, item }) => ({
+            layer,
+            item,
+            score: Array.isArray(item.embedding) ? cosineSimilarity(queryVec, item.embedding) : -1,
+          }))
+          .filter((x) => x.score > 0.25)
           .sort((a, b) => b.score - a.score)
           .slice(0, topK)
           .map(({ layer, item, score }) => ({

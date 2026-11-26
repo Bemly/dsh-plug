@@ -2643,8 +2643,7 @@ export function apply(ctx) {
       cwd: pick('cwd'),
       dataRoot: pick('dataRoot'),
       // ⚠️ 2026-09-30 补：localModel 也是"面板保存写自有存储"的字段之一。
-      //   漏了它 → /local-model/status 与 localModelDirOf 读的是 patch 默认值 →
-      //   一开面板就把 lexicalFallback 同步成 false（"评分又没了"）。
+      //   漏了它 → /local-model/status 会读到 patch 默认值，面板显示与真实配置不一致。
       localModel: (() => {
         const o = own.localModel;
         if (o && typeof o === 'object') return o;
@@ -3010,103 +3009,30 @@ export function apply(ctx) {
     } catch (e) { writeJson(res, 500, { error: String((e && e.message) || e) }); }
   });
 
-  // ── 本地小模型(2026-09-13 主人定): 状态检测 + 一键下载 ──
-  // 模型: bge-small-zh-v1.5 (ONNX q8 ≈ 23MB, 中文专训); 放用户级 {DSH_HOME|~/.dsh}/models/bge-small-zh
-  // (跨工作区共享一份), 可用 localModel.modelDir 覆盖。下载走 node:https + 镜像兜底。
-  const LOCAL_MODEL_FILES = ['onnx/model_quantized.onnx', 'tokenizer.json', 'tokenizer_config.json', 'config.json'];
-  const LOCAL_MODEL_BASES = [
-    'https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/main',
-    'https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/main',
-  ];
-  function localModelDirOf(bot) {
-    const cfgDir = String((bot && bot.cfg && bot.cfg.localModel && bot.cfg.localModel.modelDir) || '').trim();
-    if (cfgDir) return cfgDir;
-    const dshHome = (process.env.DSH_HOME && process.env.DSH_HOME.trim()) || join(homedir(), '.dsh');
-    return join(dshHome, 'models', 'bge-small-zh');
-  }
-  /** 下载单文件(跟随重定向); 失败抛错 */
-  async function downloadFile(url, dest, hops = 0) {
-    const { default: https } = await import('node:https');
-    return await new Promise((resolve, reject) => {
-      const req = https.get(url, { headers: { 'user-agent': 'dsh-qqbot', accept: '*/*' } }, (resp) => {
-        const code = resp.statusCode || 0;
-        if (code >= 300 && code < 400 && resp.headers.location && hops < 6) {
-          resp.resume();
-          const next = new URL(resp.headers.location, url).toString();
-          return downloadFile(next, dest, hops + 1).then(resolve, reject);
-        }
-        if (code !== 200) {
-          resp.resume();
-          return reject(new Error(`HTTP ${code}`));
-        }
-        const tmp = dest + '.part';
-        const ws = createWriteStream(tmp);
-        resp.pipe(ws);
-        ws.on('finish', () => ws.close(() => {
-          try { renameSync(tmp, dest); } catch (e) { return reject(e); }
-          resolve(dest);
-        }));
-        ws.on('error', reject);
-      });
-      req.on('error', reject);
-      req.setTimeout(180000, () => req.destroy(new Error('下载超时(180s)')));
-    });
-  }
-  // ── 本地小模型：强制重置加载状态（面板「🔄 重新检测」调用）──
-  // 背景：local-embed 曾有"一次失败永久关闭"的缺陷，用户点重新检测时希望能立刻再试一次。
-  // ⚠️ 桥与插件在同进程：动态 import 同一份 dist 模块，拿到的就是插件正在用的那个实例表。
-  route(ctx, 'POST', '/api/qqbot-settings/local-model/reset', async (req, res) => {
-    try {
-      const mod = await import('./dist/features/local-embed.js');
-      let n = 0;
-      try { n = typeof mod.resetAllEmbedders === 'function' ? mod.resetAllEmbedders() : 0; } catch (e) { n = -1; }
-      return writeJson(res, 200, { ok: true, reset: n });
-    } catch (e) {
-      return writeJson(res, 500, { error: String((e && e.message) || e) });
-    }
-  });
-
   route(ctx, 'GET', '/api/qqbot-settings/local-model/status', async (req, res) => {
     try {
       const u = new URL(req.url ?? '/', 'http://x');
       const bot = nsBot(NSQ(u));
-      const dir = localModelDirOf(bot);
-      const missing = LOCAL_MODEL_FILES.filter((rel) => !existsSync(join(dir, rel)));
-      let bytes = 0;
-      for (const rel of LOCAL_MODEL_FILES) { try { bytes += statSync(join(dir, rel)).size; } catch { /* 缺文件不计数 */ } }
-      // ⚠️ 2026-09-30 修(主人反馈"评分又没了"): 原来取 bot.cfg.localModel —— 那是**安装 patch 里的默认值**,
-      //   而面板保存写的是插件自有 settings; 两边不一致 → 每次打开面板就把 lexicalFallback 同步成 false
-      //   (并 resetAllEmbedders) → 评分立刻全部变成"无分"。改为与读取路由同源: 自有 settings 优先, patch 兜底。
       let cfg = (bot && bot.cfg && bot.cfg.localModel) || {};
       try {
         const own = readOwnSettings(NSQ(u));
         if (own && own.localModel && typeof own.localModel === 'object') cfg = own.localModel;
       } catch { /* 自有 settings 读不到就用 patch 默认值兜底 */ }
-      // 程序兜底(2026-09-30): 把开关同步进嵌入器模块 —— 变更时顺带重置, 下一次用到的就是新模式(无需重启)
-      // ⚠️ 2026-09-31 同时取【嵌入器真实状态】：模型加载失败时评分会静默变成 undefined，
-      //   面板只显示"无分"，失败原因只在 dsh 终端的 logger.warn 里 → 用户无从知晓。
-      //   这里把 status().reason 一并返回，面板可明确提示"模型加载失败：<原因>"。
       let embStatus;
       try {
-        const le = await import('./dist/features/local-embed.js');
-        const want = cfg.lexicalFallback === true;
-        if (le.isLexicalFallback() !== want) { le.setLexicalFallback(want); le.resetAllEmbedders(); }
-        const e = le.createLocalEmbedder({ modelDir: dir });
-        if (e && typeof e.status === 'function') embStatus = e.status();
-      } catch { /* 嵌入器模块不可用不影响状态接口 */ }
+        const mod = await import('./dist/features/rag-embed.js');
+        embStatus = mod.createSemanticEmbedder().status();
+      } catch { /* 状态接口失败不影响插件主流程 */ }
       writeJson(res, 200, {
         ok: true,
         enabled: cfg.enabled !== false,
-        modelDir: dir,
-        available: missing.length === 0,
-        missing,
-        bytes,
+        available: embStatus?.available === true,
+        model: embStatus?.model || 'conan-embedding-v1',
+        endpoint: embStatus?.endpoint || '',
         // ⚠️ 2026-09-13 修(主人反馈"选了低分不唤醒, 过一会又跳回去"): 原来这里漏返回 valueGate,
         //    面板读回 undefined → 一律按默认 'log' 渲染 → 看着像"保存没生效"(其实配置里已是 block)。
         valueGate: cfg.valueGate === 'off' || cfg.valueGate === 'block' ? cfg.valueGate : 'log',
         valueMinScore: typeof cfg.valueMinScore === 'number' ? cfg.valueMinScore : 0.5,
-        // ⚠️ 同 valueGate: **必须返回**, 否则面板勾了保存又跳回未勾选
-        lexicalFallback: cfg.lexicalFallback === true,
         embStatus,
         // 附件唤醒开关（2026-09-15）：跟 valueGate 一样**必须返回** ——
         //   否则面板读回 undefined → 勾选框永远按默认渲染，看着像"保存没生效"。
@@ -3115,28 +3041,6 @@ export function apply(ctx) {
             ? cfg.attachmentPassthrough
             : undefined,
       });
-    } catch (e) { writeJson(res, 500, { ok: false, error: String((e && e.message) || e) }); }
-  });
-  route(ctx, 'POST', '/api/qqbot-settings/local-model/download', async (req, res) => {
-    try {
-      const body = await readJsonBody(req);
-      const bot = nsBot(String((body && body.ns) || ''));
-      const dir = localModelDirOf(bot);
-      mkdirSync(join(dir, 'onnx'), { recursive: true });
-      const done = [];
-      for (const rel of LOCAL_MODEL_FILES) {
-        const dest = join(dir, rel);
-        if (existsSync(dest)) { done.push(rel + ': 已存在'); continue; }
-        let lastErr = '';
-        let ok = false;
-        for (const base of LOCAL_MODEL_BASES) {
-          try { await downloadFile(base + '/' + rel, dest); ok = true; lastErr = ''; break; }
-          catch (e) { lastErr = String((e && e.message) || e); }
-        }
-        if (!ok) return writeJson(res, 500, { ok: false, error: `${rel} 下载失败: ${lastErr}`, done, modelDir: dir });
-        done.push(rel + ': OK');
-      }
-      writeJson(res, 200, { ok: true, done, modelDir: dir });
     } catch (e) { writeJson(res, 500, { ok: false, error: String((e && e.message) || e) }); }
   });
   // 导出 Excel（2026-09-14 主人："好感度熟识度可以一键导出 excel 表格，i need to share"）

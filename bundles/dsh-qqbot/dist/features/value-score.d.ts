@@ -46,15 +46,16 @@ export interface ScoreResult {
 export interface ValueScorer {
     /** 打分; 不可用/失败 → undefined(调用方按"未知"处理, 不拦截) */
     score(text: string): Promise<ScoreResult | undefined>;
-    /** 样例向量是否已就绪 */
+    /** 样例是否已就绪 */
     ready(): boolean;
-    /** 后台预热(加载模型 + 预计算样例向量), 不阻塞 */
+    /** 最近一次评分是否因 OVMS/RAG 不可用而跳过 */
+    unavailable(): boolean;
+    /** 后台预热样例读取，不阻塞 */
     warmup(): void;
 }
 /** 取值分器(同参数单例复用: 模型与样例向量只算一次) */
 export declare function createValueScorer(opts: {
     dataRoot: string;
-    modelDir?: string;
     minScore?: number;
     logger?: Logger;
 }): ValueScorer;

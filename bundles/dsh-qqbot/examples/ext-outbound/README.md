@@ -80,10 +80,9 @@ export default async function onOutbound(ctx, next) {
 拷到 `outbound/sticker-semantic.mjs` 即生效。它做两阶段召回：
 
 1. **阶段1**：随机抽 `POOL`(=300) 张 → 收集这些图的 `tags`（几百个关键词）→
-   用**本地小模型**（`bge-small-zh`，没有就退化成字符 bigram）给 query 打关键词分
+   用 **conan RAG / OVMS** 给 query 打关键词分；OVMS 不可用时本次跳过，不做字符兜底
    → 选出最贴的那个关键词。
-   另加**存在性闸门**：最高分要过 `均值 + GATE_K*标准差`，并过绝对地板
-   （`FLOOR_EMBED`/`FLOOR_BIGRAM` —— **两个算法的分数量级差 10 倍，必须分两套**）。
+   另加**存在性闸门**：最高分要过 `均值 + GATE_K*标准差`，并过绝对地板 `FLOOR_EMBED`。
 2. **阶段2**：拿选中的关键词**回全库精确搜**（`tags.includes`，零模型开销）→ 随机取一张发出。
 
 query 取**末句**（一段话常混着寒暄/技术/情绪，整段进向量会被平均掉）；

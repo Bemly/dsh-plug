@@ -18,7 +18,6 @@ export declare function computeRelevance(opts: {
         messageId?: string;
         content?: string;
     }> | undefined;
-    modelDir?: string;
     logger?: Logger;
 }): Promise<RelResult | undefined>;
 export interface AffinityEntry {
@@ -68,7 +67,7 @@ export declare function topAffinity(dataRoot: string, limit?: number): Array<{
     lastAt: number;
 }>;
 /**
- * 用**同一个本地小模型**判"这句话是夸、骂还是中性":
+ * 用**同一个 conan RAG / OVMS 语义服务**判"这句话是夸、骂还是中性":
  *   把三组例句各嵌一次(缓存), 新文本嵌入后跟每组求平均相似度, 取最高的那组。
  * ⚠️ 只做**弱信号**: 反讽/互怼/引用会误判 → 观察期只记录, 不参与行为。
  */
@@ -97,7 +96,6 @@ export interface EmoResult {
     scores: Record<string, number>;
 }
 export declare function classifyEmo(text: string, opts?: {
-    modelDir?: string;
     logger?: Logger;
 }): Promise<EmoResult | undefined>;
 /**
@@ -124,7 +122,6 @@ export interface TendencyResult {
  */
 export declare function detectScript(text: string): 'zh' | 'en' | undefined;
 export declare function classifyTendency(text: string, opts?: {
-    modelDir?: string;
     logger?: Logger;
 }): Promise<TendencyResult | undefined>;
 //# sourceMappingURL=local-signals.d.ts.map

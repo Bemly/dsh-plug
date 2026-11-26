@@ -22,7 +22,7 @@ import { diagWrite } from './shared/diag.js';
 void runQrSetup;
 void persistCredentialsToProfile;
 import { setOutboundModeWriter } from './features/outbound-mode-switch.js';
-import { setLexicalFallback } from './features/local-embed.js';
+import { setRagServiceResolver } from './features/rag-embed.js';
 import { autoTagImage, setStickerVisionLlm } from './features/sticker-tagger.js';
 import { getStickerStore } from './features/sticker-store.js';
 import { stickerDirOf } from './gateway/data-root.js';
@@ -42,6 +42,7 @@ export const Config = ConfigSchema;
 export async function apply(ctx, config) {
     const agents = ctx.agents;
     const logger = ctx.logger ?? console;
+    setRagServiceResolver(() => ctx.get?.('conanRag'));
     setStickerVisionLlm(
         () => ctx.llm ?? ctx.root?.llm,
         config.sticker?.visionProvider || 'https://ai.bemly.moe',
@@ -515,8 +516,6 @@ export async function apply(ctx, config) {
             logger.warn?.(`实例 ${ns}: 凭据热更新后启动网关失败: ${err instanceof Error ? err.message : String(err)}`);
         }
     };
-    // 程序兜底(2026-09-30): 启动时按配置同步一次(否则不打开设置面板的进程永远不会启用兜底)
-    setLexicalFallback((resolvedConfig.localModel?.lexicalFallback) === true);
     try {
         ctx.on('qqbot/settings-changed', (changedNs) => {
             if (changedNs && changedNs !== ns)
@@ -526,7 +525,6 @@ export async function apply(ctx, config) {
                 const next = readOwnSettings();
                 Object.assign(resolvedConfig, mergeDeep(resolvedConfig, next));
                 logger.info(`设置已热更新(${ns}): ${Object.keys(next).length} 项`);
-                setLexicalFallback((resolvedConfig.localModel?.lexicalFallback) === true); // 兜底开关热生效
                 // ★ 2026-10-12：**连接相关字段变了就拆旧建新**。
                 //   不加这步的话，下面的 tryStartGateway() 会被 `gatewayStarted` 守卫直接挡回
                 //   ⇒ 表现成"改了 appSecret/preset 却永远不重连，非得重启宿主"（主人 2026-10-12 实测反馈：
@@ -761,7 +759,6 @@ async function installLiveSettings(ctx, live, logger, nsOverride) {
                 live.latexHint = next.latexHint;
             if (next.localModel && typeof next.localModel === 'object')
                 live.localModel = next.localModel;
-            setLexicalFallback((live.localModel?.lexicalFallback) === true); // 兜底开关热生效(settings 服务路径)
             if (typeof next.groupPrompt === 'string')
                 live.groupPrompt = next.groupPrompt;
             if (next.schedule)

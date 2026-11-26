@@ -6,13 +6,9 @@
  * ── 它做什么 ──────────────────────────────────────────────────────────────
  *   1. 从本地表情包库（`{dataRoot}/表情包/index.json`）**随机抽 100 张**当候选池；
  *   2. 拿**本回合最后一个正文块**（`ctx.isLastChunk === true`）当查询串；
- *   3. 用「字符 bigram Jaccard 相似度」跟每张图的 `tags + desc + msgText` 比一遍，
- *      取分最高且**过阈值**的那张；
+ *   3. 用 `ctx.embed` 的 conan RAG / OVMS 向量给候选关键词打分；
+ *      OVMS 不可用时本次跳过，不做 bigram 兜底；
  *   4. 用 `ctx.sendMedia()` 发出去 —— 这条通道**先被动、失败/超限自动转主动**。
- *
- * ── 为什么用 bigram 而不是向量 ────────────────────────────────────────────
- *   示范要"拷过去就能跑"：bigram 零依赖、离线、微秒级。要上真语义就把
- *   `similarity()` 换成你自己调模型的实现（`ctx.kernel` 能拿到插件 cordis Context）。
  *
  * ── 开关 ──────────────────────────────────────────────────────────────────
  *   ★ 两级开关（2026-10-17 主人定，加了隔离）：
@@ -59,13 +55,8 @@ const CONFIG = {
   MSG_BONUS: 0.06,
   /** 存在性闸门系数：最高分没到 `均值 + GATE_K * 标准差` ⇒ 认为"库里没合适的" ⇒ 不发 */
   GATE_K: 1.2,
-  /**
-   * 绝对地板（**必须按 scorer 分两套**：两个算法的分数尺度差一个数量级）
-   *   · local-model（bge 余弦）：中文短文本通常 0.3~0.7，低于 0.32 基本是不沾边
-   *   · bigram（字符 2-gram Jaccard）：长句实测最高才 0.02~0.04，地板得放 0.012
-   */
+  /** OVMS 余弦相似度地板：中文短文本通常 0.3~0.7，低于 0.32 基本是不沾边 */
   FLOOR_EMBED: 0.32,
-  FLOOR_BIGRAM: 0.012,
   /**
    * ★ 诊断开关（已排查完毕，保持 false）：
    *   true = 跳过所有判断，**每回合无条件发库里第一张图** —— 用来区分两种失败：
@@ -249,16 +240,6 @@ function bigrams(s) {
   return out;
 }
 
-/** Jaccard 相似度 0~1 */
-function similarity(a, b) {
-  const A = bigrams(a);
-  const B = bigrams(b);
-  if (!A.size || !B.size) return 0;
-  let hit = 0;
-  for (const g of A) if (B.has(g)) hit += 1;
-  return hit / (A.size + B.size - hit);
-}
-
 /** 随机抽 n 个（Fisher–Yates 取前 n，不改原数组） */
 function sample(arr, n) {
   const a = arr.slice();
@@ -436,23 +417,22 @@ async function pickAndSend(ctx, next) {
 
     // 给这批**关键词**打分（只算几十~几百个词，快）
     let kwScores = null;
-    let scorer = 'bigram';
     try {
       const ob = globalThis[Symbol.for('im-qqbot.outbound')];
-      if (ob && typeof ob.embed === 'function') {
-        kwScores = await ob.embed(query, kws);
-        if (Array.isArray(kwScores) && kwScores.length === kws.length) scorer = 'local-model';
-        else kwScores = null;
-      }
+      if (ob && typeof ob.embed === 'function') kwScores = await ob.embed(query, kws);
     } catch {
       kwScores = null;
+    }
+    if (!Array.isArray(kwScores) || kwScores.length !== kws.length) {
+      diag(ctx, 'skip:ovms-unavailable', { sampled: samplePool.length, kws: kws.length });
+      return next();
     }
 
     let bestKw = null;
     let bestKwScore = 0;
     const all = [];
     for (let i = 0; i < kws.length; i++) {
-      const s = kwScores ? Number(kwScores[i]) || 0 : similarity(query, kws[i]);
+      const s = Number(kwScores[i]) || 0;
       all.push(s);
       if (s > bestKwScore) {
         bestKwScore = s;
@@ -465,9 +445,9 @@ async function pickAndSend(ctx, next) {
     const mean = all.reduce((a, b) => a + b, 0) / n;
     const std = Math.sqrt(all.reduce((a, b) => a + (b - mean) * (b - mean), 0) / n) || 0;
     const gate = mean + CONFIG.GATE_K * std;
-    const floor = scorer === 'local-model' ? CONFIG.FLOOR_EMBED : CONFIG.FLOOR_BIGRAM;
+    const floor = CONFIG.FLOOR_EMBED;
     diag(ctx, 'stage1', {
-      scorer,
+      scorer: 'ovms',
       sampled: samplePool.length,
       kws: kws.length,
       bestKw,

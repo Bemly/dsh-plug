@@ -33,7 +33,7 @@ import { confidentEmo } from '../features/four-source.js';
 import { AGG_SCORE_MODE, weightedAggregate } from '../features/agg-score.js';
 import { recallLines, setPendingMemo, countWroteToday } from '../features/people-memo.js';
 import { detectSelfDisclosure, selfDisclosureHint, bumpHint } from '../features/self-disclosure.js';
-import { createLocalEmbedder } from '../features/local-embed.js';
+import { createSemanticEmbedder } from '../features/rag-embed.js';
 /** 每会话"上次注入的群时间头"（同分钟不重复注入，省 token） */
 const lastGroupTimeHead = new Map();
 /**
@@ -455,7 +455,6 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
             try {
                 const scorer = createValueScorer({
                     dataRoot: dataRootOf(config),
-                    modelDir: lmCfg?.modelDir || undefined,
                     logger,
                 });
                 scorer.warmup(); // 后台预热(幂等): 首次入站不等两次加载, 之后零开销
@@ -651,10 +650,7 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                     //   现在的策略：**每次都按话题契合度挑 1~2 行**，交给 pre-step 做"是否已在上下文里"的去重：
                     //   已在 → 不重复；不在（新话题 / 上下文被清 / 换会话）→ 照注入。
                     if (scope === 'group' && uid) {
-                        const embedder = createLocalEmbedder({
-                            modelDir: typeof lmCfg?.modelDir === 'string' ? lmCfg.modelDir : undefined,
-                            logger,
-                        });
+                        const embedder = createSemanticEmbedder({ logger });
                         const r = await recallLines(dataRootOf(config), uid, plain || scText || '', embedder, 2);
                         if (r.lines.length > 0) {
                             // 只存原始行 + 昵称；拼接与"逐行判重"都交给 pre-step（2026-11-10）
@@ -779,7 +775,7 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                         (attKinds.video && attP.video === true) || // 视频：默认不放行
                         (attKinds.voice && attP.voice === true) || // 语音：默认不放行（有转录文字就按文字评）
                         (attKinds.file && attP.file === true); // 文件：默认不放行
-                    const worth = sc ? (effScore >= minScore || mediaPass) : mediaPass;
+                    const worth = scorer.unavailable() ? true : (sc ? (effScore >= minScore || mediaPass) : mediaPass);
                     try {
                         traceContextless('[gate] worth=' + String(worth) + ' gate=' + gate + ' min=' + String(minScore)
                             + ' score=' + (sc ? sc.score.toFixed(3) : '无分') + ' eff=' + String(effScore) + ' mediaPass=' + String(mediaPass));
@@ -790,12 +786,10 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                         gid: scope === 'group' ? (msg.groupOpenid ?? '') : 'c2c',
                         currentText: scText || plain,
                         history: mwState.history,
-                        modelDir: typeof lmCfg?.modelDir === 'string' ? lmCfg.modelDir : undefined,
                         logger,
                     }).catch(() => undefined);
                     // ③ 情绪粗分类(观察期**只记录**): 暖/冷/中性（2026-09-14 由"夸/骂"改名）—— 同一个本地模型 + 主人给的 60 条例句库
                     const emo = await classifyEmo(scText || plain, {
-                        modelDir: typeof lmCfg?.modelDir === 'string' ? lmCfg.modelDir : undefined,
                         logger,
                     }).catch(() => undefined);
                     // ② 好感度台账(观察期, **只统计不生效**): 互动 / 被点名 / 接话(相关度≥0.6)

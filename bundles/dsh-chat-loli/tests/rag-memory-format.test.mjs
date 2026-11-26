@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
-import { createDailySummaryCache, formatRagSearchResult, formatSummary } from '../lib/rag-memory.js';
+import { apply, createDailySummaryCache, formatRagSearchResult, formatSummary, scoreValueKnn } from '../lib/rag-memory.js';
 
 test('formats memories without ids, dream tags, status lines, or section headings', () => {
   const store = {
@@ -68,4 +71,54 @@ test('recomputes the dynamic summary at most once per local day', () => {
   day = '2026-11-26';
   assert.equal(cached(), 'summary-2');
   assert.equal(calls, 2);
+});
+
+test('scores group value with weighted KNN in the RAG service', () => {
+  const result = scoreValueKnn([1, 0], [
+    { m: 'positive', y: 1 },
+    { m: 'negative', y: 0 },
+  ], [
+    [1, 0],
+    [0, 1],
+  ], { minScore: 0.5 });
+  assert.equal(result.score, 1);
+  assert.equal(result.worth, true);
+  assert.equal(result.confidence, 1);
+  assert.deepEqual(result.top[0], { m: 'positive', y: 1, s: 1 });
+});
+
+test('exposes an OVMS-only conanRag service and skips on failure', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'conan-rag-service-'));
+  const disposers = [];
+  let service;
+  const ctx = {
+    effect(fn) {
+      const dispose = fn();
+      if (typeof dispose === 'function') disposers.push(dispose);
+      return dispose;
+    },
+    provide(name, value) { if (name === 'conanRag') service = value; },
+    systemPrompt: { variable() { return () => {}; } },
+    on() { return () => {}; },
+    tools: { register() { return () => {}; } },
+  };
+  const originalFetch = globalThis.fetch;
+  try {
+    apply(ctx, { storeFile: join(dir, 'store.json'), endpoint: 'http://ovms.test/v3/embeddings' });
+    assert.ok(service);
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      data: [
+        { index: 1, embedding: [0, 1] },
+        { index: 0, embedding: [1, 0] },
+      ],
+    }));
+    assert.deepEqual(await service.embedBatch(['a', 'b']), [[1, 0], [0, 1]]);
+    globalThis.fetch = async () => { throw new Error('OVMS down'); };
+    assert.equal(await service.embedText('a'), null);
+    assert.equal(await service.scoreValue({ text: 'a', samples: [{ m: 'b', y: 1 }] }), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const dispose of disposers) dispose();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

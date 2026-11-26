@@ -937,10 +937,8 @@ export async function sendViaOutboundChannel(payload, opts = {}, sendOpts = {}) 
         return false;
     return trySend(strip()); // 主动兜底
 }
-// ── ★ 2026-10-16 主人定：给扩展提供「本地小模型语义打分」 ──────────────────
-//   之前示范扩展只能用字符 bigram（只有字面重合，语义很差）。
-//   插件里本来就有本地小模型（features/local-embed.ts，智能回复/价值评分在用），
-//   这里把它包一层暴露出去：没下模型 / 加载失败 ⇒ 返回 null，扩展自行回落 bigram。
+// ── ★ 2026-10-16 主人定：给扩展提供「RAG / OVMS 语义打分」 ──────────────────
+//   统一走 conan RAG 的 OVMS 服务；服务不可用时返回 null，扩展应跳过，不做本地兜底。
 /** 小模型是否可用（同步探测，不加载） */
 function embedderAvailable() {
     try {
@@ -962,15 +960,15 @@ function embedderAvailable() {
 const passageVecCache = new Map();
 const PASSAGE_CACHE_MAX = 5000;
 /**
- * 用本地小模型给 `passages` 逐条与 `query` 算余弦相似度。
- * 返回 `null` = 模型不可用（**扩展应回落自己的算法**，绝不抛）。
+ * 用 conan RAG / OVMS 给 `passages` 逐条与 `query` 算余弦相似度。
+ * 返回 `null` = OVMS 不可用（**扩展应跳过**，绝不抛）。
  */
 async function embedScores(query, passages) {
     if (!query || !Array.isArray(passages) || passages.length === 0)
         return null;
     try {
-        const { createLocalEmbedder } = await import('./local-embed.js');
-        const e = createLocalEmbedder({ ...(buckets.get(fallbackKey)?.cfg.logger ? { logger: buckets.get(fallbackKey).cfg.logger } : {}) });
+        const { createSemanticEmbedder } = await import('./rag-embed.js');
+        const e = createSemanticEmbedder({ ...(buckets.get(fallbackKey)?.cfg.logger ? { logger: buckets.get(fallbackKey).cfg.logger } : {}) });
         if (!e.available())
             return null;
         const keys = passages.map((s) => String(s ?? ''));

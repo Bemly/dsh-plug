@@ -71,13 +71,11 @@ export const REFERENCE_CONTEXT = [
     // 面板「让ai写」按钮本身就是**注入一条消息**, 路径/格式/做法全写在那条消息里, 零常驻开销。
 ].join('\n');
 // ── 共享字段子 schema(主 ConfigSchema 与 EditableConfigSchema 复用) ──
-/** 本地小模型(2026-09-13 主人定): 零 token 的本地语义能力(价值评分 / 表情包语义搜索), 模型缺失时静默降级 */
+/** 智能回复: 复用 conan RAG 的 OVMS 语义服务; OVMS 故障时本次跳过，不做本地兜底 */
 const localModelSchema = Schema.object({
-    enabled: Schema.boolean().default(true).description('智能回复(本地小模型, 省 token): 开=本地先筛(价值评分/表情包语义搜索); 模型缺失或加载失败自动关闭'),
-    modelDir: Schema.string().default('').description('模型目录(留空=默认 {DSH_HOME|~/.dsh}/models/bge-small-zh)'),
+    enabled: Schema.boolean().default(true).description('智能回复(省 token): 开=用 conan RAG/OVMS 做价值评分与语义检索; OVMS 故障时跳过'),
     valueGate: Schema.union(['off', 'log', 'block']).default('log').description('价值评分模式(账号默认): off=不评分 / log=只记录分数 / block=低分不唤醒AI(消息仍进上下文)'),
     valueMinScore: Schema.number().min(0).max(1).default(0.5).description('价值评分门槛(0~1, 越高越安静): 近邻相似度低于此值视为不值得回应'),
-    lexicalFallback: Schema.boolean().default(false).description('兜底(实验): 小模型不可用时改用纯程序(字符 n-gram + TF)算向量 —— 安卓等缺 ONNX 原生后端的环境仍可用价值评分与语义搜索; 只衡量字面相似, 门槛需按新分布重标'),
     // 附件唤醒开关（2026-09-15 主人："视频和文件不算是图片，为什么也默认唤醒了"）
     //   ⚠️ 必须在这里声明 —— settings 走 Schema 校验，**未声明的字段会被直接丢掉**，
     //      表现就是"面板勾了保存、重载又跳回默认"（跟上次漏返回 valueGate 是同一类坑）。
@@ -92,10 +90,8 @@ const localModelSchema = Schema.object({
     overrides: Schema.any().default({}).description('单会话覆盖(dock「单会话设置」保存到这里)'),
 }).default({
     enabled: true,
-    modelDir: '',
     valueGate: 'log',
     valueMinScore: 0.5,
-    lexicalFallback: false,
     attachmentPassthrough: { image: true, video: false, voice: false, file: false },
     overrides: {},
 });
@@ -345,7 +341,7 @@ export const EditableConfigSchema = Schema.object({
     toolErrorSilentPattern: Schema.string().default('').description('toolErrorMode=regex 时的匹配式(不区分大小写, 匹配渲染后的 ❌ 文本)。例: TOOL_TIMEOUT|执行失败。留空=不拦截'),
     toolErrorModeByScope: Schema.object({ group: Schema.string().default(''), c2c: Schema.string().default('') }).description('按渠道覆盖工具报错策略(issue #77): 群聊 silent + 私聊 notify 是常见组合；空串=不覆盖'),
     outboundLastCtxFallback: Schema.boolean().default(false).description('出站扩展未指定 target 时是否回落到最近活跃会话(issue #78, 默认关=拒发)。开启=旧行为, 多会话并发会串台'),
-    imageOffload: Schema.boolean().default(true).description('历史图片不重发(默认开): 每轮只把「本插件聚合出来的图」在历史里换成文字占位, 其余图片一律不动 —— 避免同一张图每轮重传、越聊越慢'),
+    imageOffload: Schema.boolean().default(false).description('历史图片不重发(默认关): 开启后会在 DSH 会话历史里删图；当前由 Magpie image-slim 在出站时处理，避免丢元数据导致缓存重建'),
     imageAggregate: Schema.object({
         enabled: Schema.boolean().default(false).description('图片聚合(默认关): 把连续收到的几张图竖向拼成一张长图, 随唤醒消息一起进上下文(只对支持读图的模型生效)'),
         max: Schema.number().default(4).description('聚合数量上限 1~8(默认 4): 环形缓冲, 最新的排最下面, 最旧的排最上面; 已聚合过的图不再重复聚合'),
@@ -445,7 +441,7 @@ const ConfigSchemaRaw = Schema.object({
     toolErrorSilentPattern: Schema.string().default('').description('toolErrorMode=regex 时的匹配式(不区分大小写, 匹配渲染后的 ❌ 文本)。例: TOOL_TIMEOUT|执行失败。留空=不拦截'),
     toolErrorModeByScope: Schema.object({ group: Schema.string().default(''), c2c: Schema.string().default('') }).description('按渠道覆盖工具报错策略(issue #77): 群聊 silent + 私聊 notify 是常见组合；空串=不覆盖'),
     outboundLastCtxFallback: Schema.boolean().default(false).description('出站扩展未指定 target 时是否回落到最近活跃会话(issue #78, 默认关=拒发)。开启=旧行为, 多会话并发会串台'),
-    imageOffload: Schema.boolean().default(true).description('历史图片不重发(默认开): 每轮只把「本插件聚合出来的图」在历史里换成文字占位, 其余图片一律不动 —— 避免同一张图每轮重传、越聊越慢'),
+    imageOffload: Schema.boolean().default(false).description('历史图片不重发(默认关): 开启后会在 DSH 会话历史里删图；当前由 Magpie image-slim 在出站时处理，避免丢元数据导致缓存重建'),
     imageAggregate: Schema.object({
         enabled: Schema.boolean().default(false).description('图片聚合(默认关): 把连续收到的几张图竖向拼成一张长图, 随唤醒消息一起进上下文(只对支持读图的模型生效)'),
         max: Schema.number().default(4).description('聚合数量上限 1~8(默认 4): 环形缓冲, 最新的排最下面, 最旧的排最上面; 已聚合过的图不再重复聚合'),

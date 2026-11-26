@@ -1,6 +1,6 @@
 {
   "name": "dsh-botqq",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "QQ Bot IM channel plugin for deepseek-harness (dsh)",
   "type": "module",
   "main": "./entry.js",
@@ -71,7 +71,6 @@
     "README_EN.md",
     "LICENSE",
     "voice-convert.mjs",
-    "scripts/download-model.mjs",
     "scripts/fix-dsh-016-presets.ps1",
     "entry.js",
     "NOTICE",
@@ -103,9 +102,6 @@
     "js-yaml": "^4.1.0",
     "lamejs-fixed": "^1.2.2",
     "silk-wasm": "^3.7.1"
-  },
-  "optionalDependencies": {
-    "@huggingface/transformers": "^4.3.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.1",

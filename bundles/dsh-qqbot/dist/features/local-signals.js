@@ -16,7 +16,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { createLocalEmbedder } from './local-embed.js';
+import { createSemanticEmbedder } from './rag-embed.js';
 import { lastBotReplyOf } from './bot-reply-memo.js';
 import { EMO_LABELS, EMO_SAMPLES } from './emo-samples.js';
 import { TENDENCY_LABELS, TENDENCY_SAMPLES } from './tendency-samples.js';
@@ -47,7 +47,7 @@ export async function computeRelevance(opts) {
     if (!cur || !opts.gid)
         return undefined;
     try {
-        const embedder = createLocalEmbedder({ modelDir: opts.modelDir, logger: opts.logger });
+        const embedder = createSemanticEmbedder({ logger: opts.logger });
         if (!embedder.available())
             return undefined;
         const qv = await embedder.embedQuery(cur);
@@ -334,7 +334,7 @@ const tendencyCentroidCache = new Map();
  */
 async function centroidScores(text, groups, cache, cachePrefix, opts) {
     try {
-        const embedder = createLocalEmbedder({ modelDir: opts.modelDir, logger: opts.logger });
+        const embedder = createSemanticEmbedder({ logger: opts.logger });
         if (!embedder.available())
             return undefined;
         const qv = await embedder.embedQuery(text);

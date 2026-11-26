@@ -11,12 +11,8 @@
 import { appendFileSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { closeFile, ensureDir } from '../shared/async-append.js';
 import { dirname, join } from 'node:path';
-import { createLocalEmbedder } from './local-embed.js';
+import { createSemanticEmbedder } from './rag-embed.js';
 import { loadValueSamples, valueSamplesPath } from './value-sample.js';
-/** 近邻数(实测 k=5 及加权版在独立测试集上 10/10) */
-const K = 5;
-/** 相似度加权指数: 把近邻的相似度差距拉开(实测区分度更好) */
-const WEIGHT_POW = 8;
 /**
  * 打分文本的 mention 归一化（2026-09-15 主人实测后加）。
  *
@@ -54,18 +50,18 @@ export const OTHER_MENTION_PENALTY = 0.06;
 const scorers = new Map();
 /** 取值分器(同参数单例复用: 模型与样例向量只算一次) */
 export function createValueScorer(opts) {
-    const cacheKey = `${opts.dataRoot}|${opts.modelDir ?? ''}|${opts.minScore ?? ''}`;
+    const cacheKey = `${opts.dataRoot}|${opts.minScore ?? ''}`;
     const cached = scorers.get(cacheKey);
     if (cached)
         return cached;
     const minScore = typeof opts.minScore === 'number' ? opts.minScore : 0.5;
-    const embedder = createLocalEmbedder({ modelDir: opts.modelDir, logger: opts.logger });
+    const embedder = createSemanticEmbedder({ logger: opts.logger });
     let samples = [];
     /** 样例文本的 mention 归一化版本（与 sampleTexts[i] 对应; 供近邻展示用干净文本） */
     let sampleTexts = [];
-    let vecs = [];
     let initing;
     let inited = false;
+    let unavailable = false;
     /** 已加载样例文件的 mtime(0=文件不存在, 用内置默认) —— 变化时自动重载: 改样例无需重启/无需改代码 */
     let loadedMtime = -1;
     function samplesMtime() {
@@ -87,12 +83,8 @@ export function createValueScorer(opts) {
                 samples = loadValueSamples(opts.dataRoot);
                 if (samples.length === 0)
                     return false;
-                // mention 归一化: 剥掉 `@bot`/`<@openid>` 再嵌入 —— 否则"这条 @ 了她"会淹掉语义(见 stripMentionForScore)
+                // mention 归一化: 剥掉 `@bot`/`<@openid>`，实际嵌入与 KNN 评分由 conan RAG 服务完成。
                 sampleTexts = samples.map((s) => stripMentionForScore(s.m) || s.m);
-                const v = await embedder.embedPassages(sampleTexts);
-                if (!v || v.length !== samples.length)
-                    return false;
-                vecs = v;
                 inited = true;
                 loadedMtime = mt;
                 opts.logger?.info(`[im-qqbot] 价值评分就绪: ${samples.length} 条样例`);
@@ -108,43 +100,28 @@ export function createValueScorer(opts) {
         })();
         return initing;
     }
-    function dot(a, b) {
-        let s = 0;
-        for (let i = 0; i < a.length; i++)
-            s += (a[i] ?? 0) * (b[i] ?? 0);
-        return s;
-    }
     const scorer = {
         ready: () => inited,
+        unavailable: () => unavailable,
         warmup: () => { void init(); },
         async score(text) {
+            unavailable = false;
             // 查询侧也剥 mention —— 与样例侧(init 里的 sampleTexts)保持一致
             const t = stripMentionForScore(String(text || '')) || String(text || '').trim();
             if (!t)
                 return undefined;
-            if (!(await init()))
+            if (!(await init())) {
+                unavailable = true;
                 return undefined;
-            const qv = await embedder.embedQuery(t);
-            if (!qv)
-                return undefined;
-            const scored = samples
-                .map((s, i) => ({ m: sampleTexts[i] ?? s.m, y: s.y, s: dot(qv, vecs[i] ?? []) }))
-                .sort((a, b) => b.s - a.s);
-            const top = scored.slice(0, K);
-            let w1 = 0;
-            let w0 = 0;
-            for (const n of top) {
-                const w = Math.max(0, n.s) ** WEIGHT_POW;
-                if (n.y === 1)
-                    w1 += w;
-                else
-                    w0 += w;
             }
-            const total = w1 + w0;
-            const score = total > 0 ? w1 / total : 0;
-            // 置信度 = 最近邻居的相似度(低于 0.5 视为"地图上没这类样本", 判断不可靠)
-            const confidence = top[0]?.s ?? 0;
-            return { score, worth: score >= minScore, confidence, lowConfidence: confidence < 0.5, top: top.slice(0, 3) };
+            const result = await embedder.scoreValue({
+                text: t,
+                samples: samples.map((sample, index) => ({ m: sampleTexts[index] ?? sample.m, y: sample.y })),
+                sampleKey: `${cacheKey}|${loadedMtime}`,
+                minScore,
+            });
+            if (!result) unavailable = true;
+            return result;
         },
     };
     scorers.set(cacheKey, scorer);
