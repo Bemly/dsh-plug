@@ -758,29 +758,16 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
         if (content.startsWith('/'))
             return next();
         const wasMentioned = ctx.state?.mention?.wasMentioned === true;
+        // @ 可配置为不走延迟(秒回)。
+        // ★ 2026-11-27 主人确认：**@ 就该绕过聚合/插话**。@ 是"明确叫她"，
+        //   走插话会把内容挤进她当前回合，打乱回复顺序。这里保持原样绕过。
+        if (wasMentioned && c.mentionDelayed === false)
+            return next();
         const peerId = kind === 'group'
             ? (msg.groupOpenid ?? msg.senderId)
             : msg.senderId;
         if (!peerId)
             return next();
-        // @ 可配置为不走延迟(秒回)。
-        // ★ 2026-11-26 修：**她正在回合中时不能秒回** —— 以前这里无条件 return next()，
-        //   于是 @ 消息完全绕过 debounce：既不聚合也不插话，只能等她这轮结束再开新回合，
-        //   表现就是"连发好几条、一条接一条地排队回"。实测就是它让插话整体失效。
-        //   现在只在"她确实空闲"时才秒回；忙的话落到下面的聚合/插话分支。
-        if (wasMentioned && c.mentionDelayed === false) {
-            let busy = false;
-            try {
-                const r0 = manager.findByPeer(kind === 'group' ? 'group' : 'c2c', String(peerId));
-                busy = r0?.turnActive === true || r0?.agent?.status === 'running';
-            }
-            catch { /* ignore */ }
-            if (!busy) {
-                dbg(`@秒回 kind=${kind} peer=${peerId}（她空闲）`);
-                return next();
-            }
-            dbg(`@消息但她在回合中 → 转聚合/插话 kind=${kind} peer=${peerId}`);
-        }
         const key = `${kind}:${String(peerId)}`;
         const silenceMs = Math.max(0, num(c.silenceSec, DEFAULTS.silenceSec)) * 1000;
         const maxMsgs = Math.max(1, Math.floor(num(c.maxMsgs, DEFAULTS.maxMsgs)));
