@@ -14,6 +14,7 @@
  *  6. 拼接异步，失败静默，绝不阻断入站主链。
  */
 import { existsSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 let jimpMod;
 async function loadJimp() {
@@ -34,9 +35,13 @@ const COLS_CANDIDATES = [1, 2, 3, 4];
 /** 打标文本采用 image-slim 通用占位符格式，无自定义标记（见 describeImages） */
 /** 会话 → 待注入的图（保留缓冲，仅用于去重，不再限制张数） */
 const buffers = new Map();
-/** 会话 → 已注入过的图片路径（避免同图反复烧 token） */
-const sentPaths = new Map();
+/**
+ * 会话 → 已注入过的图片**内容哈希**集合（v2.1：不再用路径）。
+ * 同一张图换路径/换文件名也能拦住；持久化到 sent-index.json，DSH 重启后仍有效。
+ */
+const sentFingerprints = new Map();
 const SENT_KEEP = 128;
+let sentIndexFile = '';
 /** 本插件产出的附件 id 台账（保留兼容，v2 下不再做 DSH 侧历史压缩） */
 const OUR_ATTACH = new Set();
 let ourAttachFile = '';
@@ -45,6 +50,8 @@ export function initAggregateRegistry(dataRoot) {
     try {
         if (!dataRoot)
             return;
+        sentIndexFile = join(dataRoot, '.qqbot', 'aggregate-sent-index.json');
+        loadSentIndex();
         ourAttachFile = join(dataRoot, '.qqbot', 'aggregate-ids.json');
         if (!existsSync(ourAttachFile))
             return;
@@ -106,18 +113,41 @@ function bufferOf(key) {
     return arr;
 }
 /**
- * 把一条消息里的图片塞进缓冲。v2：**不再按 cap 截断**（去掉 3 张/4 格限制）。
- * 只做两件过滤：① 文件必须存在；② 已注入过的图不再进。
+ * 图片内容指纹（2026-11-26 v2.1 修）：
+ *
+ * 为什么不能只用路径去重 —— 同一张表情包被重复发送时，QQ 每次给的是不同 URL/不同下载路径
+ * （有时还换文件名），`sentPaths` 里比路径永远比不中 ⇒ 同一张图被反复注入：
+ * 每条新消息都多一份「图片块 + 打标文本」，历史前缀被不断推后，缓存几乎全废。
+ * 实测：同一 sha256 的图在会话里被注入 3 次，打标文本重复 7 处。
+ *
+ * 改用「内容哈希」当去重键：同一张图无论换几次路径/文件名，只注入一次。
+ * 顺带把去重表持久化（见 sentIndexFile），DSH 重启后仍然有效。
+ */
+function fingerprintOf(path) {
+    try {
+        const buf = readFileSync(path);
+        return createHash('sha256').update(buf).digest('hex');
+    }
+    catch {
+        return '';
+    }
+}
+/**
+ * 把一条消息里的图片塞进缓冲。v2.1：按**内容哈希**去重（不再只看路径）。
  */
 export function pushAggImage(key, path, sender, _max) {
     if (!path || !existsSync(path))
         return 0;
-    if (sentPaths.get(key)?.includes(path))
+    const fp = fingerprintOf(path);
+    if (!fp)
+        return bufferOf(key).length;
+    // 已注入过的内容（同图换路径也能拦住）
+    if (sentFingerprints.get(key)?.has(fp))
         return bufferOf(key).length;
     const arr = bufferOf(key);
-    if (arr.some((i) => i.path === path))
+    if (arr.some((i) => i.fp === fp))
         return arr.length;
-    arr.push({ path, sender: sender || '某人', at: Date.now(), sent: false });
+    arr.push({ path, fp, sender: sender || '某人', at: Date.now(), sent: false });
     return arr.length;
 }
 export function pendingAggImages(key) {
@@ -127,16 +157,52 @@ export function markAggSent(items) {
     for (const i of items)
         i.sent = true;
 }
-export function rememberAggSentPaths(key, paths) {
-    if (paths.length === 0)
+/**
+ * 记住这些图已经注入过（按内容哈希）。持久化，跨重启有效。
+ */
+export function rememberAggSentPaths(key, items) {
+    if (!items || items.length === 0)
         return;
-    const list = sentPaths.get(key) ?? [];
-    for (const p of paths)
-        if (!list.includes(p))
-            list.push(p);
-    while (list.length > SENT_KEEP)
-        list.shift();
-    sentPaths.set(key, list);
+    let set = sentFingerprints.get(key);
+    if (!set) {
+        set = new Set();
+        sentFingerprints.set(key, set);
+    }
+    for (const it of items) {
+        const fp = typeof it === 'string' ? it : it?.fp;
+        if (fp)
+            set.add(fp);
+    }
+    while (set.size > SENT_KEEP) {
+        const first = set.values().next().value;
+        set.delete(first);
+    }
+    persistSentIndex();
+}
+/** 把去重表落盘（失败静默：纯粹是优化，不影响主链） */
+function persistSentIndex() {
+    if (!sentIndexFile)
+        return;
+    try {
+        const out = {};
+        for (const [k, set] of sentFingerprints)
+            out[k] = [...set];
+        writeFileSync(sentIndexFile, JSON.stringify(out), 'utf8');
+    }
+    catch { /* ignore */ }
+}
+/** 启动时读回去重表 */
+function loadSentIndex() {
+    if (!sentIndexFile || !existsSync(sentIndexFile))
+        return;
+    try {
+        const raw = JSON.parse(readFileSync(sentIndexFile, 'utf8'));
+        for (const [k, arr] of Object.entries(raw ?? {})) {
+            if (Array.isArray(arr))
+                sentFingerprints.set(k, new Set(arr.filter((x) => typeof x === 'string')));
+        }
+    }
+    catch { /* 坏文件当空 */ }
 }
 export function clearAggImages(key) {
     buffers.delete(key);
@@ -298,7 +364,7 @@ export async function buildAggregateBlocks(key, agent, logger) {
             if (!saved || !saved.attachment)
                 return [];
             markAggSent([one]);
-            rememberAggSentPaths(key, [one.path]);
+            rememberAggSentPaths(key, [one]);
             logger?.debug?.(`[图片聚合v2] 单图直给: ${one.path}`);
             return [
                 { type: 'image', attachment: saved.attachment },
@@ -324,7 +390,7 @@ export async function buildAggregateBlocks(key, agent, logger) {
     if (!saved || !saved.attachment)
         return [];
     markAggSent(stitched.used);
-    rememberAggSentPaths(key, stitched.used.map((u) => u.path));
+    rememberAggSentPaths(key, stitched.used);
     logger?.debug?.(`[图片聚合v2] 合成 ${stitched.used.length} 张 → ${stitched.width}x${stitched.height} (${stitched.layout})`);
     return [
         { type: 'image', attachment: saved.attachment },
