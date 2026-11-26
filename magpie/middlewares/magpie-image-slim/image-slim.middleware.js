@@ -1,5 +1,5 @@
 /**
- * magpie-image-slim v0.1.3（2026-11-26 重写）
+ * magpie-image-slim v0.1.4（2026-11-26 重写）
  *
  * 职责：出站时把**历史轮次**的 ImageBlock 换成极短占位符，避免每轮重算视觉 token。
  *
@@ -13,14 +13,30 @@
  *      判定 history 不一致 → session_new → 缓存清零（实测 63 次）。
  *   4. 保留 `keepCurrentTurn`（默认开）：本回合新图不瘦。
  */
-/** 通用占位符正则（本中间件自己产出的格式，幂等认） */
-const SLOT_RE = /^\[\d+(?:\.\d+)? MB image left out here: [^\]\r\n]*\]$/;
+/**
+ * 标准 image-slim 占位符正则 —— **必须严格保持这个格式**。
+ *
+ * ★★★ 2026-11-26 实测结论（关键，勿改）：
+ * agy-cli 的 bridge 用 `isImagePlaceholder()` 判定「图片槽位」，该判定只认
+ *   ① 本正则 `^\[\d+(\.\d+)? MB image left out here: [\s\S]*\]$`
+ *   ② magpie 网关自带的三条固定文案（MAGPIE_IMAGE_PLACEHOLDERS）
+ * 图片块与占位符被视为**同一个槽位**，`withoutImages()` 会把两者一并抹掉再比对历史，
+ * 于是"图→占位符"这种变化被判为 masked，**不触发 session_new 重建**，缓存继续命中。
+ *
+ * 若换成 `[image]` 这类自造短标记：bridge 认不出，会多出一个 text 块 →
+ * 判为 history_mismatch → session_new 重建 → 整段全量重算（实测 cache_read = 0）。
+ * 所以占位符一律用本格式；路径等信息写在冒号后面即可。
+ */
+const SLOT_RE = /^\[\d+(?:\.\d+)? MB image left out here: [\s\S]*\]$/;
+/** 未瘦身状态下，自己写出的占位符（要幂等识别，不能二次处理） */
+const SLOT_PREFIX = 'MB image left out here:';
 /** DSH 宿主为每张图生成的句柄文本（含 sha256 与 Normalized copy 本地路径） */
 const DSH_HANDLE_RE = /^Image "[^"]*"\s*\(sha256:[0-9a-f]{8,}\)[\s\S]*Normalized copy \(read-only/;
-/** 旧格式识别（仅用于 opt-in 的拆块功能，不再用于判定消息是否聚合） */
+/** 从句柄文本里取 Normalized copy 的本地路径 */
+const HANDLE_PATH_RE = /Normalized copy \(read-only[^)]*\):\s*"([^"]+)"/;
+/** 旧格式识别（仅用于 opt-in 的拆块功能） */
 const IMAGE_SLIM_RE = /\[\d+(?:\.\d+)? MB image left out here: [^\]\r\n]*\]/g;
 const TEXT_TYPES = new Set(['input_text', 'output_text', 'text']);
-const PLACEHOLDER = '[image]';
 
 export function onRequest(body, ctx) {
     const options = readOptions(ctx?.options);
@@ -37,11 +53,17 @@ export function onRequest(body, ctx) {
         const item = body.input[index];
         if (item?.role !== 'user' || !Array.isArray(item.content)) continue;
         const aggregate = isAggregateMessage(item.content);
+        // 该消息里 DSH 句柄给出的本地路径（按出现顺序），用于写进占位符
+        const handlePaths = collectHandlePaths(item.content);
+        let imageOrdinal = 0;
         const content = [];
         for (const block of item.content) {
             if (aggregate && (!protectCurrentTurn || index < turnStart) && options.replaceImages && isInlineImage(block)) {
-                // 1 块换 1 块：块数不变，缓存稳定；打标文本在相邻 text 块里原样保留。
-                content.push({ type: 'input_text', text: PLACEHOLDER });
+                // 1 块换 1 块，且**必须**是标准 image-slim 格式：
+                // agy-bridge 靠它把「图片」和「占位符」认成同一槽位，才不会重建会话。
+                const path = handlePaths[imageOrdinal] || '';
+                imageOrdinal++;
+                content.push({ type: 'input_text', text: slotText(imageBytes(block), path) });
                 replaced++;
                 changed = true;
                 continue;
@@ -61,7 +83,7 @@ export function onRequest(body, ctx) {
     }
 
     if (changed && options.log) {
-        console.log(`image-slim v0.1.3: [${ctx.agent || 'unknown'}] replaced ${replaced} image(s), split ${split} text block(s)`);
+        console.log(`image-slim v0.1.4: [${ctx.agent || 'unknown'}] replaced ${replaced} image(s), split ${split} text block(s)`);
     }
     return changed ? body : undefined;
 }
@@ -120,6 +142,36 @@ function isInlineImage(block) {
     return block?.type === 'input_image' && typeof block.image_url === 'string' && block.image_url.startsWith('data:');
 }
 
+/** data URL 的近似字节数（base64 长度 * 3/4） */
+function imageBytes(block) {
+    const comma = block.image_url.indexOf(',');
+    if (comma < 0) return 0;
+    const b64 = block.image_url.length - comma - 1;
+    return Math.max(0, Math.floor(b64 * 0.75));
+}
+
+/** 收集该消息里 DSH 句柄暴露的本地路径（按块顺序） */
+function collectHandlePaths(content) {
+    const out = [];
+    for (const block of content) {
+        if (!TEXT_TYPES.has(block?.type) || typeof block.text !== 'string') continue;
+        if (!DSH_HANDLE_RE.test(block.text.trim())) continue;
+        const m = HANDLE_PATH_RE.exec(block.text);
+        out.push(m ? m[1] : '');
+    }
+    return out;
+}
+
+/**
+ * 生成标准 image-slim 占位符，路径写在冒号后。
+ * 格式由 SLOT_RE / agy-bridge 的 IMAGE_SLIM_RE 共同约束，不可改成 [image]。
+ */
+function slotText(bytes, path) {
+    const mb = (Math.max(0, Number(bytes) || 0) / 1048576).toFixed(2);
+    const tail = path || 'already seen earlier in this conversation; rely on what you already said about it';
+    return `[${mb} ${SLOT_PREFIX} ${tail}]`;
+}
+
 function splitImageSlimText(block) {
     const text = block.text;
     IMAGE_SLIM_RE.lastIndex = 0;
@@ -143,5 +195,6 @@ export const _internal = {
     splitImageSlimText,
     SLOT_RE,
     DSH_HANDLE_RE,
-    PLACEHOLDER,
+    slotText,
+    collectHandlePaths,
 };

@@ -26,7 +26,7 @@ test('slims historical image to [image], keeps generic slot text', () => {
     const body = responsesBody([{ type: 'input_text', text: SLOT }, image]);
     assert.equal(onRequest(body, ctx), body);
     assert.equal(body.input[0].content[0].text, SLOT);
-    assert.equal(body.input[0].content[1].text, '[image]');
+    assert.match(body.input[0].content[1].text, /^\[\d+\.\d+ MB image left out here: [\s\S]*\]$/);
     assert.equal(body.input[0].content.length, 2); // 块数不变
 });
 
@@ -55,7 +55,7 @@ test('v0.1.3: recognizes DSH handle text and keeps the path', () => {
     const body = responsesBody([{ type: 'input_text', text: DSH_HANDLE }, inlineImage()]);
     assert.equal(onRequest(body, ctx), body);
     assert.equal(body.input[0].content[0].text, DSH_HANDLE);   // 路径原样保留
-    assert.equal(body.input[0].content[1].text, '[image]');     // 图片数据换成占位
+    assert.match(body.input[0].content[1].text, /^\[\d+\.\d+ MB image left out here: [\s\S]*\]$/);     // 图片数据换成占位
     assert.equal(body.input[0].content.length, 2);              // 块数不变
 });
 
@@ -70,7 +70,20 @@ test('v0.1.3: DSH handle slim is cache-safe (block count stable)', () => {
     onRequest(body, ctx);
     assert.equal(body.input[0].content.length, before);
     assert.equal(body.input[0].content[1].text, DSH_HANDLE);
-    assert.equal(body.input[0].content[2].text, '[image]');
+    // 必须是标准 image-slim 格式（agy-bridge 靠它把图片和占位符认成同一槽位）
+    assert.match(body.input[0].content[2].text, /^\[\d+\.\d+ MB image left out here: [\s\S]*\]$/);
+    // 且带上 DSH 给的本地路径
+    assert.ok(body.input[0].content[2].text.includes('/vol1/@appdata/fn-deepseek-harness/attachments/v1/objects/e6/'));
+});
+
+test('v0.1.3: output format matches agy-bridge IMAGE_SLIM_RE (no session reset)', () => {
+    // agy-cli bridge 的真实正则（源码 index.mjs）
+    const AGY_IMAGE_SLIM_RE = /^\[\d+(?:\.\d+)? MB image left out here: [\s\S]*\]$/;
+    const body = responsesBody([{ type: 'input_text', text: DSH_HANDLE }, inlineImage()]);
+    onRequest(body, ctx);
+    const slot = body.input[0].content[1].text;
+    assert.ok(AGY_IMAGE_SLIM_RE.test(slot.trim()), `agy 必须认这个格式: ${slot}`);
+    assert.ok(!/^\[image\]$/.test(slot.trim()), '不能用 [image] 短标记');
 });
 
 test('v0.1.3: keeps current-turn DSH image intact', () => {
@@ -86,7 +99,7 @@ test('v0.1.3: keeps current-turn DSH image intact', () => {
 test('v0.1.3: still recognizes generic image-slim slot', () => {
     const body = responsesBody([{ type: 'input_text', text: SLOT }, inlineImage()]);
     assert.equal(onRequest(body, ctx), body);
-    assert.equal(body.input[0].content[1].text, '[image]');
+    assert.match(body.input[0].content[1].text, /^\[\d+\.\d+ MB image left out here: [\s\S]*\]$/);
 });
 
 test('leaves non-slot images untouched', () => {
@@ -112,7 +125,7 @@ test('can replace current turn image when configured', () => {
         inlineImage(),
     ]);
     onRequest(body, { ...ctx, options: { log: false, keepCurrentTurn: false } });
-    assert.equal(body.input[2].content[1].text, '[image]');
+    assert.match(body.input[2].content[1].text, /^\[\d+\.\d+ MB image left out here: [\s\S]*\]$/);
 });
 
 test('splitPlaceholders is OFF by default', () => {
@@ -139,5 +152,5 @@ test('generic slot recognition works for any author text', () => {
     const other = '[2.50 MB image left out here: 任意来源的打标描述]';
     const body = responsesBody([{ type: 'input_text', text: other }, inlineImage()]);
     assert.equal(onRequest(body, ctx), body);
-    assert.equal(body.input[0].content[1].text, '[image]');
+    assert.match(body.input[0].content[1].text, /^\[\d+\.\d+ MB image left out here: [\s\S]*\]$/);
 });
