@@ -387,6 +387,19 @@ function formatMemoryText(item) {
   return `${who}${categories}${body}`;
 }
 
+export function formatRagSearchResult(val) {
+  if (!val.hits.length) return 'RAG 记忆库中没有找到相关记忆。';
+  const lines = [`RAG 检索命中 ${val.hits.length} 条（模式：${val.mode}）：`];
+  for (const hit of val.hits) {
+    const layerLabel = hit.layer === 'short' ? '短期' : '长期';
+    const tagStr = hit.tags.length ? ` [${hit.tags.join(',')}]` : '';
+    const pinStr = hit.pinned ? ' ★' : '';
+    const timeStr = hit.createdAt ? ` 时间=${hit.createdAt}` : '';
+    lines.push(`- (${hit.score.toFixed(3)}) [${layerLabel}] ${hit.id}${pinStr}${tagStr}${timeStr}: ${hit.text}`);
+  }
+  return lines.join('\n');
+}
+
 export function formatSummary(
   store,
   { maxPinned = 10, maxRecent = 10, maxChars = 4000 } = {}
@@ -827,19 +840,7 @@ export function apply(ctx, config = {}) {
           },
           required: ['mode', 'hits'],
         },
-        render: (_args, val) => {
-          if (!val.hits.length) {
-            return [{ type: 'text', text: 'RAG 记忆库中没有找到相关记忆。' }];
-          }
-          const lines = [`RAG 检索命中 ${val.hits.length} 条（模式：${val.mode}）：`];
-          for (const h of val.hits) {
-            const layerLabel = h.layer === 'short' ? '短期' : '长期';
-            const tagStr = h.tags.length ? ` [${h.tags.join(',')}]` : '';
-            const pinStr = h.pinned ? ' ★' : '';
-            lines.push(`- (${h.score.toFixed(3)}) [${layerLabel}] ${h.id}${pinStr}${tagStr}: ${h.text}`);
-          }
-          return [{ type: 'text', text: lines.join('\n') }];
-        },
+        render: (_args, val) => [{ type: 'text', text: formatRagSearchResult(val) }],
       },
       async execute(args) {
         const query = typeof args?.query === 'string' ? args.query.trim() : '';

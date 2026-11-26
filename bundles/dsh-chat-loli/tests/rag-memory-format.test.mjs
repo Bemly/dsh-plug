@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createDailySummaryCache, formatSummary } from '../lib/rag-memory.js';
+import { createDailySummaryCache, formatRagSearchResult, formatSummary } from '../lib/rag-memory.js';
 
 test('formats memories without ids, dream tags, status lines, or section headings', () => {
   const store = {
@@ -25,6 +25,22 @@ test('formats memories without ids, dream tags, status lines, or section heading
     '[群u:亚托莉][称呼]群内的另一个 AI 角色，在被小鱼纠正性别后改口称呼小鱼为“小肥鱼姐姐”。',
     '[群u:转发鱼][运维]负责转发设备 MEminiFnOS 的网络带宽占用告警信息。',
   ].join('\n'));
+});
+
+test('includes the stored time in rendered RAG search hits', () => {
+  assert.equal(formatRagSearchResult({
+    mode: 'vector',
+    hits: [{
+      id: 'mem_16',
+      layer: 'long',
+      score: 0.9132,
+      text: 'Nyaser 被指定为小鱼的妈妈。',
+      tags: ['Nyaser'],
+      pinned: false,
+      files: [],
+      createdAt: '2026-11-25T16:27:58.881Z',
+    }],
+  }), 'RAG 检索命中 1 条（模式：vector）：\n- (0.913) [长期] mem_16 [Nyaser] 时间=2026-11-25T16:27:58.881Z: Nyaser 被指定为小鱼的妈妈。');
 });
 
 test('keeps pinned and recent limits without adding headings', () => {
