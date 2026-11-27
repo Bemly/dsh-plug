@@ -20,7 +20,7 @@ import { lookupImagePath, rememberImagePath } from '../features/image-path-cache
 import { prepareImagesForDispatch } from '../middleware/sticker-capture.js';
 /** 合并转发（聊天记录）正文图片的下载总预算：超过就先用手上已有的图，别把入站无限拖住 */
 const MERGE_FORWARD_DOWNLOAD_MS = 120_000;
-import { pushAggImage, buildAggregateBlocks } from '../features/image-aggregate.js';
+import { pushAggImage, buildAggregateBlocks, pendingAggImages } from '../features/image-aggregate.js';
 import { noteSegmentScore } from '../features/segment-score.js';
 import { extractFaceImageUrls, slimQuoteText } from './quote-text.js';
 import { lookupMsgContent, rememberMsgContent } from './msg-content-cache.js';
@@ -290,6 +290,43 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
             }
             for (const _it of _items)
                 pushAggImage(_aggKey, _it.p, _it.by, _aggMax);
+            // ★ 2026-11-27 主人定：正文的「如图序号N」和合成图角标**必须同源**。
+            //   角标号 = pack() 的 placements[i].idx + 1 = 该图在 pendingAggImages 里的位置 + 1。
+            //   这里在入缓冲完成后建一张 URL→位置表，正文替换时直接查它 —— 不再另用
+            //   allUrls.indexOf 算一遍（那只是"碰巧"对得上，图缺失/乱序就会错位）。
+            try {
+                const _pending = pendingAggImages(_aggKey);
+                const _map = new Map();
+                // 合并转发正文里的 URL → 落地路径（与上面 _add 的顺序一致）
+                const _rawForMap = String(msg.content ?? '');
+                const _reMap = /(?:类型:\s*图片|图片)[^\n]*?URL:\s*(https?:\/\/[^\s\]\n]+)/g;
+                let _mm;
+                while ((_mm = _reMap.exec(_rawForMap))) {
+                    const _u = _mm[1].trim();
+                    if (!_u || _map.has(_u))
+                        continue;
+                    const _lp = resolveImageLocalPath(_u, _stickerDir);
+                    const _pos = _lp ? _pending.findIndex((x) => x.path === _lp) : -1;
+                    if (_pos >= 0)
+                        _map.set(_u, _pos + 1);   // 1-based，与角标 p.idx+1 完全一致
+                }
+                // 本条消息 attachments 的 URL 同样入表
+                for (const _a of (Array.isArray(msg.attachments) ? msg.attachments : [])) {
+                    const _u = String(_a?.url ?? '').trim();
+                    if (!_u || _map.has(_u))
+                        continue;
+                    const _lp = resolveImageLocalPath(_u, _stickerDir);
+                    const _pos = _lp ? _pending.findIndex((x) => x.path === _lp) : -1;
+                    if (_pos >= 0)
+                        _map.set(_u, _pos + 1);
+                }
+                if (_map.size > 0) {
+                    state.aggUrlIndex = Object.assign(state.aggUrlIndex || {}, Object.fromEntries(_map));
+                }
+            }
+            catch (eMap) {
+                logger.debug(`[图片聚合] 序号表建立失败(忽略): ${eMap instanceof Error ? eMap.message : String(eMap)}`);
+            }
             if (_items.length > 0)
                 logger.info(`[图片聚合] 入缓冲 ${_items.length} 张: key=${_aggKey}`);
         }
@@ -1258,13 +1295,15 @@ function buildUserContent(msg, state, logger) {
                     //   不要用 [^\s]+ —— 那会把 URL 后面的中文分号/尺寸等元信息一起吃掉。
                     // ★ CodeRabbit：替换**所有**提取到的 URL 本体（不要求前面有 `URL:` 标签），
                     //   并按长度降序替换 —— 否则短 URL 会命中长 URL 的前缀，把长链接切碎。
-                    // ★ 2026-11-27 主人定：正文里每张图写成「如图序号N」，与聚合图上的角标一一对应。
-                    //   按**正文出现顺序**编号（extractUrls 保序去重，allUrls[i] 即第 i+1 张）；
+                    // ★ 2026-11-27 主人定：正文里每张图写成「如图序号N」，N 直接取
+                    //   **算法角标同一张序号表**（入缓冲时建立的 state.aggUrlIndex，
+                    //   值 = pendingAggImages 位置 + 1 = pack 的 placements[i].idx + 1）。
+                    //   不再另用 allUrls.indexOf 算一遍 —— 那样只是"碰巧"对得上。
                     //   替换仍按 URL 长度降序，避免短 URL 命中长 URL 的前缀把它切碎。
                     let slim = text;
                     const _ordered = [...allUrls].sort((x, y) => y.length - x.length);
                     for (const u of _ordered) {
-                        const _n = allUrls.indexOf(u) + 1;
+                        const _n = (state.aggUrlIndex && Number(state.aggUrlIndex[u])) || (allUrls.indexOf(u) + 1);
                         slim = slim.split(u).join('[如图序号' + _n + ']');
                     }
                     kept = slim;
