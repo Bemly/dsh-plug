@@ -1,6 +1,6 @@
 {
   "name": "dsh-botqq",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "description": "QQ Bot IM channel plugin for deepseek-harness (dsh)",
   "type": "module",
   "main": "./entry.js",

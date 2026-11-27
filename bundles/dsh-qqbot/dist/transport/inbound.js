@@ -18,6 +18,8 @@ import { createValueScorer, appendScoreLog, OTHER_MENTION_PENALTY } from '../fea
 import { getStickerStore, computeDHash } from '../features/sticker-store.js';
 import { lookupImagePath, rememberImagePath } from '../features/image-path-cache.js';
 import { prepareImagesForDispatch } from '../middleware/sticker-capture.js';
+/** 合并转发（聊天记录）正文图片的下载总预算：超过就先用手上已有的图，别把入站无限拖住 */
+const MERGE_FORWARD_DOWNLOAD_MS = 120_000;
 import { pushAggImage, buildAggregateBlocks } from '../features/image-aggregate.js';
 import { noteSegmentScore } from '../features/segment-score.js';
 import { extractFaceImageUrls, slimQuoteText } from './quote-text.js';
@@ -195,6 +197,60 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                 _seen.add(p);
                 _items.push({ p, by });
             };
+            // ★★ 2026-11-27 主人要求：**合并转发（聊天记录）里的图也要进聚合**。
+            //   QQ 把合并转发展开成**纯文本**（`[附件N] 类型:图片 … 本地路径:/x` 或 `URL:https://…`），
+            //   `msg.attachments` 是空的 ⇒ 原来一张都进不了缓冲。实测一条 42 张图的合并转发，
+            //   整条消息只有 1 个 text 块、0 个 image block，模型完全看不到图。
+            //   这里从正文把图捞出来：已落地的直接用；只有 URL 的交给下载器
+            //   （与普通附件同一套：并发度递增 1→2→4→8，失败有冷却）。
+            //   ⚠️ 下载可能较慢（几十张图），加 120s 总超时：超时先用手上已有的，不无限阻塞入站。
+            const _rawText = String(msg.content ?? '');
+            if (_rawText.indexOf('类型:图片') >= 0) {
+                try {
+                    // ① 正文里已经是本地路径的
+                    const _reLocal = /本地路径:\s*([^\s\]\n]+)/g;
+                    let _lm;
+                    while ((_lm = _reLocal.exec(_rawText))) {
+                        const _lp = _lm[1].trim();
+                        if (_lp)
+                            _add(_lp, _aggSender);
+                    }
+                    // ② 只有 URL 的 → 交给并发下载器
+                    const _reUrl = /(?:类型:\s*图片|图片)[^\n]*?URL:\s*(https?:\/\/[^\s\]\n]+)/g;
+                    const _urls = [];
+                    let _um;
+                    while ((_um = _reUrl.exec(_rawText))) {
+                        const _u = _um[1].trim();
+                        if (_u && !_urls.includes(_u))
+                            _urls.push(_u);
+                    }
+                    if (_urls.length > 0) {
+                        const _need = _urls.filter((u) => !lookupImagePath(u, logger));
+                        if (_need.length > 0) {
+                            logger.info(`[图片聚合] 合并转发正文发现 ${_urls.length} 张图，待下载 ${_need.length} 张`);
+                            const _fake = _need.map((u, i) => ({ url: u, content_type: 'image/jpeg', filename: `ff-img-${i}.jpg` }));
+                            let _timer;
+                            const _got = await Promise.race([
+                                prepareImagesForDispatch(_fake, msg, config, logger),
+                                new Promise((resolve) => { _timer = setTimeout(() => resolve([]), MERGE_FORWARD_DOWNLOAD_MS); }),
+                            ]);
+                            if (_timer)
+                                clearTimeout(_timer);
+                            let _ok = 0;
+                            for (const _p of (_got || [])) {
+                                if (_p) {
+                                    _add(_p, _aggSender);
+                                    _ok += 1;
+                                }
+                            }
+                            logger.info(`[图片聚合] 合并转发下载完成: ${_ok}/${_need.length}`);
+                        }
+                    }
+                }
+                catch (e) {
+                    logger.warn(`[图片聚合] 合并转发图片解析失败(忽略): ${e instanceof Error ? e.message : String(e)}`);
+                }
+            }
             // ★★ 先补录"聚合窗口里更早那些消息"的图（2026-11-06 实测踩到的坑）：
             //   主人连发 4 张图，QQ/中间件把它们并成**一条**入站 —— `msg.attachments` 只带最后那张，
             //   前 3 张只剩 `[图片: xxx]` 躺在 history 里 ⇒ 不补录就永远只拼到 1 张。

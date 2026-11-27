@@ -31,7 +31,10 @@ async function loadJimp() {
 /** 长边硬上限（px）：只缩不放 */
 export const MAX_EDGE = 2560;
 /** 网格候选列数（1=竖排，2~4=网格/横排） */
-const COLS_CANDIDATES = [1, 2, 3, 4];
+// ★ 2026-11-27：列数候选扩到 8。合并转发一次能带几十张图，只有 4 列会被排成
+//   4×11 的长条、每格压到 160px 级别 ⇒ 等于看不清。放宽后 40 张量级会落到 6~8 列，
+//   每格仍有 ~300px，长边严格不超 MAX_EDGE。
+const COLS_CANDIDATES = [1, 2, 3, 4, 5, 6, 7, 8];
 /** 打标文本已彻底移除（2026-11-26 v2.2）：路径由 DSH 宿主自带，不再重复写。 */
 /** 会话 → 待注入的图（保留缓冲，仅用于去重，不再限制张数） */
 const buffers = new Map();
@@ -213,6 +216,17 @@ function planLayout(loaded) {
     for (const x of loaded) {
         maxW = Math.max(maxW, x.w);
         maxH = Math.max(maxH, x.h);
+    }
+    // ★ 2026-11-27：格子尺寸改取 **75 分位** 而不是最大值。
+    //   合并转发一次几十张，常混进 5528×8000 这种极端图；拿 max 当格子会让
+    //   小图（852×810）只占一小块、周围大片空白，整体分辨率白白浪费。
+    //   样本少（2~4 张）时 75 分位≈最大值，行为与原来一致。
+    if (loaded.length >= 6) {
+        const ws = loaded.map((x) => x.w).sort((a, b) => a - b);
+        const hs = loaded.map((x) => x.h).sort((a, b) => a - b);
+        const q75 = (arr) => arr[Math.min(arr.length - 1, Math.floor(arr.length * 0.75))];
+        maxW = q75(ws);
+        maxH = q75(hs);
     }
     let aspectSum = 0;
     for (const x of loaded)
