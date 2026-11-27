@@ -1,6 +1,6 @@
 {
   "name": "magpie-image-slim",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Magpie gateway middleware: replace historical inline images with the standard image-slim placeholder so the prompt cache keeps hitting. Matching that exact format matters: an agy-cli bridge only recognises it as an image slot, and any other marker makes it rebuild the session and recompute the whole prompt.",
   "license": "MIT",
   "type": "module",

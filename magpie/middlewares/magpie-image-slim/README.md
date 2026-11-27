@@ -55,7 +55,9 @@ That is the entire reason this package emits the long, ugly, standard form.
 ## What it does
 
 For each historical user message that qualifies, every `input_image` block is replaced
-by **one** `input_text` block:
+by **one** `input_text` block. Historical tool results (`function_call_output` and
+`custom_tool_call_output`) are handled the same way, so `read_image` results do not
+keep re-sending full images in later turns:
 
 ```
 [0.34 MB image left out here: ）]
@@ -134,7 +136,7 @@ Then reference `image-slim.middleware.js` from your Magpie middleware list, or l
 Each request that changed something logs one line:
 
 ```
-image-slim v0.1.6: [dsh] replaced 1 image(s), split 0 text block(s)
+image-slim v0.1.7: [dsh] replaced 1 image(s), split 0 text block(s)
 ```
 
 `split 0` is expected — splitting is off by default and would break the block count.

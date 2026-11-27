@@ -1,7 +1,8 @@
 /**
- * magpie-image-slim v0.1.6（2026-11-26 重写）
+ * magpie-image-slim v0.1.7（2026-11-27）
  *
  * 职责：出站时把**历史轮次**的 ImageBlock 换成极短占位符，避免每轮重算视觉 token。
+ * 用户图片与工具结果图片（function_call_output / custom_tool_call_output）都处理。
  *
  * v0.1.2 相对 v0.1.1 的变化：
  *   1. 识别两种格式：通用 image-slim 槽位 `[X.XX MB image left out here: …]`，
@@ -64,11 +65,15 @@ export function onRequest(body, ctx) {
 
     for (let index = 0; index < body.input.length; index++) {
         const item = body.input[index];
-        if (item?.role !== 'user' || !Array.isArray(item.content)) continue;
-        const aggregate = isAggregateMessage(item.content);
+        const isUser = item?.role === 'user' && Array.isArray(item.content);
+        const isToolOutput = (item?.type === 'function_call_output' || item?.type === 'custom_tool_call_output') && Array.isArray(item.output);
+        if (!isUser && !isToolOutput) continue;
+        const sourceContent = isUser ? item.content : item.output;
+        const eligible = isToolOutput || isAggregateMessage(sourceContent);
+        const historical = !protectCurrentTurn || index < turnStart;
         const content = [];
-        for (const block of item.content) {
-            if (aggregate && (!protectCurrentTurn || index < turnStart) && options.replaceImages && isInlineImage(block)) {
+        for (const block of sourceContent) {
+            if (historical && eligible && options.replaceImages && isInlineImage(block)) {
                 // 1 块换 1 块，且**必须**是标准 image-slim 格式：
                 // agy-bridge 靠它把「图片」和「占位符」认成同一槽位，才不会重建会话。
                 // 正文不写路径（不参与比较，路径见同消息里 DSH 的 Normalized copy 句柄文本）。
@@ -88,11 +93,12 @@ export function onRequest(body, ctx) {
             }
             content.push(block);
         }
-        item.content = content;
+        if (isUser) item.content = content;
+        else item.output = content;
     }
 
     if (changed && options.log) {
-        console.log(`image-slim v0.1.6: [${ctx.agent || 'unknown'}] replaced ${replaced} image(s), split ${split} text block(s)`);
+        console.log(`image-slim v0.1.7: [${ctx.agent || 'unknown'}] replaced ${replaced} image(s), split ${split} text block(s)`);
     }
     return changed ? body : undefined;
 }

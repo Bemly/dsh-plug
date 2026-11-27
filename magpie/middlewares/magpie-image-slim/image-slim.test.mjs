@@ -155,3 +155,71 @@ test('generic slot recognition works for any author text', () => {
     assert.equal(onRequest(body, ctx), body);
     assert.match(body.input[0].content[1].text, /^\[\d+\.\d+ MB image left out here: [\s\S]*\]$/);
 });
+
+test('slims historical function_call_output images and keeps the tool text', () => {
+    const image = inlineImage();
+    const body = {
+        input: [
+            {
+                type: 'function_call_output',
+                call_id: 'old-call',
+                output: [
+                    { type: 'input_text', text: '<path>/tmp/read-image.jpg</path>' },
+                    image,
+                ],
+            },
+            { role: 'assistant', content: [{ type: 'output_text', text: '已查看' }] },
+        ],
+    };
+    assert.equal(onRequest(body, ctx), body);
+    assert.equal(body.input[0].output[0].text, '<path>/tmp/read-image.jpg</path>');
+    assert.match(body.input[0].output[1].text, /^\[\d+\.\d+ MB image left out here: [\s\S]*\]$/);
+    assert.equal(body.input[0].output.length, 2);
+});
+
+test('keeps current-turn function_call_output image by default', () => {
+    const image = inlineImage();
+    const body = {
+        input: [
+            { type: 'function_call', call_id: 'current-call', name: 'read_image', arguments: '{}' },
+            {
+                type: 'function_call_output',
+                call_id: 'current-call',
+                output: [{ type: 'input_text', text: '<path>/tmp/current.jpg</path>' }, image],
+            },
+        ],
+    };
+    assert.equal(onRequest(body, ctx), undefined);
+    assert.equal(body.input[1].output[1], image);
+});
+
+test('can slim current-turn tool image when keepCurrentTurn is disabled', () => {
+    const body = {
+        input: [
+            { type: 'function_call', call_id: 'current-call', name: 'read_image', arguments: '{}' },
+            {
+                type: 'function_call_output',
+                call_id: 'current-call',
+                output: [{ type: 'input_text', text: '<path>/tmp/current.jpg</path>' }, inlineImage()],
+            },
+        ],
+    };
+    onRequest(body, { ...ctx, options: { log: false, keepCurrentTurn: false } });
+    assert.match(body.input[1].output[1].text, /^\[\d+\.\d+ MB image left out here: [\s\S]*\]$/);
+});
+
+test('slims historical custom_tool_call_output images', () => {
+    const body = {
+        input: [
+            {
+                type: 'custom_tool_call_output',
+                call_id: 'old-custom-call',
+                output: [{ type: 'input_text', text: '<path>/tmp/custom.jpg</path>' }, inlineImage()],
+            },
+            { role: 'assistant', content: [{ type: 'output_text', text: '已查看' }] },
+        ],
+    };
+    assert.equal(onRequest(body, ctx), body);
+    assert.match(body.input[0].output[1].text, /^\[\d+\.\d+ MB image left out here: [\s\S]*\]$/);
+    assert.equal(body.input[0].output.length, 2);
+});
