@@ -2857,11 +2857,15 @@ var QQS_THEME_CSS = [
     var DOCK_CSS = "#qqs-dock-wrap{position:fixed;right:18px;bottom:190px;z-index:9997;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif}#qqs-dock-ball{width:52px;height:52px;border-radius:50%;background:linear-gradient(160deg,#7c6cf0,#5b4fd8);color:#fff;font-size:24px;line-height:52px;text-align:center;cursor:pointer;box-shadow:0 6px 20px rgba(90,70,220,.4);user-select:none;transition:transform .12s,box-shadow .12s;position:relative}#qqs-dock-ball:hover{transform:scale(1.06)}#qqs-dock-badge{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;border-radius:9px;background:#ff4d4f;color:#fff;font-size:11px;font-weight:700;line-height:18px;padding:0 4px;box-sizing:border-box;text-align:center;display:none}#qqs-dock-ball.qqs-alert{background:linear-gradient(160deg,#ff8a3d,#ff4d4f)!important;box-shadow:0 6px 20px rgba(255,77,79,.5)!important;animation:qqsDockPulse 1.6s ease-in-out infinite}@keyframes qqsDockPulse{0%,100%{box-shadow:0 6px 20px rgba(255,77,79,.45)}50%{box-shadow:0 6px 28px rgba(255,77,79,.9)}}#qqs-dock-panel{position:fixed;right:18px;bottom:190px;z-index:9998;width:min(720px,94vw);max-height:68vh;display:none;flex-direction:column;background:#fff;border:1px solid #d9c6ff;border-radius:16px;box-shadow:0 12px 40px rgba(60,40,140,.25);overflow:hidden;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif}#qqs-dock-panel .dk-h{display:flex;align-items:center;gap:8px;padding:10px 14px;background:linear-gradient(90deg,#7c6cf01f,#7c6cf008);font-size:14px;font-weight:700;color:#4a3a9f;border-bottom:1px solid #efe8ff}#qqs-dock-panel .dk-b{padding:10px 14px;overflow:auto;font-size:13px;color:#1f2329}#qqs-dock-panel .dk-tab{display:flex;gap:4px;border-bottom:1px solid #eee;margin-bottom:10px}#qqs-dock-panel .dk-tab button{font:inherit;font-size:13px;padding:6px 14px;border:none;background:none;cursor:pointer;color:#666;border-bottom:2px solid transparent}#qqs-dock-panel .dk-tab button.on{color:#4a3a9f;font-weight:700;border-bottom-color:#7c6cf0}#qqs-dock-panel select.qqs-sel,#qqs-dock-panel input.qqs-txt,#qqs-dock-panel textarea.qqs-txt{font:inherit;color:#1f2329;background:#fff;border:1px solid #d0d5dd;border-radius:8px;padding:5px 8px;outline:none}#qqs-dock-panel .dk-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}#qqs-dock-panel .dk-btn{font:inherit;font-size:13px;padding:5px 12px;border-radius:8px;cursor:pointer;border:1px solid #d9c6ff;background:#f1ecff;color:#4a3a9f}#qqs-dock-panel .dk-btn.ok{background:#e6f7ec;color:#187a3d;border-color:#b8e6c8}#qqs-dock-panel .dk-btn.no{background:#fdeeee;color:#c23131;border-color:#f3c4c4}#qqs-dock-panel .dk-btn:disabled{opacity:.5;cursor:default}#qqs-dock-panel .dk-msg{color:#888;font-size:12px;padding:2px 0}#qqs-dock-panel .dk-list{max-height:34vh;overflow:auto;border:1px solid #f0ecff;border-radius:10px;padding:4px}#qqs-dock-panel .dk-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid #f5f2ff;flex-wrap:wrap;font-size:13px}#qqs-dock-panel .dk-item:last-child{border-bottom:none}#qqs-dock-panel .dk-empty{color:#aaa;text-align:center;padding:18px 0;font-size:12px}"
     // ── 💬 聊天视图样式(dock 追加段, 2026-09-07): QQ 风格气泡, 群友左(bot)右 ──
     var DOCK_CSS2 = "#qqs-dock-panel .dk-chat-head{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 6px}#qqs-dock-panel .dk-chat-box{overflow-y:auto;overscroll-behavior:contain;background:#f5f6f8;border:1px solid #e6e8ec;border-radius:10px;padding:10px 12px;box-sizing:border-box;height:min(36vh,300px);min-height:140px;scroll-behavior:auto}#qqs-dock-panel .dk-chat-box::-webkit-scrollbar{width:6px}#qqs-dock-panel .dk-chat-box::-webkit-scrollbar-thumb{background:#d3d7dd;border-radius:3px}#qqs-dock-panel .dk-crow{display:flex;gap:8px;align-items:flex-start;margin:0 0 12px}#qqs-dock-panel .dk-crow.out{flex-direction:row-reverse}#qqs-dock-panel .dk-ava{width:32px;height:32px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#fff;overflow:hidden;user-select:none;background:linear-gradient(150deg,#8fb3e8,#5f8fd9)}#qqs-dock-panel .dk-crow.out .dk-ava{background:linear-gradient(150deg,#5ec7f2,#3b8fe0)}#qqs-dock-panel .dk-cmain{display:flex;flex-direction:column;max-width:calc(100% - 40px);min-width:0}#qqs-dock-panel .dk-crow.in .dk-cmain{align-items:flex-start}#qqs-dock-panel .dk-crow.out .dk-cmain{align-items:flex-end}#qqs-dock-panel .dk-cmeta{font-size:11px;color:#9aa0a8;margin:0 6px 2px;max-width:100%;display:flex;align-items:center;gap:5px;flex-wrap:wrap}#qqs-dock-panel .dk-crow.out .dk-cmeta{flex-direction:row-reverse}#qqs-dock-panel .dk-cbubble{padding:7px 11px;font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;box-shadow:0 1px 2px rgba(20,30,60,.06);max-width:100%}#qqs-dock-panel .dk-cbubble a.dk-link{color:#1a66d6;text-decoration:underline;word-break:break-all;cursor:pointer}#qqs-dock-panel .dk-crow.out .dk-cbubble a.dk-link{color:#eaf3ff}#qqs-dock-panel .dk-crow.in .dk-cbubble{background:#fff;border:1px solid #e3e6ea;color:#1f2329;border-radius:3px 10px 10px 10px}#qqs-dock-panel .dk-crow.out .dk-cbubble{background:linear-gradient(180deg,#69a6ff,#3d7df5);color:#fff;border-radius:10px 3px 10px 10px}#qqs-dock-panel .dk-img{display:block;max-width:min(230px,52vw);max-height:200px;border-radius:6px;margin:0 0 3px;object-fit:cover;cursor:zoom-in}#qqs-dock-panel .dk-audio{display:block;max-width:min(260px,60vw);width:100%;height:34px;margin:0 0 2px}#qqs-dock-panel .dk-file{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:6px 12px;border-radius:8px;background:#f0f6ff;border:1px solid #cfe0fa;color:#2b6bd8;font-size:13px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#qqs-dock-panel .dk-file:hover{background:#e2edff}#qqs-dock-panel .dk-video{display:block;max-width:min(260px,60vw);max-height:180px;border-radius:6px;margin:0 0 2px}#qqs-dock-panel .dk-ctag{display:inline-block;font-size:10px;color:#5b8ff0;background:#eaf2ff;border:1px solid #d4e3fd;border-radius:8px;padding:0 6px}#qqs-dock-panel .dk-chat-top{text-align:center;color:#b0b4bb;font-size:11px;padding:2px 0 6px;user-select:none}#qqs-dock-panel .dk-chat-bottom{text-align:center;color:#c3c7cd;font-size:11px;padding:6px 0 0}#qqs-dock-panel .dk-composer{margin-top:8px;border:1px solid #e3e6ea;border-radius:10px;background:#fff;overflow:visible}#qqs-dock-panel .dk-composer textarea{width:100%;box-sizing:border-box;border:none;outline:none;resize:none;font:inherit;font-size:13px;color:#1f2329;background:transparent;padding:8px 10px 4px;line-height:1.5;max-height:120px}#qqs-dock-panel .dk-cbar{display:flex;align-items:center;gap:4px;padding:4px 8px 6px;flex-wrap:wrap}#qqs-dock-panel .dk-cbar .dk-btn{padding:3px 10px;font-size:12px;border-radius:7px}#qqs-dock-panel .dk-cbar .dk-send{background:linear-gradient(180deg,#69a6ff,#3d7df5);color:#fff;border:none;border-radius:8px;padding:5px 18px;font-size:13px;font-weight:600;cursor:pointer}#qqs-dock-panel .dk-cbar .dk-send:disabled{opacity:.5;cursor:default}#qqs-lightbox{position:fixed;inset:0;z-index:2147483000;background:rgba(8,10,18,.82);display:flex;align-items:center;justify-content:center;cursor:zoom-out}#qqs-lightbox img{max-width:92vw;max-height:92vh;border-radius:8px;box-shadow:0 10px 60px rgba(0,0,0,.6)}#qqs-dock-panel .dk-composer{position:relative}#qqs-dock-panel .dk-at-pop{position:absolute;left:6px;bottom:calc(100% - 4px);z-index:30;min-width:200px;max-width:90%;max-height:190px;overflow-y:auto;background:#fff;border:1px solid #e0e4ea;border-radius:10px;box-shadow:0 8px 24px rgba(30,40,80,.16);padding:4px;display:none}#qqs-dock-panel .dk-at-item{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:7px;cursor:pointer;font-size:12px;color:#1f2329;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#qqs-dock-panel .dk-at-item.on,#qqs-dock-panel .dk-at-item:hover{background:#eef3ff;color:#2b5fd0}#qqs-dock-panel .dk-at-empty{color:#aaa;font-size:12px;padding:6px 9px}#qqs-lightbox .lb-x{position:fixed;right:16px;top:10px;color:#fff;font-size:30px;cursor:pointer;line-height:1;padding:6px}#qqs-dock-panel.dk-full{left:0!important;top:0!important;right:0!important;bottom:0!important;width:100vw!important;max-width:100vw!important;height:100vh!important;max-height:100vh!important;border-radius:0;z-index:2147482000;display:flex;flex-direction:column}#qqs-dock-panel.dk-full .dk-h,#qqs-dock-panel.dk-full .dk-detect{flex:none}#qqs-dock-panel.dk-full .dk-b{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;padding:8px 14px 6px}#qqs-dock-panel.dk-full .dk-chat-wrap{display:flex;flex-direction:column;flex:1;min-height:0}#qqs-dock-panel.dk-full .dk-chat-head{flex:none}#qqs-dock-panel.dk-full .dk-chat-box{flex:1;height:auto!important;min-height:0!important;max-height:none!important;overflow-y:auto;overscroll-behavior:contain}#qqs-dock-panel.dk-full .dk-composer{flex:none;margin-top:6px}#qqs-dock-panel .dk-tab{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none}#qqs-dock-panel .dk-tab::-webkit-scrollbar{display:none}#qqs-dock-panel .dk-tab button{white-space:nowrap;flex:0 0 auto}@media (max-width:560px){#qqs-dock-panel:not(.dk-full){left:8px!important;right:8px!important;width:auto!important;max-width:calc(100vw - 16px)!important;bottom:96px!important}#qqs-dock-panel .dk-h{font-size:13px;padding:8px 10px;gap:6px}#qqs-dock-panel .dk-b{padding:8px 10px;font-size:13px}#qqs-dock-panel .dk-tab button{font-size:12px;padding:7px 10px}#qqs-dock-panel .dk-btn{font-size:12px;padding:6px 10px}#qqs-dock-panel .dk-row{gap:6px;margin:5px 0}#qqs-dock-panel select.qqs-sel,#qqs-dock-panel input.qqs-txt,#qqs-dock-panel textarea.qqs-txt{padding:7px 9px;font-size:16px}#qqs-dock-panel .dk-list{max-height:46vh}#qqs-dock-panel .dk-item{padding:8px 6px;gap:6px}}@media (max-width:560px){#qqs-dock-panel.dk-full{border-radius:0}#qqs-dock-panel.dk-full .dk-b{padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}#qqs-dock-panel.dk-full .dk-tab{position:relative;background:#fff;z-index:2}}@media (max-width:560px){#qqs-dock-ball{width:46px;height:46px;line-height:46px;font-size:21px}}#qqs-dock-panel .dk-chat-wrap{position:relative}#qqs-dock-panel .dk-jump-latest{display:none;position:absolute;right:12px;bottom:76px;z-index:6;align-items:center;gap:4px;padding:5px 13px;font-size:12px;font-weight:600;color:#fff;cursor:pointer;border:none;border-radius:15px;background:linear-gradient(180deg,#69a6ff,#3d7df5);box-shadow:0 3px 12px rgba(30,60,140,.32);transition:transform .12s,box-shadow .12s}#qqs-dock-panel .dk-jump-latest.on{display:inline-flex}#qqs-dock-panel .dk-jump-latest:hover{background:linear-gradient(180deg,#5c9bfa,#2f6fe6);box-shadow:0 4px 16px rgba(30,60,140,.4)}#qqs-dock-panel .dk-jump-latest:active{transform:scale(.95)}"
+    /** ★ 2026-11-27：群管理台内嵌进「QQ」页签时用的覆盖样式（悬浮期的定位全部作废） */
+    var DOCK_EMBED_CSS = "#qqs-dock-panel.dk-embed{position:static!important;left:auto!important;top:auto!important;right:auto!important;bottom:auto!important;width:100%!important;max-width:100%!important;height:100%!important;max-height:none!important;border-radius:12px;box-sizing:border-box}#qqs-dock-panel.dk-embed .dk-b{flex:1;min-height:0;overflow:auto}#qqs-dock-panel.dk-embed .dk-chat-box{height:min(46vh,420px)}#qqs-dock-wrap[data-embed=\"1\"]{display:none!important}"
+    function ensureDockCssEmbed() { try { if (!document.getElementById('qqs-dock-css-embed')) { var st = document.createElement('style'); st.id = 'qqs-dock-css-embed'; st.textContent = DOCK_EMBED_CSS; document.head.appendChild(st) } } catch (e) {} }
     function ensureDockCss2() { try { if (!document.getElementById('qqs-dock-css2')) { var st = document.createElement('style'); st.id = 'qqs-dock-css2'; st.textContent = DOCK_CSS2; document.head.appendChild(st) } } catch (e) {} };
     function ensureDockCss() { try { if (!document.getElementById('qqs-dock-css')) { var st = document.createElement('style'); st.id = 'qqs-dock-css'; st.textContent = DOCK_CSS; document.head.appendChild(st) } } catch (e) {} }
     function startQqDock(sessionsSvc) {
       try { ensureDockCss() } catch (e) { return }
       try { ensureDockCss2() } catch (e) {}
+      try { ensureDockCssEmbed() } catch (e) {}
       // 幂等(2026-09-07): 宿主重启/client 重连若触发重复初始化, 先移除旧 dock 再建, 保证始终只有一个悬浮球
       var oldWrap = document.getElementById('qqs-dock-wrap')
       if (oldWrap) { try { oldWrap.remove() } catch (e) { if (oldWrap.parentNode) oldWrap.parentNode.removeChild(oldWrap) } }
@@ -2888,6 +2892,8 @@ var QQS_THEME_CSS = [
       var _dockCheckedAt = 0
       var _dockPending = 0
       function refreshDockVisibility() {
+        // ★ 2026-11-27：内嵌进「QQ」页签期间，悬浮球永不显示（会话切换也不要冒出来）
+        if (embedHost) { try { wrap.style.display = 'none' } catch (eE) { } return }
         // ★ v1.11.11（主人改口）：**不再跨会话常显** —— 群管理是强工作区相关的事，
         //   切到编码项目/笔记库就该整块不见；"有审批"只作为 QQ 会话内的强调（橙红+呼吸+数字，见 refreshBadge）。
         var sid = ''
@@ -2915,6 +2921,10 @@ var QQS_THEME_CSS = [
       } catch (eVis) { /* 显隐失败不影响球本身 */ }
       var panel = null
       var open = false
+      // ★ 2026-11-27：内嵌模式宿主节点。「QQ」页签把群管理台直接嵌进页面后，
+      //   这个变量非空 → 所有"悬浮窗"专属逻辑（绝对定位/点外面收回/收成球）全部跳过。
+      //   置空 = 回到原悬浮球行为（兜底通道，出问题也能用）。
+      var embedHost = null
       // ⚠️ 2026-09-27 修复「拖到屏幕外后球永久消失」：拖拽时本来有 clamp(行1749)，
       //   但**读取上次位置时没有** —— 窗口变小/换显示器后，存的坐标会落在可视区外，
       //   球就再也点不到了（用户只能手动清 localStorage 才能找回）。这里读取时同样 clamp。
@@ -2967,6 +2977,8 @@ var QQS_THEME_CSS = [
       var manualPanelPos = null // 手动拖过面板后固定位置(不再自动贴球)
       function layoutPanel() {
         if (!panel || !open) return
+        // 内嵌模式：不参与悬浮定位，位置尺寸全交给页签容器（CSS #qqs-dock-panel.dk-embed）
+        if (embedHost) return
         var vw = window.innerWidth, vh = window.innerHeight
         var pad = 10
         // 手动拖拽固定位置: 保持并 clamp
@@ -3046,17 +3058,76 @@ var QQS_THEME_CSS = [
       function closePanel() {
         open = false
         if (panel) { panel.style.display = 'none'; panel.innerHTML = '' }
+        // 内嵌模式：没有悬浮球可收回；下次切回「QQ」页签时 mountTo 会重新渲染
+        if (embedHost) return
         ball.style.display = 'block'
       }
+      /** 确保 panel 节点存在（悬浮/内嵌两种模式共用） */
+      function ensurePanel() {
+        if (!panel) {
+          panel = document.createElement('div')
+          panel.id = 'qqs-dock-panel'
+        }
+        return panel
+      }
+      /**
+       * ★ 2026-11-27 主人要求：把群管理台嵌进「QQ」页签，不再用悬浮窗。
+       *   由 ExtPanel 的容器 ref 调用；幂等（同一容器重复挂载直接返回）。
+       *   任何异常都不抛出 —— 历史上 client 侧异常会让整块 Web UI 变成 "Failed to load plugins"。
+       */
+      function mountDockEmbedded(container) {
+        try {
+          if (!container) return
+          var p = ensurePanel()
+          if (embedHost === container && p.parentNode === container) return
+          embedHost = container
+          // 从悬浮球容器里搬走（如果之前在 body 上）
+          try { container.appendChild(p) } catch (e1) { return }
+          p.classList.add('dk-embed')
+          p.style.display = 'flex'
+          open = true
+          // 隐藏悬浮球 + 红点（页签里已经能看到了）
+          try { wrap.style.display = 'none'; wrap.setAttribute('data-embed', '1') } catch (e2) { }
+          // 丢缓存，保证进来的永远是最新一页
+          try {
+            state.chatItems = []
+            state.chatOldest = 0
+            state.chatNewest = 0
+            state.chatErr = ''
+          } catch (e3) { }
+          renderPanel()
+        } catch (e) {
+          try { console.warn('[qqs] 群管理台内嵌失败，回退悬浮窗', e) } catch (e4) { }
+          embedHost = null
+          try { wrap.style.display = ''; wrap.removeAttribute('data-embed') } catch (e5) { }
+        }
+      }
+      /** 页签卸载/切走：把节点摘下来但**不销毁**（state 还在，切回来能立刻恢复） */
+      function unmountDockEmbedded() {
+        try {
+          embedHost = null
+          if (panel && panel.parentNode) {
+            try { panel.parentNode.removeChild(panel) } catch (e1) { }
+          }
+          open = false
+          try { wrap.style.display = ''; wrap.removeAttribute('data-embed') } catch (e2) { }
+        } catch (e) { /* ignore */ }
+      }
+      try {
+        window.__qqsDockMount = mountDockEmbedded
+        window.__qqsDockUnmount = unmountDockEmbedded
+      } catch (eW) { /* ignore */ }
       function togglePanel() {
         // 刚拖拽过 → 这次 click 只是"松手"，不要顺手把面板打开
         if (Date.now() - (typeof lastDragEndedAt === 'number' ? lastDragEndedAt : 0) < 350) return
         if (dragState && dragState.moved) return
         if (open) { closePanel(); return }
-        if (!panel) {
-          panel = document.createElement('div')
-          panel.id = 'qqs-dock-panel'
-          document.body.appendChild(panel)
+        // ★ 2026-11-27：panel 可能刚被页签卸载（从 DOM 摘掉但变量还在）——
+        //   只判 `!panel` 会让悬浮球点开后什么也不显示，所以还要校验是否真在文档里。
+        ensurePanel()
+        if (panel.parentNode !== document.body) {
+          try { document.body.appendChild(panel) } catch (eP) { return }
+          panel.classList.remove('dk-embed')
         }
         open = true
         // 2026-10-04 五次修复（主人实测："刷新后打开 dock 还是从 9/21 开始"）：
@@ -3082,10 +3153,10 @@ var QQS_THEME_CSS = [
         setTimeout(layoutPanel, 0)
       }
       ball.addEventListener('click', togglePanel)
-      // Esc 或点击面板外 → 收回成球
-      document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && open) closePanel() })
+      // Esc 或点击面板外 → 收回成球（内嵌模式不适用：面板就在页签里，点了外面也不该消失）
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && open && !embedHost) closePanel() })
       document.addEventListener('mousedown', function (e) {
-        if (!open) return
+        if (!open || embedHost) return
         // 灯箱(#qqs-lightbox)是浮在 dock 外的全屏层: 点它(关闭放大)不能把 dock 也收走
         if (e.target && e.target.closest && e.target.closest('#qqs-lightbox')) return
         if (panel && (panel.contains(e.target) || panel === e.target)) return
@@ -4698,12 +4769,15 @@ var QQS_THEME_CSS = [
           + '<select class="qqs-sel" id="dk-ns" style="max-width:220px">' + (opts || '<option value="">无账号(去账号页添加)</option>') + '</select>'
           + '<span style="flex:1"></span>'
           + '<span class="dk-msg" id="dk-headmsg" style="color:#888;font-size:12px">直连 QQ 官方 · 面板操作 = 主人直发</span>'
-          + '<button class="dk-btn" id="dk-full" title="全屏/还原">⛶</button>'
-          + '<button class="dk-btn" id="dk-close" title="收回成球">➖</button>'
+          // ★ 2026-11-27：内嵌进页签时**不显示**全屏/收回 —— 收回会连悬浮球一起消失，无处可恢复
+          + (embedHost ? '' : '<button class="dk-btn" id="dk-full" title="全屏/还原">⛶</button>'
+            + '<button class="dk-btn" id="dk-close" title="收回成球">➖</button>')
         var fb = h.querySelector('#dk-full')
         if (fb) fb.onclick = function (e) { e.stopPropagation(); var fs = panel.classList.toggle('dk-full'); fb.textContent = fs ? '🗗' : '⛶'; setTimeout(layoutPanel, 0) }
-        h.querySelector('#dk-close').onclick = function () { closePanel(); ball.style.display = 'block' }
-        h.querySelector('#dk-ns').onchange = function (e) {
+        var cb = h.querySelector('#dk-close')
+        if (cb) cb.onclick = function () { closePanel(); try { ball.style.display = 'block' } catch (eC) { } }
+        var nsSel = h.querySelector('#dk-ns')
+        if (nsSel) nsSel.onchange = function (e) {
           state.ns = e.target.value; state.gid = ''; state.sendTo = ''; state.sendName = ''; state.wantPeer = null; state.msg = ''
           refreshAll(); paintHead()
         }
@@ -7340,6 +7414,15 @@ var QQS_THEME_CSS = [
     ]
 
     function ExtPanel() {
+      // 群管理台宿主节点（见下方 ref 与 mountDockEmbedded）
+      var _dh = useState(null), dockHost = _dh[0], setDockHost = _dh[1]
+      useEffect(function () {
+        if (!dockHost) return
+        try { if (typeof window.__qqsDockMount === 'function') window.__qqsDockMount(dockHost) } catch (eM) { }
+        return function () {
+          try { if (typeof window.__qqsDockUnmount === 'function') window.__qqsDockUnmount() } catch (eU) { }
+        }
+      }, [dockHost])
       var _a = useState(null), data = _a[0], setData = _a[1]
       var _b = useState(true), loading = _b[0], setLoading = _b[1]
       var _c = useState(''), err = _c[0], setErr = _c[1]
@@ -7575,8 +7658,19 @@ var QQS_THEME_CSS = [
         h('div', { style: S.head },
           h('div', null,
             h('div', { style: S.title }, 'QQ'),
-            h('div', { style: S.sub }, '把「市场」放第一位：想装扩展先看这里。下面也有怎么写自己的扩展')),
+            h('div', { style: S.sub }, '群管理台 + 扩展市场')),
           h('button', { style: S.btn, onClick: function () { setTick(tick + 1) } }, loading ? '刷新中…' : '刷新')),
+
+        // ★ 2026-11-27 主人要求：群管理台**直接嵌在页签里**，不再挂悬浮窗。
+        //   容器交给 startQqDock 暴露的 window.__qqsDockMount；失败会自动回退悬浮窗（见该函数）。
+        h('div', {
+          ref: function (el) {
+            // 同值不发 setState：Preact 的 ref 每次渲染都会回调，避免无谓重渲染/循环
+            var next = el || null
+            setDockHost(function (prev) { return prev === next ? prev : next })
+          },
+          style: { margin: '0 0 14px', minHeight: 520, display: 'flex', flexDirection: 'column' },
+        }),
 
 
         // ★ 2026-11-16 主人要求：加一段「怎么写扩展」的提醒（可折叠，默认收起）
