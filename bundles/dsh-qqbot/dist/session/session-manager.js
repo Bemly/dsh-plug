@@ -19,7 +19,7 @@ import { describeExtCommandReload, describeExtInboundReload, describeExtOutbound
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { FIXED_CHANNEL_CONTEXT, REFERENCE_CONTEXT } from '../config.js';
 import { LATEX_HINT_BLOCK } from '../config.js';
-import { describeSessionKind, buildSessionKindHint } from '../features/session-kind.js';
+import { describeSessionKind, buildSessionKindHint, needsSessionKindHint } from '../features/session-kind.js';
 import { takePendingMemo, recallLines } from '../features/people-memo.js';
 import { isContextlessActive, contextlessSmartOf, contextlessMemoMaxOf, contextlessWindowOf, getContextless, listContextless, describeStorePath } from '../features/contextless-store.js';
 import { contextlessSegmentOf, contextlessSegmentKeepOf, contextlessSegmentScoreMinOf } from '../features/contextless-store.js';
@@ -2263,28 +2263,17 @@ export class SessionManager {
                     const KIND = 'qqbot:session-kind';
                     const info = describeSessionKind(dataRootOf(this.config), String(this.config.appId ?? ''), _kindParts.scope, _kindParts.peerId, recMemo ? recMemo.peerName : undefined);
                     const _kindInBatch = dec.messages.some((m) => m?.source?.kind === KIND);
-                    // ★ 名字是**后来**才从 API 拿到的，首次注入往往是"群名未取到"。
-                    //   所以判重不只看"有没有注入过"，还要看**有没有注入过带名字的版本**：
-                    //   现在拿到名字了就再补一条（之后不再重复）。
-                    // ★ CodeRabbit：判重只看**最新一条**会话类型提示。
-                    //   名字变来变去（甲 → 乙 → 甲）时，扫任意一条命中会让"最新的乙"继续留在上下文里，
-                    //   模型看到的群名就是过期的。所以扫完全部，留下最后一条的文本再比。
-                    let _lastHintText = '';
-                    if (agent?.session?.surface?.nodes && agent.session.eventAt) {
+                    let _kindInSurface = false;
+                    if (!_kindInBatch && agent?.session?.surface?.nodes && agent.session.eventAt) {
                         for (const seq of agent.session.surface.nodes) {
                             const ev = agent.session.eventAt(seq);
-                            if (ev?.type !== 'user/message' || ev.data?.source?.kind !== KIND)
-                                continue;
-                            const c = ev.data?.content;
-                            _lastHintText = typeof c === 'string'
-                                ? c
-                                : Array.isArray(c)
-                                    ? c.map((b) => String(b?.text ?? '')).join(String.fromCharCode(10))
-                                    : '';
+                            if (ev?.type === 'user/message' && ev.data?.source?.kind === KIND) {
+                                _kindInSurface = true;
+                                break;
+                            }
                         }
                     }
-                    const need = info.name ? !_lastHintText.includes(info.name) : _lastHintText === '';
-                    if (!_kindInBatch && need) {
+                    if (needsSessionKindHint(_kindInBatch, _kindInSurface)) {
                         extraAll.push({
                             role: 'user',
                             id: randomUUID(),

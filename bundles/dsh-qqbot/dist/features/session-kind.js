@@ -193,20 +193,17 @@ function tail(id) {
 /**
  * 拼注入正文（调用方包进 `<system-reminder>`，放进**独立**的 user/message 事件）。
  *
- * 只陈述事实 + 一句用途提醒，不写"请按群规矩回复"这种指令 ——
- * 宿主实测：框架文本容易被模型当成模板复述出来。
+ * 只陈述当前渠道、名字与 openid 尾号，不附加行为指令。
  */
 export function buildSessionKindHint(info) {
-    const NL = String.fromCharCode(10);
     if (info.kind === 'group') {
         const namePart = info.name ? `群名「${info.name}」` : '群名未取到';
-        return `[当前会话] 渠道=QQ 群聊 · ${namePart} · 群 openid 尾号 ${tail(info.peerId)}`
-            + NL
-            + '这是群聊：发言会被群里所有人看到，别按私聊口吻假设。';
+        return `[当前会话] 渠道=QQ 群聊 · ${namePart} · 群 openid 尾号 ${tail(info.peerId)}`;
     }
     const namePart = info.name ? `对方「${info.name}」` : '对方昵称未取到';
-    return `[当前会话] 渠道=QQ 私聊 · ${namePart} · 用户 openid 尾号 ${tail(info.peerId)}`
-        + NL
-        + '这是私聊：只有对方看得到，不等于群里有人围观。';
+    return `[当前会话] 渠道=QQ 私聊 · ${namePart} · 用户 openid 尾号 ${tail(info.peerId)}`;
+}
+export function needsSessionKindHint(inBatch, inSurface) {
+    return !inBatch && !inSurface;
 }
 //# sourceMappingURL=session-kind.js.map

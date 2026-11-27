@@ -40,8 +40,8 @@ export declare function rememberUserName(botId: string, openid: string, name: st
 /** 手动写入群名（别处已经拿到时用，例如群名接口的调用方） */
 export declare function rememberGroupName(botId: string, gid: string, name: string): void;
 /**
- * 后台拉群名并缓存（**不阻塞**当前回合）。没有缓存时，这一轮注入只能写"群名未取到"，
- * 下一轮就有了。失败也写空串（短 TTL），免得对着没权限的群每轮打接口。
+ * 后台拉群名并缓存（**不阻塞**当前回合）。没有缓存时，这一轮注入只能写"群名未取到"。
+ * 失败也写空串（短 TTL），免得对着没权限的群每轮打接口。
  */
 export declare function prefetchGroupName(client: SessionKindClient | undefined, botId: string, gid: string): void;
 /** 后台拉用户名并缓存；已有未过期缓存时跳过（省一次接口调用） */
@@ -66,8 +66,8 @@ export declare function describeSessionKind(dataRoot: string, botId: string, sco
 /**
  * 拼注入正文（调用方包进 `<system-reminder>`，放进**独立**的 user/message 事件）。
  *
- * 只陈述事实 + 一句用途提醒，不写"请按群规矩回复"这种指令 ——
- * 宿主实测：框架文本容易被模型当成模板复述出来。
+ * 只陈述当前渠道、名字与 openid 尾号，不附加行为指令。
  */
 export declare function buildSessionKindHint(info: SessionKindInfo): string;
+export declare function needsSessionKindHint(inBatch: boolean, inSurface: boolean): boolean;
 //# sourceMappingURL=session-kind.d.ts.map
