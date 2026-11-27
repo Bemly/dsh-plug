@@ -113,3 +113,10 @@ test('enforces attempt timeout even when the downloader ignores abort', async ()
     assert.equal(result, undefined);
     assert.ok(Date.now() - started < 1000);
 });
+
+test('does not automatically prune sticker candidates or trash', () => {
+    const capture = readFileSync(new URL('../dist/middleware/sticker-capture.js', import.meta.url), 'utf8');
+    const bootstrap = readFileSync(new URL('../dist/gateway/bootstrap.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(capture, /cleanupCandidates|cleanupTrash|purgeTrashed/);
+    assert.doesNotMatch(bootstrap, /cleanupTrash|purgeTrashed/);
+});

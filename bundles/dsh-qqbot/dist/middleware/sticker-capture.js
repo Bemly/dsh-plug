@@ -12,8 +12,6 @@ export const IMAGE_DOWNLOAD_ATTEMPTS = Object.freeze([
     Object.freeze({ concurrency: 8, timeoutMs: 600_000 }),
 ]);
 
-const MAX_CANDIDATES = 500;
-const MAX_TRASH = 800;
 // 2026-11-26 v2.1：去掉"每条消息只取 3 张"的截断，多图全部采集由 image-aggregate 合成一张。
 const MAX_PER_MSG = 64;
 const FAILURE_COOLDOWN_MS = 5 * 60_000;
@@ -143,18 +141,6 @@ async function captureOne(url, contentType, msg, config, logger) {
             rememberImagePath(url, localPath);
         if (resolved.status === 'new') {
             logger.debug(`[sticker] captured #${resolved.id} → ${localPath ?? '(path?)'}`);
-            try {
-                store.cleanupCandidates(MAX_CANDIDATES);
-            }
-            catch { /* ignore */ }
-            try {
-                store.cleanupTrash(MAX_TRASH);
-            }
-            catch { /* ignore */ }
-            try {
-                store.purgeTrashed();
-            }
-            catch { /* ignore */ }
             if (localPath && config.sticker.autoTagEnabled !== false) {
                 void (async () => {
                     try {

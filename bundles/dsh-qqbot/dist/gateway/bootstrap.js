@@ -114,19 +114,11 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
     //    初始化，否则 list_stickers(无参)会以 process.cwd 建错目录(线上踩坑:C盘幽灵库)。
     const stickerDataDir = stickerDirOf(config);
     const stickerStore = configureStickerStore(stickerDataDir, logger, myNs);
-    // 启动维护: 清理损坏/空文件 + 物理清除超30天回收站条目
+    // 启动维护: 只清理损坏/空文件；候选区、回收站和过期图均不自动物理删除。
     try {
         const broken = stickerStore.cleanupBroken();
-        // 回收站上限（2026-10-05）：启动时顺手清一次，把历史堆积的旧 trash 收口
-        try {
-            const trashed = stickerStore.cleanupTrash(800);
-            if (trashed > 0)
-                logger.info?.(`[sticker] 回收站超限，已物理清理 ${trashed} 张旧图`);
-        }
-        catch { /* ignore */ }
-        const purged = stickerStore.purgeTrashed();
-        if (broken > 0 || purged > 0)
-            logger.info(`[sticker] 启动维护: 清损坏${broken} 清回收站${purged}`);
+        if (broken > 0)
+            logger.info(`[sticker] 启动维护: 清损坏${broken}`);
     }
     catch { /* ignore */ }
     logger.info(`[sticker] 图库目录: ${stickerDataDir}`);
