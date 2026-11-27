@@ -30,11 +30,129 @@ async function loadJimp() {
 }
 /** 长边硬上限（px）：只缩不放 */
 export const MAX_EDGE = 2560;
-/** 网格候选列数（1=竖排，2~4=网格/横排） */
-// ★ 2026-11-27：列数候选扩到 8。合并转发一次能带几十张图，只有 4 列会被排成
-//   4×11 的长条、每格压到 160px 级别 ⇒ 等于看不清。放宽后 40 张量级会落到 6~8 列，
-//   每格仍有 ~300px，长边严格不超 MAX_EDGE。
-const COLS_CANDIDATES = [1, 2, 3, 4, 5, 6, 7, 8];
+/**
+ * MaxRects 矩形装箱 —— 纹理图集（sprite sheet / UV atlas）的工业标准算法，
+ * Unity SpriteAtlas 与 TexturePacker 默认用它，空间利用率通常 85%~95%。
+ *
+ * 2026-11-27 主人指出「每张图都是同样大小」的问题后替换掉原来的统一网格：
+ * 旧做法把所有图塞进等大的格子，小图周围大片空白、大图被压扁，分辨率全浪费。
+ * 现在按**每张图的真实宽高**动态找位置（BSSF：Best Short Side Fit，
+ * 每次挑"放进去后剩下短边最短"的那个空洞），紧凑贴合、不再留格子。
+ */
+class MaxRectsBin {
+    constructor(width, height) {
+        this.free = [{ x: 0, y: 0, w: width, h: height }];
+        this.used = [];
+    }
+    /** 放入一个 w×h 的矩形；放不下返回 null。策略：Best Short Side Fit */
+    insert(w, h) {
+        let best = null;
+        for (const fr of this.free) {
+            if (fr.w < w || fr.h < h)
+                continue;
+            const dw = fr.w - w;
+            const dh = fr.h - h;
+            const shortSide = Math.min(dw, dh);
+            const longSide = Math.max(dw, dh);
+            if (!best
+                || shortSide < best.shortSide
+                || (shortSide === best.shortSide && longSide < best.longSide)) {
+                best = { x: fr.x, y: fr.y, w, h, shortSide, longSide };
+            }
+        }
+        if (!best)
+            return null;
+        this._place(best);
+        return best;
+    }
+    _place(node) {
+        const next = [];
+        for (const fr of this.free) {
+            // 不相交 → 原样保留
+            if (node.x >= fr.x + fr.w || node.x + node.w <= fr.x
+                || node.y >= fr.y + fr.h || node.y + node.h <= fr.y) {
+                next.push(fr);
+                continue;
+            }
+            // 相交 → 把剩余空间切成四个方向的碎片
+            if (node.x > fr.x)
+                next.push({ x: fr.x, y: fr.y, w: node.x - fr.x, h: fr.h });
+            if (node.x + node.w < fr.x + fr.w)
+                next.push({ x: node.x + node.w, y: fr.y, w: fr.x + fr.w - (node.x + node.w), h: fr.h });
+            if (node.y > fr.y)
+                next.push({ x: fr.x, y: fr.y, w: fr.w, h: node.y - fr.y });
+            if (node.y + node.h < fr.y + fr.h)
+                next.push({ x: fr.x, y: node.y + node.h, w: fr.w, h: fr.y + fr.h - (node.y + node.h) });
+        }
+        this.free = this._prune(next);
+        this.used.push(node);
+    }
+    /** 去掉被其它碎片完全包含的小矩形（MaxRects 必须的合并步骤，否则碎片爆炸） */
+    _prune(rects) {
+        const out = [];
+        for (let i = 0; i < rects.length; i++) {
+            const a = rects[i];
+            if (a.w <= 0 || a.h <= 0)
+                continue;
+            let contained = false;
+            for (let j = 0; j < rects.length; j++) {
+                if (i === j)
+                    continue;
+                const b = rects[j];
+                if (a.x >= b.x && a.y >= b.y
+                    && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h) {
+                    contained = true;
+                    break;
+                }
+            }
+            if (!contained)
+                out.push(a);
+        }
+        return out;
+    }
+}
+/**
+ * 把一组带原始宽高的图打包进不超过 maxEdge 的画布。
+ * 先按面积估一个统一缩放（保证总像素能塞进 0.85 利用率），放不下就逐步缩小重试。
+ * @returns {{width:number,height:number,placements:Array}} 或 null
+ */
+export function packRects(loaded, maxEdge) {
+    if (!Array.isArray(loaded) || loaded.length === 0)
+        return null;
+    const totalArea = loaded.reduce((s, x) => s + x.w * x.h, 0);
+    if (!(totalArea > 0))
+        return null;
+    const targetArea = maxEdge * maxEdge * 0.85;
+    let scale = Math.min(1, Math.sqrt(targetArea / totalArea));
+    for (let attempt = 0; attempt < 14; attempt++) {
+        const items = loaded.map((x) => ({
+            src: x,
+            w: Math.max(1, Math.round(x.w * scale)),
+            h: Math.max(1, Math.round(x.h * scale)),
+        }));
+        // 面积大的先放：MaxRects 的标准预处理，能显著提高利用率
+        const order = items.slice().sort((a, b) => (b.w * b.h) - (a.w * a.h));
+        const bin = new MaxRectsBin(maxEdge, maxEdge);
+        const placements = [];
+        let ok = true;
+        for (const it of order) {
+            const node = bin.insert(it.w, it.h);
+            if (!node) {
+                ok = false;
+                break;
+            }
+            placements.push({ src: it.src, x: node.x, y: node.y, w: it.w, h: it.h });
+        }
+        if (ok) {
+            // 按实际占用收缩画布：不留右下角空白
+            const width = Math.max(...placements.map((p) => p.x + p.w));
+            const height = Math.max(...placements.map((p) => p.y + p.h));
+            return { width, height, placements, scale };
+        }
+        scale *= 0.88;
+    }
+    return null;
+}
 /** 打标文本已彻底移除（2026-11-26 v2.2）：路径由 DSH 宿主自带，不再重复写。 */
 /** 会话 → 待注入的图（保留缓冲，仅用于去重，不再限制张数） */
 const buffers = new Map();
@@ -210,42 +328,9 @@ export function clearAggImages(key) {
  * 自适应排版：在候选列数里挑"网格宽高比最接近图片平均宽高比"的布局。
  * 原则：只缩不放，长边交给 canvas 收敛；布局只决定横/竖/网格的形状。
  */
-function planLayout(loaded) {
-    let best;
-    let maxW = 0, maxH = 0;
-    for (const x of loaded) {
-        maxW = Math.max(maxW, x.w);
-        maxH = Math.max(maxH, x.h);
-    }
-    // ★ 2026-11-27：格子尺寸改取 **75 分位** 而不是最大值。
-    //   合并转发一次几十张，常混进 5528×8000 这种极端图；拿 max 当格子会让
-    //   小图（852×810）只占一小块、周围大片空白，整体分辨率白白浪费。
-    //   样本少（2~4 张）时 75 分位≈最大值，行为与原来一致。
-    if (loaded.length >= 6) {
-        const ws = loaded.map((x) => x.w).sort((a, b) => a - b);
-        const hs = loaded.map((x) => x.h).sort((a, b) => a - b);
-        const q75 = (arr) => arr[Math.min(arr.length - 1, Math.floor(arr.length * 0.75))];
-        maxW = q75(ws);
-        maxH = q75(hs);
-    }
-    let aspectSum = 0;
-    for (const x of loaded)
-        aspectSum += x.w / x.h;
-    const avgAspect = aspectSum / loaded.length;
-    for (const cols of COLS_CANDIDATES) {
-        if (cols > loaded.length)
-            continue;
-        const rows = Math.ceil(loaded.length / cols);
-        const gridAspect = (maxW * cols) / (maxH * rows);
-        const fit = 1 / (1 + Math.abs(Math.log(gridAspect / avgAspect)));
-        const candidate = { cols, rows, cellW: maxW, cellH: maxH, fit };
-        if (!best || candidate.fit > best.fit)
-            best = candidate;
-    }
-    return best ?? { cols: 1, rows: loaded.length, cellW: maxW, cellH: maxH, fit: 0 };
-}
 /**
- * 把若干张图合成**一张**，自适应横竖网格，长边 ≤ MAX_EDGE，只缩不放。
+ * 把若干张图合成**一张**：MaxRects 矩形装箱（纹理图集做法），
+ * 每张按原始宽高比动态落位，不再套等大格子。长边 ≤ MAX_EDGE。
  */
 export async function stitchAggImages(items) {
     if (items.length === 0)
@@ -271,35 +356,24 @@ export async function stitchAggImages(items) {
     }
     if (loaded.length === 0)
         return undefined;
-    const layout = planLayout(loaded);
-    let cellW = layout.cellW, cellH = layout.cellH;
-    const longest = Math.max(cellW * layout.cols, cellH * layout.rows);
-    if (longest > MAX_EDGE) {
-        const scale = MAX_EDGE / longest;
-        cellW = Math.max(1, Math.round(cellW * scale));
-        cellH = Math.max(1, Math.round(cellH * scale));
-    }
-    const W = cellW * layout.cols;
-    const H = cellH * layout.rows;
+    const packed = packRects(loaded, MAX_EDGE);
+    if (!packed)
+        return undefined;
+    const { width: W, height: H, placements } = packed;
     const canvas = new Jimp({ width: W, height: H, color: 0xffffffff });
-    loaded.forEach((x, idx) => {
-        // 只缩不放
-        const scale = Math.min(cellW / x.w, cellH / x.h, 1);
-        const iw = Math.max(1, Math.round(x.w * scale));
-        const ih = Math.max(1, Math.round(x.h * scale));
-        if (iw !== x.w || ih !== x.h)
-            x.img.resize({ w: iw, h: ih });
-        const col = idx % layout.cols;
-        const row = Math.floor(idx / layout.cols);
-        canvas.composite(x.img, col * cellW + Math.floor((cellW - iw) / 2), row * cellH + Math.floor((cellH - ih) / 2));
-    });
+    for (const p of placements) {
+        const img = p.src.img;
+        if (img.bitmap.width !== p.w || img.bitmap.height !== p.h)
+            img.resize({ w: p.w, h: p.h });
+        canvas.composite(img, p.x, p.y);
+    }
     const buf = await canvas.getBuffer('image/jpeg', { quality: 85 });
     return {
         data: new Uint8Array(buf),
         width: W,
         height: H,
         used: loaded.map((u) => u.src),
-        layout: `${layout.cols}×${layout.rows}`,
+        layout: `packed ${placements.length}@${W}x${H} scale=${packed.scale.toFixed(2)}`,
     };
 }
 /**
