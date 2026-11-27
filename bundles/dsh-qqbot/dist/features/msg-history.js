@@ -557,10 +557,11 @@ export function appendMsgHistory(scope, peerId, rec) {
         // ★ 2026-11-14：这里原来是 appendFileSync —— 实测 1465µs/次，而每条群消息都会走一遍。
         //   换成常开 WriteStream 后 4µs（差 366 倍）。
         appendLine(fp, JSON.stringify(row));
-        // ★ 含链接的记录另存一份（一行一个 URL），便于批量下载
+        // ★ 含链接的记录另存一份（一行一个 URL），便于批量下载。
+        // ★ 2026-11-27 修：原来这里连调两次，第二次**没传 id**绕过了 LINKED 幂等缓存，
+        //   同一条消息写出 017/018 两份内容完全相同的文件（实测 md5 一致、相差 5ms）。
+        //   只保留带 id 的这一次；无 id 的调用使缓存失效，是重复的根因。
         writeDownloadLinks(scope, peerId, { id: row.id, t: row.t, n: row.n, x: String(rec.x ?? '') });
-        // ★ 含链接的记录另存一份（一行一个 URL），便于批量下载
-        writeDownloadLinks(scope, peerId, { t: row.t, n: row.n, x: String(rec.x ?? '') });
         // ★ 增量更新当天缓存：否则"写一条 → 下次查询判定 mtime 变了 → 重扫 1000 行"，
         //   群消息密集时等于每次查询都重扫一遍，缓存就白加了。
         // ★ 2026-11-15（CodeRabbit 抓到）：如果还没有缓存，**先载入一次**再增量加 ——

@@ -1258,19 +1258,24 @@ function buildUserContent(msg, state, logger) {
                     //   不要用 [^\s]+ —— 那会把 URL 后面的中文分号/尺寸等元信息一起吃掉。
                     // ★ CodeRabbit：替换**所有**提取到的 URL 本体（不要求前面有 `URL:` 标签），
                     //   并按长度降序替换 —— 否则短 URL 会命中长 URL 的前缀，把长链接切碎。
+                    // ★ 2026-11-27 主人定：正文里每张图写成「如图序号N」，与聚合图上的角标一一对应。
+                    //   按**正文出现顺序**编号（extractUrls 保序去重，allUrls[i] 即第 i+1 张）；
+                    //   替换仍按 URL 长度降序，避免短 URL 命中长 URL 的前缀把它切碎。
                     let slim = text;
-                    for (const u of [...allUrls].sort((x, y) => y.length - x.length)) {
-                        slim = slim.split(u).join('(见链接文件)');
+                    const _ordered = [...allUrls].sort((x, y) => y.length - x.length);
+                    for (const u of _ordered) {
+                        const _n = allUrls.indexOf(u) + 1;
+                        slim = slim.split(u).join('[如图序号' + _n + ']');
                     }
                     kept = slim;
                     parts.push(kept);
-                    parts.push('[本条含 ' + allUrls.length + ' 个链接，已一行一个存到 ' + fp.fp + ']');
+                    // ★ 嵌入词化简（主人 2026-11-27）：原来三行、还报一个和文件/台账对不上的数字，
+                    //   会误导模型。现在只留一行：给路径 + 一行命令，不报数。
                     if (fp.script) {
-                        parts.push('[下载直接执行：node "' + fp.fp.replace(/\.txt$/, '-dl.mjs') + '"（三平台通用，不用读文件、别抄 URL）]');
-                        parts.push('[想放到别处就在命令后面再加一个目录参数：node "…-dl.mjs" "目标目录"；不传则下到脚本旁边的同名文件夹]');
+                        parts.push('[图片链接见 ' + fp.fp + '；要下载执行 node "' + fp.fp.replace(/\.txt$/, '-dl.mjs') + '"]');
                     }
                     else {
-                        parts.push('[下载脚本没生成成功，请直接读上面那个文件里的链接自行下载]');
+                        parts.push('[图片链接见 ' + fp.fp + ']');
                     }
                     kept = '';
                 }
