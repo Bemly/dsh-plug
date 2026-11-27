@@ -124,31 +124,50 @@ export function packRects(loaded, maxEdge) {
         return null;
     const targetArea = maxEdge * maxEdge * 0.85;
     let scale = Math.min(1, Math.sqrt(targetArea / totalArea));
+    // ★ 2026-11-27：单一种排序会留下明显空洞（实测 6 张时中间空出约 25%）。
+    //   同一批图换几种预排序，装箱结果差别很大 —— 全覆盖跑一遍取利用率最高的。
+    //   排序策略取自 TexturePacker / Unity 常用组合：面积、最长边、高、宽。
+    const STRATEGIES = [
+        (a, b) => (b.w * b.h) - (a.w * a.h),
+        (a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h),
+        (a, b) => b.h - a.h,
+        (a, b) => b.w - a.w,
+    ];
     for (let attempt = 0; attempt < 14; attempt++) {
         const items = loaded.map((x) => ({
             src: x,
             w: Math.max(1, Math.round(x.w * scale)),
             h: Math.max(1, Math.round(x.h * scale)),
         }));
-        // 面积大的先放：MaxRects 的标准预处理，能显著提高利用率
-        const order = items.slice().sort((a, b) => (b.w * b.h) - (a.w * a.h));
-        const bin = new MaxRectsBin(maxEdge, maxEdge);
-        const placements = [];
-        let ok = true;
-        for (const it of order) {
-            const node = bin.insert(it.w, it.h);
-            if (!node) {
-                ok = false;
-                break;
+        let best = null;
+        for (const cmp of STRATEGIES) {
+            const order = items.slice().sort(cmp);
+            const bin = new MaxRectsBin(maxEdge, maxEdge);
+            const placements = [];
+            let ok = true;
+            for (const it of order) {
+                const node = bin.insert(it.w, it.h);
+                if (!node) {
+                    ok = false;
+                    break;
+                }
+                placements.push({ src: it.src, x: node.x, y: node.y, w: it.w, h: it.h });
             }
-            placements.push({ src: it.src, x: node.x, y: node.y, w: it.w, h: it.h });
-        }
-        if (ok) {
+            if (!ok)
+                continue;
             // 按实际占用收缩画布：不留右下角空白
             const width = Math.max(...placements.map((p) => p.x + p.w));
             const height = Math.max(...placements.map((p) => p.y + p.h));
-            return { width, height, placements, scale };
+            const usedArea = placements.reduce((s, p) => s + p.w * p.h, 0);
+            const fill = usedArea / (width * height);
+            // 利用率优先；打平时取画布更小的（长边更容易守住上限）
+            if (!best || fill > best.fill + 1e-6
+                || (Math.abs(fill - best.fill) <= 1e-6 && width * height < best.width * best.height)) {
+                best = { width, height, placements, fill };
+            }
         }
+        if (best)
+            return { width: best.width, height: best.height, placements: best.placements, scale, fill: best.fill };
         scale *= 0.88;
     }
     return null;
