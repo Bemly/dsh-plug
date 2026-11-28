@@ -332,14 +332,17 @@ export async function buildAggregateBlocks(key, agent, logger) {
             let buf = readFileSync(one.path);
             const jimp = await loadJimp();
             if (jimp) {
-                const img = await jimp.Jimp.read(one.path);
-                const w = img.bitmap.width, h = img.bitmap.height;
-                const longest = Math.max(w, h);
-                if (longest > MAX_EDGE && w > 0 && h > 0) {
-                    const scale = MAX_EDGE / longest;
-                    img.resize({ w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) });
-                    buf = await img.getBuffer('image/jpeg', { quality: 88 });
+                try {
+                    const img = await jimp.Jimp.read(one.path);
+                    const w = img.bitmap.width, h = img.bitmap.height;
+                    const longest = Math.max(w, h);
+                    if (longest > MAX_EDGE && w > 0 && h > 0) {
+                        const scale = MAX_EDGE / longest;
+                        img.resize({ w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) });
+                        buf = await img.getBuffer('image/jpeg', { quality: 88 });
+                    }
                 }
+                catch { /* 不支持解码的格式保留原图字节，仍可直接注入 */ }
             }
             if (buf.length === 0)
                 return [];

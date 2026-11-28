@@ -49,3 +49,21 @@ test('聚合缓冲可注入单图且不会重复入队', async () => {
         await rm(dir, { recursive: true, force: true });
     }
 });
+
+test('单图解码失败时保留原始字节继续注入', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-botqq-aggregate-raw-'));
+    const imagePath = join(dir, 'unsupported.png');
+    const key = `test:${dir}`;
+    try {
+        await writeFile(imagePath, Buffer.from('not-a-decodable-image'));
+        assert.equal(pushAggImage(key, imagePath, 'tester'), 1);
+        const blocks = await buildAggregateBlocks(key, {}, console);
+        assert.equal(blocks.length, 1);
+        assert.equal(blocks[0].type, 'image');
+        assert.equal(blocks[0].attachment.name, 'aggregate.jpg');
+    }
+    finally {
+        clearAggImages(key);
+        await rm(dir, { recursive: true, force: true });
+    }
+});
