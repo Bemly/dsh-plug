@@ -4,6 +4,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import vm from 'node:vm';
 import { OutboundBuffer } from '../dist/transport/outbound-buffer.js';
 
 const root = new URL('../', import.meta.url);
@@ -54,7 +55,7 @@ test('reset 轮换 sessionId 且命令等待重置完成', async () => {
     assert.ok(manager.includes('this.modelResolver.setSessionId(key, nextSessionId);'));
     assert.ok(manager.includes('this.sessionGenerations.set(key, (this.sessionGenerations.get(key) ?? 0) + 1);'));
     assert.ok(manager.includes('this.creating.delete(key);'));
-    assert.ok(manager.includes('resetAggImages(`${scope}:${peerId}`);'));
+    assert.ok(manager.includes('resetAggImages(`${scope}:${peerId}`, dataRootOf(this.config));'));
     assert.ok(command.includes('await manager.reset(scope, peerId);'));
 });
 
@@ -129,4 +130,32 @@ test('包检查器能发现普通相对类型导出缺失', async () => {
     finally {
         await rm(dir, { recursive: true, force: true });
     }
+});
+
+test('「默认(跳过)」会清空宿主上的旧 reasoningEffort', async () => {
+    // session-manager 直接 import 会拉 @deepseek-ai/dsh-session（本机缺 dsh-scope），
+    // 与其它用例一致：把方法源码抠出来在 VM 里跑。
+    const source = await readFile(new URL('./dist/session/session-manager.js', root), 'utf8');
+    const start = source.indexOf('    applyModelRoute(');
+    const end = source.indexOf('\n    /**', start);
+    assert.ok(start > 0 && end > start);
+    const ctx = { console };
+    vm.runInNewContext(`class M { ${source.slice(start, end)} } globalThis.M = M;`, ctx);
+    const mgr = new ctx.M();
+    mgr.logger = { info() {}, warn() {} };
+    const selected = [];
+    const agent = {
+        model: {
+            current: () => ({ provider: 'p', model: 'm', reasoningEffort: 'high' }),
+            select: (sel) => selected.push(sel),
+        },
+    };
+    mgr.applyModelRoute(agent, { provider: 'p', model: 'm', clearEffort: true }, 'test');
+    assert.equal(selected.length, 1);
+    assert.equal(selected[0].reasoningEffort, undefined);
+    assert.equal(selected[0].provider, 'p');
+    // 旧 options 路径同样要清
+    const oldAgent = { options: { provider: 'p', model: 'm', reasoningEffort: 'high' } };
+    mgr.applyModelRoute(oldAgent, { provider: 'p', model: 'm', clearEffort: true }, 'test');
+    assert.equal(oldAgent.options.reasoningEffort, undefined);
 });

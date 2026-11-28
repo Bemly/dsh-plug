@@ -220,7 +220,7 @@ function closeSession(dataRoot) {
     if (!s)
         return;
     try {
-        s.cdp.close();
+        s.cdp?.close();
     }
     catch { /* ignore */ }
     try {
@@ -506,6 +506,12 @@ export async function qunBrowserLoginStart(dataRoot, opts = {}) {
             return { ok: false, msg: '启动浏览器失败：' + String(e2?.message ?? e2).slice(0, 160) };
         }
     }
+    // ★ 2026-11-28 审计：浏览器一启动就登记，别等扫码都出完才 set。
+    //   原来的窗口里（连 CDP / 点 30 次头像 / 截图）宿主若退出，进程不在 sessions 里，
+    //   exit hook 收不到它 → 变成孤儿并锁住 profile（下次 code=21）。
+    sessions.set(dataRoot, { handle, cdp: null, dataRoot, at: Date.now(), qrPath: '', clicked: false });
+    installExitHook();
+    ensureSweeper();
     let cdp = null;
     try {
         const wsUrl = await pageWsUrl(handle.port);
@@ -660,8 +666,6 @@ export async function qunBrowserLoginStart(dataRoot, opts = {}) {
         catch { /* ignore */ }
         const qrPath = await shotQr(cdp, dataRoot);
         sessions.set(dataRoot, { handle, cdp, dataRoot, at: Date.now(), qrPath, clicked: n > 0 });
-        installExitHook(); // 宿主退出时把浏览器一起带走（不然会成孤儿进程）
-        ensureSweeper(); // 空闲超时自动关（不然扫码没扫成会一直挂着）
         if (!qrPath) {
             return {
                 ok: true,

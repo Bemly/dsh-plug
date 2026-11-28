@@ -352,15 +352,16 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
             const _prepared = await prepareAggregateImages(
                 _items.map((it) => ({ path: it.p, sender: it.by, url: it.url })),
                 logger,
+                dataRootOf(config),
             );
             for (const _it of _prepared)
-                pushPreparedAggImage(_aggKey, _it);
+                pushPreparedAggImage(_aggKey, _it, dataRootOf(config));
             // ★ 2026-11-27 主人定：正文的「如图序号N」和合成图角标**必须同源**。
             //   角标号 = pack() 的 placements[i].idx + 1 = 该图在 pendingAggImages 里的位置 + 1。
             //   这里在入缓冲完成后建一张 URL→位置表，正文替换时直接查它 —— 不再另用
             //   allUrls.indexOf 算一遍（那只是"碰巧"对得上，图缺失/乱序就会错位）。
             try {
-                const _pending = pendingAggImages(_aggKey);
+                const _pending = pendingAggImages(_aggKey, dataRootOf(config));
                 const _map = new Map();
                 // 合并转发正文里的 URL → 落地路径（与上面 _add 的顺序一致）
                 const _rawForMap = String(msg.content ?? '');
@@ -1167,7 +1168,7 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
     //   它们没唤醒，塞图纯属白烧 token。
     try {
         if (config.imageAggregate?.enabled === true && manager.isActiveRecord(record)) {
-            const aggBlocks = await buildAggregateBlocks(`${scope}:${peerId}`, record.agent, logger);
+            const aggBlocks = await buildAggregateBlocks(`${scope}:${peerId}`, record.agent, logger, dataRootOf(config));
             if (aggBlocks && aggBlocks.length > 0) {
                 const prev = message.content ?? content;
                 message = createUserMessage({ content: [...prev, ...aggBlocks], source: { kind: 'user' } });

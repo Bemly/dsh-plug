@@ -325,9 +325,9 @@ injectRules, isActive) {
                         candidates.push({ key, path: p, sender: by, url });
                 }
             }
-            const prepared = await prepareAggregateImages(candidates, logger);
+            const prepared = await prepareAggregateImages(candidates, logger, dataRootOf(config));
             for (const item of prepared)
-                pushPreparedAggImage(item.key, item);
+                pushPreparedAggImage(item.key, item, dataRootOf(config));
         }
     }
     catch { /* 聚合缓冲失败不影响插话 */ }

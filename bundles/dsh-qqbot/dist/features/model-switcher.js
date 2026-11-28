@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /** 按钮回调数据前缀 */
 const BTN_PREFIX = 'mdl:';
 /**
@@ -8,6 +9,28 @@ const BTN_PREFIX = 'mdl:';
 const EFF_PREFIX = 'eff:';
 /** 等待"选强度"的模型（key = `${scope}:${peerId}`） */
 const pendingEffort = new Map();
+/** 待选强度最长保留 10 分钟：卡片可能几小时后才被点，旧档位早已失效 */
+const EFFORT_PENDING_TTL_MS = 10 * 60_000;
+function pendingEffortOf(scope, peerId) {
+    const key = `${scope}:${peerId}`;
+    const hit = pendingEffort.get(key);
+    if (!hit)
+        return undefined;
+    if (Date.now() - Number(hit.at ?? 0) > EFFORT_PENDING_TTL_MS) {
+        pendingEffort.delete(key);
+        return undefined;
+    }
+    return hit;
+}
+/** 模型身份短指纹：热更新后列表变了，靠它识别"这个按钮指的还是不是同一个模型"。 */
+function modelTag(m) {
+    try {
+        return createHash('sha256').update(`${m?.provider ?? ''}/${m?.id ?? ''}`).digest('hex').slice(0, 8);
+    }
+    catch {
+        return '';
+    }
+}
 /**
  * 布局照 `/子会话` 的模型选择卡（主人 2026-10-30 指定参考）：
  *   每行 **5 个**，最多 **4 行**选项（=20 个/页），第 5 行留给翻页导航；
@@ -72,16 +95,17 @@ export function parseModelButton(data) {
     if (!data || !data.startsWith(BTN_PREFIX))
         return null;
     const parts = data.slice(BTN_PREFIX.length).split(':');
-    if (parts.length !== 2)
+    // `mdl:<page>:<idx>`（老卡片）或 `mdl:<page>:<idx>:<tag>`（带模型指纹）
+    if (parts.length < 2 || parts.length > 3)
         return null;
     const page = Number(parts[0]);
     if (!Number.isInteger(page) || page < 0)
         return null;
-    const [, key] = parts;
+    const [, key, tag = ''] = parts;
     if (key === 'prev' || key === 'next')
         return key;
     const idx = Number(key);
-    return Number.isInteger(idx) && idx >= 0 ? { page, idx } : null;
+    return Number.isInteger(idx) && idx >= 0 ? { page, idx, tag } : null;
 }
 function pageOfData(data) {
     if (!data || !data.startsWith(BTN_PREFIX))
@@ -95,8 +119,8 @@ function modelKeyboard(page, models, current) {
     const safePage = Math.min(page, pages - 1);
     const start = safePage * PER_PAGE;
     const shown = models.slice(start, start + PER_PAGE);
-    const btn = (label, key, style) => ({
-        id: `${BTN_PREFIX}${safePage}:${key}`,
+    const btn = (label, key, style, tag = '') => ({
+        id: `${BTN_PREFIX}${safePage}:${key}${tag ? `:${tag}` : ''}`,
         render_data: {
             label: String(label).slice(0, 24),
             visited_label: String(label).slice(0, 24),
@@ -108,7 +132,7 @@ function modelKeyboard(page, models, current) {
             //   （permission.type=2 表示"仅指定用户"；这里仍按群里所有人都能看见渲染，
             //     真正的门控在命令侧 authorized + 下面 handleInteraction 里的白名单校验）
             permission: { type: 2 },
-            data: `${BTN_PREFIX}${safePage}:${key}`,
+            data: `${BTN_PREFIX}${safePage}:${key}${tag ? `:${tag}` : ''}`,
             unsupport_tips: '请直接回复 /model provider/model',
         },
     });
@@ -118,7 +142,7 @@ function modelKeyboard(page, models, current) {
             buttons: shown.slice(i, i + COLS).map((m, j) => {
                 const isCur = !!current && current.provider === m.provider && current.model === m.id;
                 // 按钮文字用字母（模型名太长会挤成省略号，正文里有对照表）
-                return btn(LETTERS[i + j] ?? String(i + j), String(i + j), isCur ? 1 : 0);
+                return btn(LETTERS[i + j] ?? String(i + j), String(i + j), isCur ? 1 : 0, modelTag(m));
             }),
         });
     }
@@ -224,7 +248,7 @@ export class ModelSwitcherController {
      * 另给一个「默认(跳过)」——注意：默认 ≠ 关闭思考。
      */
     async sendEffortCard(target, scope, peerId) {
-        const pending = pendingEffort.get(`${scope}:${peerId}`);
+        const pending = pendingEffortOf(scope, peerId);
         if (!pending)
             return '没有待选强度的模型，先发 /model 选一个';
         let efforts = [];
@@ -277,7 +301,7 @@ export class ModelSwitcherController {
                 catch { /* ignore */ }
                 return true;
             }
-            const pending = pendingEffort.get(`${scope}:${peerId}`);
+            const pending = pendingEffortOf(scope, peerId);
             if (!pending) {
                 await this.sender.sendMarkdown(target, '这次的选择已过期，重新发 /model 选一次吧~');
                 return true;
@@ -286,14 +310,17 @@ export class ModelSwitcherController {
                 // 已经是这个模型（且这次不改强度）→ 不 fork、不折腾，直接回一句
                 if (effPick === 'skip') {
                     const curRoute = this.manager.getEffectiveModel(scope, peerId);
-                    if (curRoute && curRoute.provider === pending.provider && curRoute.model === pending.model) {
+                    // 只有"模型相同且当前已是默认档"才什么都不做；否则要走下面的清空分支
+                    if (curRoute && curRoute.provider === pending.provider && curRoute.model === pending.model
+                        && !curRoute.effort && curRoute.clearEffort !== true) {
                         pendingEffort.delete(`${scope}:${peerId}`);
                         await this.sender.sendMarkdown(target, `ℹ️ 当前已经是 ${pending.name} 了，没有做任何改动。`);
                         return true;
                     }
                 }
                 if (effPick === 'skip') {
-                    await this.manager.setModelOverride(scope, peerId, { provider: pending.provider, model: pending.model });
+                    // clearEffort：显式要求回到模型默认档，不能保留上一次的 high（审计 P2）
+                    await this.manager.setModelOverride(scope, peerId, { provider: pending.provider, model: pending.model, clearEffort: true });
                     pendingEffort.delete(`${scope}:${peerId}`);
                     await this.sender.sendMarkdown(target, `✅ 模型已切换: ${pending.name}
 思考强度：模型默认档`);
@@ -353,11 +380,18 @@ export class ModelSwitcherController {
                 await this.sender.sendMarkdown(target, '这个模型已不在列表里了，重新发 /model 刷一下卡片~');
                 return true;
             }
+            // 卡片发出后模型列表可能被热更新（增删/换序）⇒ 只按 page+idx 会点 A 切 B。
+            if (parsed.tag && modelTag(pick) !== parsed.tag) {
+                await this.sender.sendMarkdown(target, '模型列表已经变了，已重新发卡，请再点一次~');
+                await this.sendCard(target, scope, peerId, parsed.page);
+                return true;
+            }
             // ★ 2026-11-08：选完模型先别切 —— 第二步让主人挑思考强度（也可跳过用默认）
             pendingEffort.set(`${scope}:${peerId}`, {
                 provider: pick.provider,
                 model: pick.id,
                 name: pick.name || pick.id,
+                at: Date.now(),
             });
             await this.sendEffortCard(target, scope, peerId);
             return true;

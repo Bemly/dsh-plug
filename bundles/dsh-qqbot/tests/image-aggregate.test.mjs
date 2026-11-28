@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -220,5 +221,32 @@ test('100张合并消息重复3次、乱序、交叉与分辨率变化仍稳定�
     }
     finally {
         clearAggImages(key);
+    }
+});
+
+test('多实例：同一会话键在不同 dataRoot 下互不串数据', async () => {
+    const rootA = await mkdtemp(join(tmpdir(), 'dsh-agg-a-'));
+    const rootB = await mkdtemp(join(tmpdir(), 'dsh-agg-b-'));
+    const key = 'group:same-openid';
+    try {
+        pushPreparedAggImage(key, fakeItem('fp-a', dhashOf('a')), rootA);
+        pushPreparedAggImage(key, fakeItem('fp-b', dhashOf('b')), rootB);
+        assert.equal(pendingAggImages(key, rootA).length, 1);
+        assert.equal(pendingAggImages(key, rootB).length, 1);
+        assert.equal(pendingAggImages(key, rootA)[0].fp, 'fp-a');
+        assert.equal(pendingAggImages(key, rootB)[0].fp, 'fp-b');
+        // 清理 A 不能动 B
+        clearAggImages(key, rootA);
+        assert.equal(pendingAggImages(key, rootA).length, 0);
+        assert.equal(pendingAggImages(key, rootB).length, 1);
+        // 落盘目录各归各（不再被后初始化的实例顶掉）
+        assert.ok(existsSync(join(rootA, '.qqbot', 'aggregate-cache')));
+        assert.ok(existsSync(join(rootB, '.qqbot', 'aggregate-cache')));
+    }
+    finally {
+        clearAggImages(key, rootA);
+        clearAggImages(key, rootB);
+        await rm(rootA, { recursive: true, force: true });
+        await rm(rootB, { recursive: true, force: true });
     }
 });

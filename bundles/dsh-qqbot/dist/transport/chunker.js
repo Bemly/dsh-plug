@@ -77,7 +77,8 @@ export function chunkMarkdownText(text, limit) {
     const lines = text.split('\n');
     const chunks = [];
     let current = '';
-    let inCodeBlock = false;
+    let codeFence = '';
+    let codeLines = [];
     let tableBuffer = [];
     const flushTable = () => {
         if (tableBuffer.length === 0)
@@ -132,15 +133,79 @@ export function chunkMarkdownText(text, limit) {
             current = candidate;
         }
     };
+    /**
+     * 代码块整块处理（2026-11-28 审计 P2）。
+     *
+     * 原来代码块逐行 appendLine，一旦超过 limit 就在块中间断开：
+     * 前一段缺闭合围栏、后一段缺开围栏，QQ 侧渲染成残破的纯文本。
+     * 现在整块缓存；超长时按行拆成多段，**每段都补回开/闭围栏**。
+     */
+    const appendBlock = (block) => {
+        if (!current) {
+            current = block;
+            return;
+        }
+        const candidate = `${current}\n${block}`;
+        if (candidate.length > limit) {
+            chunks.push(current);
+            current = block;
+        }
+        else {
+            current = candidate;
+        }
+    };
+    const flushCode = (closed) => {
+        if (!codeFence)
+            return;
+        const open = codeFence;
+        const body = codeLines;
+        const close = closed ? '```' : '';
+        codeFence = '';
+        codeLines = [];
+        const wrap = (rows) => [open, ...rows, ...(close ? [close] : [])].join('\n');
+        const whole = wrap(body);
+        if (whole.length <= limit) {
+            appendBlock(whole);
+            return;
+        }
+        // 超长：每段都带围栏，保证单段可渲染
+        if (current) {
+            chunks.push(current);
+            current = '';
+        }
+        const overhead = open.length + 1 + (close ? close.length + 1 : 0);
+        const budget = Math.max(1, limit - overhead);
+        let piece = [];
+        const emit = () => {
+            if (!piece.length)
+                return;
+            chunks.push(wrap(piece));
+            piece = [];
+        };
+        for (const row of body) {
+            if (row.length > budget) {
+                emit();
+                for (const part of hardSplit(row, budget))
+                    chunks.push(wrap([part]));
+                continue;
+            }
+            if (wrap([...piece, row]).length > limit)
+                emit();
+            piece.push(row);
+        }
+        emit();
+    };
     for (const line of lines) {
         if (CODE_FENCE_OPEN.test(line)) {
             flushTable();
-            inCodeBlock = !inCodeBlock;
-            appendLine(line);
+            if (codeFence)
+                flushCode(true);
+            else
+                codeFence = line;
             continue;
         }
-        if (inCodeBlock) {
-            appendLine(line);
+        if (codeFence) {
+            codeLines.push(line);
             continue;
         }
         if (GFM_TABLE_LINE.test(line)) {
@@ -151,6 +216,7 @@ export function chunkMarkdownText(text, limit) {
         appendLine(line);
     }
     flushTable();
+    flushCode(false);
     if (current)
         chunks.push(current);
     return chunks.length > 0 ? chunks : [text];

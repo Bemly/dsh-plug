@@ -19,29 +19,57 @@ const MAX_SENT_TOTAL = 131072;
 const MAX_PENDING_ITEMS = 500;
 const PENDING_TTL_MS = 24 * 3600_000;
 const DROP_AFTER_FAILURES = 3;
+/**
+ * 多实例隔离（2026-11-28 审计 P1）。
+ *
+ * 同一进程可能跑多个机器人实例（不同 dataRoot）。原来 buffers / 发送指纹 / 落盘目录
+ * 都是模块级单例：后初始化的实例会把前一个的目录顶掉，落盘、LRU 清理、幂等表互相踩。
+ *
+ * 现在：所有"会话键"在进入本模块时统一加 `<dataRoot>\0` 前缀（scopedKey），
+ * 内部函数只认复合键；落盘目录与发送索引按 root 分开。
+ * 未传 root 的旧调用保持原键，单实例/测试路径行为不变。
+ */
+const ROOT_SEP = '\u0000';
+const cacheDirs = new Map();
+const sentIndexFiles = new Map();
 const pendingFailures = new Map();
 
 const buffers = new Map();
 const building = new Map();
 const sentFingerprints = new Map();
 const sequenceByKey = new Map();
-let cacheDir = '';
 let fallbackCacheDir = '';
-let sentIndexFile = '';
 const OUR_ATTACH = new Set();
 let ourAttachFile = '';
 const OUR_ATTACH_KEEP = 2000;
 let probeImageInput;
 let saveImage;
 
-function ensureCacheDir() {
-    if (!cacheDir) {
+function scopedKey(root, key) {
+    const r = String(root || '');
+    return r ? r + ROOT_SEP + String(key) : String(key);
+}
+function rootOf(scoped) {
+    const s = String(scoped ?? '');
+    const i = s.indexOf(ROOT_SEP);
+    return i < 0 ? '' : s.slice(0, i);
+}
+function ensureCacheDir(root = '') {
+    if (!root) {
         if (!fallbackCacheDir)
             fallbackCacheDir = mkdtempSync(join(tmpdir(), 'dsh-botqq-aggregate-'));
         return fallbackCacheDir;
     }
-    mkdirSync(cacheDir, { recursive: true });
-    return cacheDir;
+    const hit = cacheDirs.get(root);
+    if (hit) {
+        mkdirSync(hit, { recursive: true });
+        return hit;
+    }
+    const dir = join(root, '.qqbot', 'aggregate-cache');
+    mkdirSync(dir, { recursive: true });
+    pruneAggregateDisk(dir);
+    cacheDirs.set(root, dir);
+    return dir;
 }
 
 function atomicWrite(file, data) {
@@ -61,7 +89,7 @@ function atomicWrite(file, data) {
 
 function pendingFileOf(key) {
     const id = createHash('sha256').update(key).digest('hex').slice(0, 32);
-    return join(ensureCacheDir(), `pending-${id}.json`);
+    return join(ensureCacheDir(rootOf(key)), `pending-${id}.json`);
 }
 
 function persistBuffer(key, items) {
@@ -362,7 +390,7 @@ function normalizeForPack(img, w, h) {
     return { img: padded, w: pw, h, changed: true };
 }
 
-export async function prepareAggregateImages(items, logger) {
+export async function prepareAggregateImages(items, logger, dataRoot = '') {
     const prepared = [];
     const candidates = Array.isArray(items) ? items : [];
     for (const item of candidates) {
@@ -402,7 +430,7 @@ export async function prepareAggregateImages(items, logger) {
                 w = normalized.w;
                 h = normalized.h;
                 if (normalized.changed) {
-                    path = join(ensureCacheDir(), `${fp}-${randomBytes(6).toString('hex')}.png`);
+                    path = join(ensureCacheDir(String(dataRoot || '')), `${fp}-${randomBytes(6).toString('hex')}.png`);
                     const png = await normalized.img.getBuffer('image/png');
                     writeFileSync(path, png);
                     ownedCache = true;
@@ -457,7 +485,8 @@ export async function prepareAggregateImages(items, logger) {
     return prepared;
 }
 
-export function pushPreparedAggImage(key, item) {
+export function pushPreparedAggImage(key, item, dataRoot = '') {
+    key = scopedKey(dataRoot, key);
     if (!item)
         return 0;
     if (duplicateInSet(sentSetOf(key), item)) {
@@ -485,7 +514,11 @@ export async function pushAggImage(key, path, sender, url = '') {
     return pushPreparedAggImage(key, prepared[0]);
 }
 
-export function pendingAggImages(key) {
+export function pendingAggImages(key, dataRoot = '') {
+    return listPending(scopedKey(dataRoot, key));
+}
+/** 内部用：key 已经是复合键。 */
+function listPending(key) {
     const arr = loadBuffer(key);
     if (!arr)
         return [];
@@ -543,43 +576,63 @@ export function rememberAggSentPaths(key, items) {
         set.delete(first);
     }
     trimSentTotal();
-    persistSentIndex();
+    persistSentIndex(rootOf(key));
 }
 
-function persistSentIndex() {
-    if (!sentIndexFile)
+function sentIndexFileFor(root) {
+    if (!root)
+        return '';
+    const hit = sentIndexFiles.get(root);
+    if (hit)
+        return hit;
+    const file = join(root, '.qqbot', 'aggregate-sent-index.json');
+    sentIndexFiles.set(root, file);
+    return file;
+}
+
+function persistSentIndex(root = '') {
+    const file = sentIndexFileFor(root);
+    if (!file)
         return;
     try {
         const out = {};
-        for (const [key, set] of sentFingerprints)
+        for (const [key, set] of sentFingerprints) {
+            if (rootOf(key) !== root)
+                continue;
             out[key] = [...set];
-        atomicWrite(sentIndexFile, JSON.stringify(out));
+        }
+        atomicWrite(file, JSON.stringify(out));
     }
     catch { /* 去重表写入失败不影响消息 */ }
 }
 
-function loadSentIndex() {
-    if (!sentIndexFile || !existsSync(sentIndexFile))
+function loadSentIndex(root) {
+    const file = sentIndexFileFor(root);
+    if (!file || !existsSync(file))
         return;
     try {
-        const raw = JSON.parse(readFileSync(sentIndexFile, 'utf8'));
+        const raw = JSON.parse(readFileSync(file, 'utf8'));
         for (const [key, arr] of Object.entries(raw ?? {})) {
-            if (Array.isArray(arr))
-                touchMap(sentFingerprints, key, new Set(arr.filter((x) => typeof x === 'string')), MAX_SENT_SESSIONS);
+            if (!Array.isArray(arr))
+                continue;
+            // 文件里的键必须属于本实例，防止旧版本把别人的条目带进来
+            const scoped = rootOf(key) === root ? key : scopedKey(root, key);
+            touchMap(sentFingerprints, scoped, new Set(arr.filter((x) => typeof x === 'string')), MAX_SENT_SESSIONS);
         }
         trimSentTotal();
     }
     catch { /* 坏表当空 */ }
 }
 
-export function clearAggImages(key) {
-    clearBuffer(key);
+export function clearAggImages(key, dataRoot = '') {
+    clearBuffer(scopedKey(dataRoot, key));
 }
 
-export function resetAggImages(key) {
-    clearBuffer(key);
-    sentFingerprints.delete(key);
-    persistSentIndex();
+export function resetAggImages(key, dataRoot = '') {
+    const scoped = scopedKey(dataRoot, key);
+    clearBuffer(scoped);
+    sentFingerprints.delete(scoped);
+    persistSentIndex(rootOf(scoped));
 }
 
 export async function stitchAggImages(items) {
@@ -619,7 +672,8 @@ async function saveSingleAggImage(item) {
     return saved?.attachment ? [{ type: 'image', attachment: saved.attachment }] : undefined;
 }
 
-export function buildAggregateBlocks(key, agent, logger) {
+export function buildAggregateBlocks(key, agent, logger, dataRoot = '') {
+    key = scopedKey(dataRoot, key);
     const previous = building.get(key) ?? Promise.resolve();
     const run = previous.catch(() => { }).then(() => buildAggregateBlocksLocked(key, agent, logger));
     building.set(key, run);
@@ -661,7 +715,7 @@ async function buildAggregateBlocksLocked(key, agent, logger) {
         return false;
     };
     while (true) {
-        const all = prunePendingItems(key) ?? pendingAggImages(key);
+        const all = prunePendingItems(key) ?? listPending(key);
         const items = all.slice(0, MAX_AGGREGATE_IMAGES);
         if (items.length === 0)
             break;
@@ -772,15 +826,16 @@ function pruneAggregateDisk(dir) {
     catch { /* 清理失败不影响启动 */ }
 }
 
+/**
+ * 预热某个实例的聚合落盘目录与台账。
+ * 多实例安全：只初始化传入 root 自己的目录，不再覆盖全局单例。
+ */
 export function initAggregateRegistry(dataRoot) {
     try {
         if (!dataRoot)
             return;
-        cacheDir = join(dataRoot, '.qqbot', 'aggregate-cache');
-        mkdirSync(cacheDir, { recursive: true });
-        pruneAggregateDisk(cacheDir);
-        sentIndexFile = join(dataRoot, '.qqbot', 'aggregate-sent-index.json');
-        loadSentIndex();
+        ensureCacheDir(String(dataRoot));
+        loadSentIndex(String(dataRoot));
         ourAttachFile = join(dataRoot, '.qqbot', 'aggregate-ids.json');
         if (!existsSync(ourAttachFile))
             return;
@@ -824,7 +879,8 @@ export function aggregateMemoryStats() {
         sequenceSessions: sequenceByKey.size,
         sentSessions: sentFingerprints.size,
         sentTotal,
-        pendingDiskDir: cacheDir || fallbackCacheDir || '',
+        pendingDiskDirs: [...cacheDirs.values()],
+        pendingDiskDir: [...cacheDirs.values()][0] || fallbackCacheDir || '',
     };
 }
 

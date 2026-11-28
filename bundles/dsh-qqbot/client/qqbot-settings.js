@@ -1868,18 +1868,6 @@ window.__ModuleLoader__.load({
         setTargets(list)
       }
       // 保存: 整表(行→分组已实时同步)全量 patch
-      // 2026-10-22（主人定）：扫码拿到凭据后自动保存，用户不用再手动点「保存」
-      function autoSaveAfterBind(list) {
-        setMsg('💾 自动保存中…')
-        setTimeout(function () {
-          try {
-            setBusy('')
-            save(list, true)
-          } catch (e) {
-            setMsg('扫码成功但自动保存失败: ' + (e && e.message ? e.message : e) + ' —— 请手动点保存')
-          }
-        }, 150)
-      }
       function save(listOverride) {
         setMsg('保存中…')
         var v = cfg || {}

@@ -183,7 +183,7 @@ export class SessionManager {
             this.forking.delete(key);
             this.sessions.delete(key);
             this.lastHostModel.delete(key);
-            clearAggImages(`${record.scope}:${record.peerId}`);
+            clearAggImages(`${record.scope}:${record.peerId}`, dataRootOf(this.config));
             this.cancelRecordOutbound(record);
             forgetExtToolContext(record.agentCtx);
             record.agent.cancel({ kind: 'user' });
@@ -1146,7 +1146,10 @@ export class SessionManager {
                 const cur = m.current();
                 // ★ 2026-11-08 修：这里原来只看 provider/model —— 同模型只改**思考强度**时直接 return，
                 //   强度根本没写进宿主 ⇒ 下一轮 adoptHostModel 又按宿主的旧强度把偏好改回去（主人实测：切 high 又变回 low）。
-                const sameEffort = (cur?.reasoningEffort ?? '') === (route.effort ?? '');
+                // 2026-11-28 审计：「默认(跳过)」原来只写 provider/model，宿主的旧 reasoningEffort(high)
+                //   会留在 select 结果里 ⇒ 选了"默认档"却仍是 high。clearEffort 明确要求清空。
+                const wantEffort = route.clearEffort === true ? '' : (route.effort ?? '');
+                const sameEffort = (cur?.reasoningEffort ?? '') === wantEffort;
                 if (cur?.provider === route.provider && cur?.model === route.model && sameEffort)
                     return;
                 // 保留宿主可能存在的其它字段（reasoningEffort 等），只换 provider/model
@@ -1155,7 +1158,9 @@ export class SessionManager {
                     ...(cur ?? {}),
                     provider: route.provider,
                     model: route.model,
-                    ...(route.effort ? { reasoningEffort: route.effort } : {}),
+                    ...(route.clearEffort === true
+                        ? { reasoningEffort: undefined }
+                        : (route.effort ? { reasoningEffort: route.effort } : {})),
                 });
                 this.logger.info(`getOrCreate: ${label} 模型覆盖(agent.model.select) ${cur?.provider ?? '?'}/${cur?.model ?? '?'} -> ${route.provider}/${route.model}`);
                 return;
@@ -1171,11 +1176,16 @@ export class SessionManager {
             this.logger.warn(`getOrCreate: ${label} 无法应用模型路由（agent 既无 model 也无 options）: ${route.provider}/${route.model}`);
             return;
         }
-        if (liveOpts.provider !== route.provider || liveOpts.model !== route.model) {
+        const wantEffort = route.clearEffort === true ? '' : (route.effort ?? '');
+        if (liveOpts.provider !== route.provider || liveOpts.model !== route.model
+            || (liveOpts.reasoningEffort ?? '') !== wantEffort) {
             agent.options = {
                 ...liveOpts,
                 provider: route.provider,
                 model: route.model,
+                ...(route.clearEffort === true
+                    ? { reasoningEffort: undefined }
+                    : (route.effort ? { reasoningEffort: route.effort } : {})),
             };
             this.logger.info(`getOrCreate: ${label} 模型覆盖(options) ${liveOpts.provider}/${liveOpts.model} -> ${route.provider}/${route.model}`);
         }
@@ -2500,7 +2510,7 @@ export class SessionManager {
         this.modelResolver.setSessionCfg(key, { cwd: absCwdOf(this.config.cwd) || process.cwd() });
         this.sessions.delete(key);
         this.lastHostModel.delete(key);
-        resetAggImages(`${scope}:${peerId}`);
+        resetAggImages(`${scope}:${peerId}`, dataRootOf(this.config));
         if (record) {
             this.cancelRecordOutbound(record);
             forgetExtToolContext(record.agentCtx);
@@ -2517,7 +2527,7 @@ export class SessionManager {
         this.creating.delete(key);
         this.forking.delete(key);
         const record = this.sessions.get(key);
-        clearAggImages(`${scope}:${peerId}`);
+        clearAggImages(`${scope}:${peerId}`, dataRootOf(this.config));
         if (!record) {
             this.modelResolver.clearSessionId(key);
             return;
@@ -2537,7 +2547,7 @@ export class SessionManager {
         const keys = new Set([...this.sessions.keys(), ...this.creating.keys(), ...this.forking.keys()]);
         for (const key of keys) {
             this.bumpSessionGeneration(key);
-            clearAggImages(key);
+            clearAggImages(key, dataRootOf(this.config));
         }
         this.creating.clear();
         this.forking.clear();
