@@ -79,7 +79,10 @@ function loadFrom(p) {
             const o = v;
             table.set(key, {
                 enabled: o?.enabled === true,
-                smart: o?.smart === true,
+                // ★ 2026-11-28 审计：不能把"没存过"归一成 false ——
+                //   否则 contextlessSmartOf 里 `s.smart !== undefined` 永远成立，
+                //   全局开关 contextlessSmart=true 会被会话默认 false 永久覆盖。
+                smart: typeof o?.smart === 'boolean' ? o.smart : undefined,
                 segment: o?.segment === true,
                 segmentKeep: Number(o?.segmentKeep) > 0 ? Math.max(1, Math.trunc(Number(o.segmentKeep))) : undefined,
                 segmentScoreMin: Number(o?.segmentScoreMin) > 0 ? Math.min(1, Number(o.segmentScoreMin)) : undefined,
@@ -177,7 +180,10 @@ export function setContextless(sessionKey, patch) {
         // 2026-10-01: 「智能判断」子模式（与 window **互斥**）——
         //   这里只**存值、不互斥清零**，这样主人在 UI 上来回切换时 window 的旧值不会丢；
         //   真正的互斥由读取侧（contextlessSmartOf / keepWindowOf）与面板单选一起保证。
-        smart: patch.smart === undefined ? (cur.smart === true) : patch.smart === true,
+        // 保留"没设过"的 undefined（不能顺手归一成 false，否则全局开关失效）
+        smart: patch.smart === undefined
+            ? (typeof cur.smart === 'boolean' ? cur.smart : undefined)
+            : patch.smart === true,
         segment: patch.segment === undefined ? (cur.segment === true) : patch.segment === true,
         segmentKeep: patch.segmentKeep === undefined
             ? cur.segmentKeep

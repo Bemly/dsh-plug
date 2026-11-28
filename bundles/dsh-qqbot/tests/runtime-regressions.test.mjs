@@ -183,3 +183,27 @@ test('宿主重启后未报强度时不会抹掉已存偏好', async () => {
     assert.equal(mgr.adoptHostModel('group', 'peer', agent), false);
     assert.deepEqual(writes, []);
 });
+
+test('会话没设过 smart 时跟随全局 contextlessSmart', async () => {
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const store = await import('../dist/features/contextless-store.js');
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-ctxless-'));
+    try {
+        store.initContextlessStore(dir);
+        store.setContextless('group:g1', { enabled: true });
+        // 没显式设过 smart → 跟随全局 true
+        assert.equal(store.contextlessSmartOf('group:g1', true), true);
+        assert.equal(store.contextlessSmartOf('group:g1', false), false);
+        // 显式关掉就按会话来
+        store.setContextless('group:g1', { smart: false });
+        assert.equal(store.contextlessSmartOf('group:g1', true), false);
+        // 显式打开同理
+        store.setContextless('group:g1', { smart: true });
+        assert.equal(store.contextlessSmartOf('group:g1', false), true);
+    }
+    finally {
+        await rm(dir, { recursive: true, force: true });
+    }
+});

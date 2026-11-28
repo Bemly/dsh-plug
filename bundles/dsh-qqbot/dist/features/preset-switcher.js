@@ -1,5 +1,15 @@
 /** 按钮回调数据前缀 */
+import { createHash } from 'node:crypto';
 const BTN_PREFIX = 'ps:';
+/** 预设身份短指纹：卡片发出后列表可能热更，靠它避免点 A 切 B。 */
+function presetTag(p) {
+    try {
+        return createHash('sha256').update(String(p?.id ?? '')).digest('hex').slice(0, 8);
+    }
+    catch {
+        return '';
+    }
+}
 /** 每页行数(第5行留给翻页导航, 对齐 QQ 按钮最多5行) */
 const MAX_ROWS = 4;
 /** 每行按钮数 */
@@ -35,16 +45,17 @@ export function parsePresetButton(data) {
         return null;
     const rest = data.slice(BTN_PREFIX.length);
     const parts = rest.split(':');
-    if (parts.length !== 2)
+    // `ps:<page>:<idx>`（老卡片）或 `ps:<page>:<idx>:<tag>`
+    if (parts.length < 2 || parts.length > 3)
         return null;
-    const [pageStr, key] = parts;
+    const [pageStr, key, tag = ''] = parts;
     const page = Number(pageStr);
     if (!Number.isInteger(page) || page < 0)
         return null;
     if (key === 'prev' || key === 'next')
         return key;
     const idx = Number(key);
-    return Number.isInteger(idx) && idx >= 0 ? { page, idx } : null;
+    return Number.isInteger(idx) && idx >= 0 ? { page, idx, tag } : null;
 }
 /** 从按钮 data 提取页码(翻页导航用; 无效返回 0) */
 function pageOfData(data) {
@@ -59,8 +70,8 @@ function presetKeyboard(page, presets, currentId) {
     const safePage = Math.min(page, pages - 1);
     const start = safePage * PER_PAGE;
     const pagePresets = presets.slice(start, start + PER_PAGE);
-    const btn = (label, key, style) => ({
-        id: `${BTN_PREFIX}${safePage}:${key}`,
+    const btn = (label, key, style, tag = '') => ({
+        id: `${BTN_PREFIX}${safePage}:${key}${tag ? `:${tag}` : ''}`,
         render_data: {
             label: String(label).slice(0, 24),
             visited_label: String(label).slice(0, 24),
@@ -69,7 +80,7 @@ function presetKeyboard(page, presets, currentId) {
         action: {
             type: 1,
             permission: { type: 2 }, // 群聊谁都可见可点(切人格不是敏感操作)
-            data: `${BTN_PREFIX}${safePage}:${key}`,
+            data: `${BTN_PREFIX}${safePage}:${key}${tag ? `:${tag}` : ''}`,
             unsupport_tips: '请直接回复 /preset <id>',
         },
     });
@@ -78,7 +89,7 @@ function presetKeyboard(page, presets, currentId) {
     for (let i = 0; i < pagePresets.length && rows.length < MAX_ROWS; i += COLS) {
         const rowIdx = i; // 页面内起点序号
         rows.push({
-            buttons: pagePresets.slice(i, i + COLS).map((p, j) => btn(p.name || p.id, String(rowIdx + j), p.id === currentId ? 1 : 0)),
+            buttons: pagePresets.slice(i, i + COLS).map((p, j) => btn(p.name || p.id, String(rowIdx + j), p.id === currentId ? 1 : 0, presetTag(p))),
         });
     }
     // 翻页行: 上一页 + 下一页(仿 botplay; 页码显示在 markdown 文本里)
@@ -189,6 +200,11 @@ export class PresetSwitcherController {
             const pick = available[pageStart + parsed.idx];
             if (!pick) {
                 await this.sender.sendMarkdown(target, '这个预设已不存在, 请重新发 /preset 刷新卡片~');
+                return true;
+            }
+            if (parsed.tag && presetTag(pick) !== parsed.tag) {
+                await this.sender.sendMarkdown(target, '预设列表已经变了，已重新发卡，请再点一次~');
+                await this.sendCard(target, scope, peerId, parsed.page);
                 return true;
             }
             const r = await this.manager.switchPreset(scope, peerId, pick.id);

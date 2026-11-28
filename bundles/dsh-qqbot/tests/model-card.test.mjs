@@ -12,3 +12,11 @@ test('模型卡按钮带模型指纹，兼容老格式', () => {
     assert.equal(parseModelButton('mdl:0:1:tag:extra'), null);
     assert.equal(parseModelButton('eff:0'), null);
 });
+
+test('人格卡按钮同样带预设指纹', async () => {
+    const { parsePresetButton } = await import('../dist/features/preset-switcher.js');
+    assert.deepEqual(parsePresetButton('ps:0:2:deadbeef'), { page: 0, idx: 2, tag: 'deadbeef' });
+    assert.deepEqual(parsePresetButton('ps:1:4'), { page: 1, idx: 4, tag: '' });
+    assert.equal(parsePresetButton('ps:0:prev'), 'prev');
+    assert.equal(parsePresetButton('mdl:0:1'), null);
+});
