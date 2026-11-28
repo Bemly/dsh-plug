@@ -71,15 +71,13 @@ async function loadJimp() {
 }
 /** 长边硬上限（px）：只缩不放 */
 export const MAX_EDGE = 2560;
-/**
- * MaxRects 矩形装箱 —— 纹理图集（sprite sheet / UV atlas）的工业标准算法，
- * Unity SpriteAtlas 与 TexturePacker 默认用它，空间利用率通常 85%~95%。
- *
- * 2026-11-27 主人指出「每张图都是同样大小」的问题后替换掉原来的统一网格：
- * 旧做法把所有图塞进等大的格子，小图周围大片空白、大图被压扁，分辨率全浪费。
- * 现在按**每张图的真实宽高**动态找位置（BSSF：Best Short Side Fit，
- * 每次挑"放进去后剩下短边最短"的那个空洞），紧凑贴合、不再留格子。
- */
+const buffers = new Map();
+const sentFingerprints = new Map();
+const SENT_KEEP = 128;
+let sentIndexFile = '';
+const OUR_ATTACH = new Set();
+let ourAttachFile = '';
+const OUR_ATTACH_KEEP = 2000;
 export function initAggregateRegistry(dataRoot) {
     try {
         if (!dataRoot)
