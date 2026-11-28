@@ -8,7 +8,8 @@
  *
  * ⚠️ 本地手改功能(fork 新增)。
  */
-import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 const FILE_NAME = 'timers.json';
 /** 最小相对秒(与 ticker 粒度对齐) */
@@ -63,32 +64,34 @@ export class ScheduleStore {
             return;
         this.saveTimer = setTimeout(() => {
             this.saveTimer = null;
-            if (!this.dirty)
-                return;
-            this.dirty = false;
-            try {
-                const p = this.file();
-                const tmp = `${p}.tmp`;
-                writeFileSync(tmp, JSON.stringify({ version: 1, jobs: this.jobs }, null, 2), 'utf8');
-                renameSync(tmp, p);
-            }
-            catch (err) {
-                this.logger?.warn?.(`[schedule] save failed: ${err instanceof Error ? err.message : String(err)}`);
-            }
+            this.writeNow();
         }, 300);
+        this.saveTimer.unref?.();
+    }
+    writeNow() {
+        if (!this.dirty)
+            return true;
+        const p = this.file();
+        const tmp = `${p}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+        try {
+            writeFileSync(tmp, JSON.stringify({ version: 1, jobs: this.jobs }, null, 2), 'utf8');
+            renameSync(tmp, p);
+            this.dirty = false;
+            return true;
+        }
+        catch (err) {
+            try { unlinkSync(tmp); } catch { /* ignore */ }
+            this.dirty = true;
+            this.logger?.warn?.(`[schedule] save failed: ${err instanceof Error ? err.message : String(err)}`);
+            return false;
+        }
     }
     flush() {
         if (this.saveTimer) {
             clearTimeout(this.saveTimer);
             this.saveTimer = null;
         }
-        if (!this.dirty)
-            return;
-        this.dirty = false;
-        try {
-            writeFileSync(this.file(), JSON.stringify({ version: 1, jobs: this.jobs }, null, 2), 'utf8');
-        }
-        catch { /* ignore */ }
+        return this.writeNow();
     }
     /** 新建任务; 返回 {ok, id?, error?}。kind 缺省: atTime 且无 seconds→daily, 否则 once */
     add(input) {

@@ -43,6 +43,10 @@ test('成功 fork 使用同作用域 composed 并替换活跃 agent', async () =
         cancelRecordOutbound() {},
     });
     const record = { sessionId: 'old-id', agent: { id: 'old-agent' }, handle: { dispose: async () => {} } };
+    // fork 现在走同 key 单飞 + 世代校验：桩必须提供 sessions/sessionGenerations，
+    // 否则 `this.sessions?.get?.(key) !== record` 会把正常 fork 判定成"已被取代"。
+    manager.sessions = new Map([['key', record]]);
+    manager.sessionGenerations = new Map([['key', 0]]);
     const ok = await manager.forkCurrentSession('key', record, undefined, false);
     assert.equal(ok, true);
     assert.equal(record.sessionId, 'child-id');

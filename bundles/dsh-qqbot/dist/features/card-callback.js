@@ -18,6 +18,26 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+/** 交互事件只认明确的群/私聊 peer；群成员 id 不能拿来冒充群 id。 */
+export function interactionPeer(event) {
+    const e = event;
+    if (e?.group_openid)
+        return { scope: 'group', targetId: String(e.group_openid) };
+    if (e?.user_openid)
+        return { scope: 'c2c', targetId: String(e.user_openid) };
+    return undefined;
+}
+function samePeer(card, event, target) {
+    const peer = interactionPeer(event);
+    if (!peer || !card?.scope || !card?.targetId)
+        return false;
+    if (card.scope !== peer.scope || String(card.targetId) !== peer.targetId)
+        return false;
+    // target 是执行器给出的回复坐标；有值时必须与事件、原卡一致。
+    if (target && (target.scope !== peer.scope || String(target.targetId ?? '') !== peer.targetId))
+        return false;
+    return true;
+}
 /** 卡片按钮 data 前缀（区别于 botplay 的 `bp:` 与目录卡的 `bpc:`） */
 export const CARD_BTN_PREFIX = 'bpk:';
 /** 最多保留的卡片条数（超出丢最旧的；卡片本身有过期时间兜底） */
@@ -79,14 +99,14 @@ export function parseCardButtonData(data) {
  * @returns true = 已消费（调用方无需其它处理）
  */
 export function createCardCallbackController(deps) {
-    const { dataRoot, sendText, commandExecutor, logger } = deps;
+    const { dataRoot, sendText, commandExecutor, commandAuthorizer, logger } = deps;
     return {
         async handleInteraction(event, target) {
             const e = event;
             if (e?.data?.type !== 11)
                 return false;
-            // 点击者身份（群聊=群成员 openid / 单聊=用户 openid）；拿不到就留空，行为与以前一致
-            const actorOpenid = String(e.group_member_openid ?? e.user_openid ?? '');
+            // 点击者身份（群聊=群成员 openid / 单聊=用户 openid）；缺失时命令路径 fail-closed。
+            const actorOpenid = String(e.group_member_openid ?? e.user_openid ?? '').trim();
             const parsed = parseCardButtonData(e.data.resolved?.button_data);
             if (!parsed)
                 return false;
@@ -95,9 +115,14 @@ export function createCardCallbackController(deps) {
                 // 不是本模块发的卡 / 已过期 → 不消费, 让别的处理器或默认提示接手
                 return false;
             }
-            const btn = card.buttons.find((b) => b.id === parsed.buttonId);
+            const btn = (Array.isArray(card.buttons) ? card.buttons : []).find((b) => b.id === parsed.buttonId);
             if (!btn)
                 return false;
+            if (!samePeer(card, e, target)) {
+                logger?.warn?.(`[card-callback] 拒绝跨 peer 点击 card=${parsed.cardId}`);
+                await sendText(target, '这张卡片不能在当前会话操作。');
+                return true;
+            }
             try {
                 if (btn.action === 'text') {
                     const text = String(btn.payload ?? '').trim();
@@ -109,8 +134,24 @@ export function createCardCallbackController(deps) {
                     const cmdName = String(btn.payload ?? '').trim().replace(/^\//, '');
                     if (!cmdName)
                         return true;
-                    if (!commandExecutor) {
-                        await sendText(target, '指令执行器未就绪, 请稍后再试~');
+                    if (!commandExecutor || typeof commandAuthorizer !== 'function') {
+                        await sendText(target, '指令执行器未就绪或未接入鉴权, 请稍后再试~');
+                        return true;
+                    }
+                    const commandCtx = {
+                        message: {
+                            kind: target.scope,
+                            senderId: actorOpenid,
+                            groupOpenid: target.scope === 'group' ? target.targetId : undefined,
+                        },
+                        replyTarget: target,
+                        command: { name: cmdName, args: [], raw: '' },
+                        args: '',
+                    };
+                    // 与普通命令共用 authorized；按钮执行器必须接入同一 helper，缺失时拒绝。
+                    const verdict = await commandAuthorizer(cmdName, commandCtx);
+                    if (verdict !== true) {
+                        await sendText(target, typeof verdict === 'string' && verdict.trim() ? verdict : '⚠️ 这个命令只有主人能用。');
                         return true;
                     }
                     const out = await commandExecutor(cmdName, target, actorOpenid);

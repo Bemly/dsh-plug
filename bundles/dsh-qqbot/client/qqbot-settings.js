@@ -267,7 +267,7 @@ window.__ModuleLoader__.load({
         id: 'rate', icon: '②', title: '多久回一次消息',
         desc: '控制她回复的速度。全填 0 = 来一条回一条(不限制)。',
         fields: [
-          { k: 'behavior.freeIntervalSec', kw: '回复 间隔 频率 冷却 限速 慢 秒 群 没人at', t: 'num', label: '群里没人 @ 她时,隔几秒才回一次(0=每条都回)', def: 0 },
+          { k: 'behavior.freeIntervalSec', kw: '回复 间隔 频率 冷却 限速 慢 秒 群 没人at', t: 'num', label: '群里没人 @ 她时,隔几秒才回一次(0=每条都回)', def: 60 },
           { k: 'behavior.mentionIntervalSec', kw: '回复 间隔 at 提及 秒 快 随叫随到', t: 'num', label: '有人 @ 她时,两次回复至少隔几秒(0=随叫随到)', def: 0 },
           { k: 'behavior.directIntervalSec', kw: '回复 间隔 私聊 单聊 秒', t: 'num', label: '私聊里隔几秒回一次(0=不限制)', def: 0 },
           {
@@ -307,10 +307,10 @@ window.__ModuleLoader__.load({
           { k: 'sticker.gates.enabled', kw: '表情包 图 限制 闸门 开关 刷屏', t: 'bool', label: '开启表情包限制(不勾=完全不限制)', def: false },
           { k: 'sticker.gates.perTurnMax', kw: '表情包 图 每轮 一次 上限 几张', t: 'num', label: '她一次回复最多带几张图(0=不限)', def: 0 },
           { k: 'sticker.gates.maxPerWindow', kw: '表情包 图 频率 窗口 上限 几张', t: 'num', label: '每隔"一小段时间"最多发几张(0=不限)', def: 0 },
-          { k: 'sticker.gates.perWindowSec', kw: '窗口 时间 秒 频率 区间', t: 'num', label: '上面说的"一小段时间"是多长(秒,如600=10分钟)', def: 0 },
+          { k: 'sticker.gates.perWindowSec', kw: '窗口 时间 秒 频率 区间', t: 'num', label: '上面说的"一小段时间"是多长(秒,如600=10分钟)', def: 600 },
           { k: 'sticker.gates.dailyBudgetPerGroup', kw: '表情包 每日 每天 预算 上限 群', t: 'num', label: '每个群一天最多发几张表情包(0=不限)', def: 0 },
           { k: 'sticker.gates.dupTTLHours', kw: '重复 去重 同一张 小时 冷却', t: 'num', label: '同一张图多久内不许重复发(小时,0=不查)', def: 0 },
-          { k: 'sticker.gates.activityWindowSec', kw: '活跃 热闹 窗口 时间 多久', t: 'num', label: '看"最近"多长时间的聊天来判热闹(3600=最近1小时)', def: 0 },
+          { k: 'sticker.gates.activityWindowSec', kw: '活跃 热闹 窗口 时间 多久', t: 'num', label: '看"最近"多长时间的聊天来判热闹(3600=最近1小时)', def: 3600 },
           { k: 'sticker.gates.activityMinMsgs', kw: '活跃 热闹 消息数 门槛 冷清', t: 'num', label: '最近这段时间群消息达到几条,她才肯主动发图(0=不管冷不冷都发)', def: 0 },
           { k: 'sticker.gates.bannedGroups', kw: '禁止 禁发 群 黑名单 排除', t: 'list', label: '禁止发图的群(填群ID,逗号分隔;一般不用填)', wide: true, def: [] },
           { t: 'note', label: '图库维护' },
@@ -2433,7 +2433,7 @@ window.__ModuleLoader__.load({
               if (p.status === 'done') {
                 clearInterval(pollRef.current); pollRef.current = null
                 var nextList = addBound({ appId: p.appId, appSecret: p.appSecret })
-                setTimeout(function () { autoSaveAfterBind(nextList) }, 200)
+                setTimeout(function () { save(nextList, true) }, 200)
                 setMsg('🎉 扫码成功, 正在自动保存…')
                 setBind(null)
               } else if (p.status === 'error') {
@@ -3150,7 +3150,7 @@ var QQS_THEME_CSS = [
       }, 30000)
 
       // ── 面板状态(每个实例独立保存, 切回不丢) ──
-      var state = { ns: '', accts: [], gid: '', groups: [], tab: 'chat', sendScope: 'group', sendTo: '', sendName: '', sendText: '', insertCtx: true, targetQ: '', c2cs: [], joins: null, mutes: null, members: null, blockedUsers: null, blockMembers: null, blockOwners: [], blockBusy: '', blockOpenid: '', blockMsg: '', muteSecs: '60', bindGid: '', bindName: '', msg: '', busy: '', wantPeer: null, lookedUp: false, detected: null, detectedHit: null, chatItems: [], chatMore: false, chatBusy: '', chatErr: '', chatOldest: 0, chatText: '', chatIns: true, outMode: '', outRev: undefined, bpEvents: [], bpSel: null, bpDraft: null, bpExt: null, bpExtBusy: '', bpReq: '', bpReqHint: '', bpSrcText: null, bpSrcPath: '', rosterSel: {}, rosterScope: 'all', rosterQ: '', hubSid: '', hubRev: undefined, hubBusy: '', hubMsg: '', gaEnabled: false, gaPoll: false, gaPollWake: true, gaHubNotify: true, gaNotifyGroup: true, gaInterval: 5, gaMinCount: 1, gaMsg: '', gaBusy: '', bcDraft: null, bcTasks: null, cardMd: '', cardBtns: '', cardGid: '', cardBusy: '', cardQ: '', tgGroups: [], tgCur: '', hammerSub: 'mute', arOn: false, arMode: 'keep', arKws: '', arKinds: [], arMute: 0, arDry: false, arMsg: '', qunLogged: null, qunUin: '', qunGroups: [], qunGc: '', qunKw: '', qunMembers: [], qunCount: 0, qunQr: false, qunMsg: '', qunBusy: false, qunLoading: false }
+      var state = { ns: '', accts: [], gid: '', groups: [], tab: 'chat', sendScope: 'group', sendTo: '', sendName: '', sendText: '', insertCtx: true, targetQ: '', c2cs: [], joins: null, mutes: null, members: null, blockedUsers: null, blockMembers: null, blockOwners: [], blockBusy: '', blockOpenid: '', blockMsg: '', muteSecs: '60', bindGid: '', bindName: '', msg: '', busy: '', wantPeer: null, lookedUp: false, detected: null, detectedHit: null, chatItems: [], chatMore: false, chatBusy: '', chatErr: '', chatOldest: 0, chatText: '', chatIns: true, outMode: '', outRev: undefined, bpEvents: [], bpSel: null, bpDraft: null, bpExt: null, bpExtBusy: '', bpReq: '', bpReqHint: '', bpSrcText: null, bpSrcPath: '', rosterSel: {}, rosterScope: 'all', rosterQ: '', hubSid: '', hubRev: undefined, hubBusy: '', hubMsg: '', gaEnabled: false, gaPoll: false, gaPollWake: true, gaHubNotify: true, gaNotifyGroup: true, gaInterval: 5, gaMinCount: 2, gaMsg: '', gaBusy: '', bcDraft: null, bcTasks: null, cardMd: '', cardBtns: '', cardGid: '', cardBusy: '', cardQ: '', tgGroups: [], tgCur: '', hammerSub: 'mute', arOn: false, arMode: 'keep', arKws: '', arKinds: [], arMute: 0, arDry: false, arMsg: '', qunLogged: null, qunUin: '', qunGroups: [], qunGc: '', qunKw: '', qunMembers: [], qunCount: 0, qunQr: false, qunMsg: '', qunBusy: false, qunLoading: false }
       // ★ 2026-10-27：把 state 暴露到 window —— 模块级的 mountDockCard 拿不到这个闭包变量，
       //   扩展卡片要读当前 ns / gid 只能从这里取。
       try { window.__qqsDockState = state } catch (e) { /* ignore */ }
@@ -3166,15 +3166,12 @@ var QQS_THEME_CSS = [
         try { localStorage.setItem('qqs-target-groups', JSON.stringify(state.tgGroups || [])) } catch (e) {}
         // 同步 host(与 AI 共用); 失败不影响本地缓存与当前操作
         try {
-          fetch(api('group/target-groups'), {
-            method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ ns: state.ns || undefined, groups: state.tgGroups || [] }),
-          }).catch(function () {})
+          apiPost('group/target-groups', { ns: state.ns || undefined, groups: state.tgGroups || [] })
         } catch (e) {}
       }
       function loadTgGroupsFromHost() {
-        fetch(api('group/target-groups' + (state.ns ? '?ns=' + encodeURIComponent(state.ns) : '')), { cache: 'no-store' })
-          .then(function (r) { return r.json() }).then(function (d) {
+        api('group/target-groups' + (state.ns ? '?ns=' + encodeURIComponent(state.ns) : ''))
+          .then(function (d) {
             if (!d || !d.ok) return
             var host = Array.isArray(d.groups) ? d.groups : []
             var local = Array.isArray(state.tgGroups) ? state.tgGroups : []
@@ -4101,7 +4098,7 @@ var QQS_THEME_CSS = [
           state.gaNotifyGroup = read('#dk-ga-notifygroup')
           state.gaWakeGroup = read('#dk-ga-wakegroup')
           state.gaInterval = num('#dk-ga-interval', 5)
-          state.gaMinCount = num('#dk-ga-mincount', 1)
+          state.gaMinCount = num('#dk-ga-mincount', 2)
           saveGroupAdmin()
         }
         // M3 群发(自动审批策略已按主人要求移除 2026-09-10)
@@ -4136,7 +4133,7 @@ var QQS_THEME_CSS = [
           state.gaNotifyGroup = poll.notifyGroup !== false
           state.gaWakeGroup = poll.wakeGroup === true
           state.gaInterval = poll.intervalMin || 5
-          state.gaMinCount = poll.minCount || 1
+          state.gaMinCount = poll.minCount || 2
           var e1 = panel && panel.querySelector('#dk-ga-enabled'); if (e1) e1.checked = state.gaEnabled
       var ew = panel && panel.querySelector('#dk-ga-watch'); if (ew) ew.checked = state.gaWatch
           var e2 = panel && panel.querySelector('#dk-ga-poll'); if (e2) e2.checked = state.gaPoll
@@ -4219,6 +4216,9 @@ var QQS_THEME_CSS = [
                 intervalMin: state.gaInterval,
                 minCount: state.gaMinCount,
                 wakeLlm: state.gaPollWake,
+                hubNotify: state.gaHubNotify,
+                notifyGroup: state.gaNotifyGroup,
+                wakeGroup: state.gaWakeGroup,
               },
               // ★ 2026-10-26 修（主人报「叉掉注入群管会话还是会注入」）：
               //   hubNotify / notifyInGroup / wakeGroup 是 groupAdmin 的**顶层**字段
@@ -5043,7 +5043,7 @@ var QQS_THEME_CSS = [
             + '</div>'
             + '<div class="dk-row" style="gap:8px;flex-wrap:wrap">'
             + '<span style="font-size:12px;color:#666;display:inline-flex;align-items:center;gap:4px">间隔 <input type="number" id="dk-ga-interval" min="1" value="' + (state.gaInterval || 5) + '" style="width:52px;font-size:12px;padding:2px 4px"> 分钟</span>'
-            + '<span style="font-size:12px;color:#666;display:inline-flex;align-items:center;gap:4px">攒够<input type="number" id="dk-ga-mincount" min="1" value="' + (state.gaMinCount || 1) + '" style="width:44px;font-size:12px;padding:2px 4px">个才提醒</span>'
+            + '<span style="font-size:12px;color:#666;display:inline-flex;align-items:center;gap:4px">攒够<input type="number" id="dk-ga-mincount" min="1" value="' + (state.gaMinCount || 2) + '" style="width:44px;font-size:12px;padding:2px 4px">个才提醒</span>'
             + '<button class="dk-btn ok" id="dk-ga-save" style="margin-left:auto">💾 保存设置</button>'
             + '</div>'
             + '<div class="dk-msg" style="line-height:1.5;color:#888">轮询=定时拉各群审批列表, 有新增就唤醒AI提醒你(默认1个也报, 不攒死); 大量申请靠轮询周期自然攒批。保存即热更新, 不用重启。</div>'
@@ -5901,7 +5901,7 @@ var QQS_THEME_CSS = [
           })
           state.arKinds = arr
           state.arMsg = '保存中…'
-          saveGroupAdmin()
+          saveAutoRecallOnly()
         }
         // 🥾 官方踢人（2026-11-17）：名单复用「禁言」页那份（本地台账，有名字）
         //   ⚠️ 两个坑都踩过了：

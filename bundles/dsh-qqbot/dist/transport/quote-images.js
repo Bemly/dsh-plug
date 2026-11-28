@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { lookupImagePath, rememberImagePath } from '../features/image-path-cache.js';
+import { fetchSafeBytes } from '../features/sticker-store.js';
 /** 一次最多预取几张（防有人引用一堆图拖慢入站） */
 const MAX_IMAGES = 3;
 /** 单张下载超时 */
@@ -79,27 +80,25 @@ export async function prefetchQuoteImages(quote, dataRoot, logger) {
             continue; // 已经是本机路径 / 非 http → 无需预取
         if (!isImageAtt(a))
             continue;
-        if (lookupImagePath(url))
+        if (lookupImagePath(url, undefined, dataRoot))
             continue; // 缓存已有 → 同步侧本来就能命中
         try {
-            const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-            if (!res.ok) {
-                logger?.debug?.(`[引用图片预取] HTTP ${res.status}: ${url.slice(0, 80)}`);
+            const { buf, contentType } = await fetchSafeBytes(url, 12 * 1024 * 1024, TIMEOUT_MS);
+            if (buf.length === 0) {
+                logger?.debug?.('[引用图片预取] 空响应, 跳过');
                 continue;
             }
-            const buf = Buffer.from(await res.arrayBuffer());
-            if (buf.length === 0 || buf.length > 12 * 1024 * 1024) {
-                logger?.debug?.(`[引用图片预取] 体积异常(${buf.length}B), 跳过`);
+            const ext = detectImageExt(buf, contentType);
+            if (!ext)
                 continue;
-            }
             const dir = join(dataRoot, '.qqbot', 'referenced');
             mkdirSync(dir, { recursive: true });
             const sha1 = createHash('sha1').update(buf).digest('hex').slice(0, 12);
-            const file = join(dir, sha1 + extOf(a));
+            const file = join(dir, sha1 + ext);
             // ★ 内容寻址：同内容只写一次（原来每次都 writeFileSync 覆盖同名文件，白写）
             if (!existsSync(file))
                 writeFileSync(file, buf);
-            rememberImagePath(url, file);
+            rememberImagePath(url, file, dataRoot);
             done++;
             logger?.debug?.(`[引用图片预取] 已落盘 ${file} (${buf.length}B)`);
         }
@@ -112,6 +111,19 @@ export async function prefetchQuoteImages(quote, dataRoot, logger) {
 /** 一次最多预取几张合并转发/正文内嵌图 */
 const MAX_CONTENT_IMAGES = 6;
 function detectImageExt(buf, contentType) {
+    // 魔数优先：QQ 的 Content-Type 和 URL 后缀都可能是错的。
+    if (buf.length >= 12) {
+        if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
+            return '.png';
+        if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)
+            return '.jpg';
+        if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38)
+            return '.gif';
+        if (buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP')
+            return '.webp';
+        if (buf[0] === 0x42 && buf[1] === 0x4d)
+            return '.bmp';
+    }
     const ct = String(contentType ?? '').toLowerCase();
     if (ct.includes('png'))
         return '.png';
@@ -123,19 +135,6 @@ function detectImageExt(buf, contentType) {
         return '.bmp';
     if (ct.includes('jpeg') || ct.includes('jpg'))
         return '.jpg';
-    // 魔数识别（QQ 群聊图片有时报 application/octet-stream）
-    if (buf.length >= 4) {
-        if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
-            return '.png';
-        if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)
-            return '.jpg';
-        if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38)
-            return '.gif';
-        if (buf.length >= 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP')
-            return '.webp';
-        if (buf[0] === 0x42 && buf[1] === 0x4d)
-            return '.bmp';
-    }
     return '';
 }
 /**
@@ -165,18 +164,13 @@ export async function prefetchContentImages(content, dataRoot, logger) {
     for (const url of urls) {
         if (done >= MAX_CONTENT_IMAGES)
             break;
-        let file = lookupImagePath(url);
+        let file = lookupImagePath(url, undefined, dataRoot);
         if (!file || !existsSync(file)) {
             try {
-                const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-                if (!res.ok) {
-                    logger?.debug?.(`[正文图片预取] HTTP ${res.status}: ${url.slice(0, 80)}`);
+                const { buf, contentType } = await fetchSafeBytes(url, 12 * 1024 * 1024, TIMEOUT_MS);
+                if (buf.length === 0)
                     continue;
-                }
-                const buf = Buffer.from(await res.arrayBuffer());
-                if (buf.length === 0 || buf.length > 12 * 1024 * 1024)
-                    continue;
-                const ext = detectImageExt(buf, res.headers.get('content-type'));
+                const ext = detectImageExt(buf, contentType);
                 if (!ext)
                     continue; // 非图片（如视频/文件）跳过
                 const dir = join(dataRoot, '.qqbot', 'referenced');
@@ -185,7 +179,7 @@ export async function prefetchContentImages(content, dataRoot, logger) {
                 file = join(dir, sha1 + ext);
                 if (!existsSync(file))
                     writeFileSync(file, buf);
-                rememberImagePath(url, file);
+                rememberImagePath(url, file, dataRoot);
                 logger?.debug?.(`[正文图片预取] 已落盘 ${file} (${buf.length}B)`);
             }
             catch (e) {

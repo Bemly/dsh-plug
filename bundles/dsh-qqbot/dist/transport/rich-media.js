@@ -13,6 +13,7 @@
  */
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { realpathSync } from 'node:fs';
 /**
  * 富媒体标记：支持单个或多段连续出现。
  *
@@ -130,22 +131,40 @@ export function extractRefTag(text) {
  *   其余(相对) → 相对 cwd 解析为绝对路径
  * 返回 { kind: 'url', url } | { kind: 'localPath', path }，便于底层分发。
  */
-export function resolveSource(source, cwd) {
-    const s = source.trim();
+function withinRoot(root, target) {
+    const rel = path.relative(path.resolve(root), target);
+    return rel === '' || (!path.isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`));
+}
+
+export function resolveSource(source, cwd, allowedRoots) {
+    const s = String(source ?? '').trim();
+    if (!s)
+        return undefined;
     if (/^https?:\/\//i.test(s))
         return { kind: 'url', url: s };
+    let local;
     if (s.startsWith('file://')) {
         try {
-            return { kind: 'localPath', path: fileURLToPath(s) };
+            local = fileURLToPath(s);
         }
         catch {
-            return { kind: 'localPath', path: s.replace(/^file:\/\//, '') };
+            local = s.replace(/^file:\/\//, '');
         }
     }
-    // Windows 盘符或绝对路径
-    if (/^[a-zA-Z]:[\\/]/.test(s) || s.startsWith('/'))
-        return { kind: 'localPath', path: s };
-    // 相对 → 相对 cwd
-    return { kind: 'localPath', path: cwd ? path.resolve(cwd, s) : s };
+    else if (/^[a-zA-Z]:[\\/]/.test(s) || s.startsWith('/')) {
+        local = s;
+    }
+    else {
+        local = cwd ? path.resolve(cwd, s) : s;
+    }
+    const abs = path.resolve(local);
+    if (Array.isArray(allowedRoots) && allowedRoots.length) {
+        let real = abs;
+        try { real = realpathSync(abs); } catch { /* 不存在时按解析路径判断 */ }
+        if (!allowedRoots.some((root) => withinRoot(root, real)))
+            return undefined;
+        return { kind: 'localPath', path: real };
+    }
+    return { kind: 'localPath', path: abs };
 }
 //# sourceMappingURL=rich-media.js.map

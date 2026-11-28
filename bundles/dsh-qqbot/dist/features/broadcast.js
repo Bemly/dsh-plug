@@ -120,6 +120,34 @@ export function listTasks(dataRoot) {
 export function getTask(dataRoot, taskId) {
     return loadStore(dataRoot).tasks.find((x) => x.task_id === taskId);
 }
+/**
+ * 写回前合并磁盘上的最新任务状态（2026-11-28 审计 P1）：
+ * 推进过程中有指数退避 sleep 和网络 await，这期间用户可能点过取消。
+ * 原来直接 saveStore(旧快照) 会把磁盘上的 cancelled 覆盖回 sending，
+ * 任务于是继续发给下一个目标（已复现）。
+ */
+function saveTaskMerged(dataRoot, task) {
+    const latest = loadStore(dataRoot);
+    const lt = latest.tasks.find((x) => x.task_id === task.task_id);
+    if (!lt) {
+        saveStore(dataRoot, latest);
+        return task;
+    }
+    lt.results = task.results;
+    lt.retries = task.retries;
+    if (lt.state === 'cancelled') {
+        // 取消是终态：保留 cancelled，只补上已发结果（撤回还要用 message_id）
+        saveStore(dataRoot, latest);
+        return lt;
+    }
+    lt.state = task.state;
+    if (task.done_at)
+        lt.done_at = task.done_at;
+    if (task.cancelled_by)
+        lt.cancelled_by = task.cancelled_by;
+    saveStore(dataRoot, latest);
+    return lt;
+}
 /** 任务级推进锁(2026-09-10 修): host 后台定时器与 dock 的 list 请求可能同时推进同一任务,
  *  两边都读到「results 里该目标为空」→ 同一个目标被发两次(主人实测"点一次发两条")。
  *  用 Set 做进程内互斥: 同一任务同一时刻只允许一个推进在跑, 另一个直接返回当前快照。 */
@@ -171,8 +199,7 @@ async function advanceTaskInner(dataRoot, taskId, client, opts) {
         const allOk = t.targets.every((tg2) => t.results[tg2.peerId]?.ok);
         t.state = allOk ? 'done' : 'partial_failed';
         t.done_at = Date.now();
-        saveStore(dataRoot, store);
-        return t;
+        return saveTaskMerged(dataRoot, t);
     }
     if (t.state === 'queued')
         t.state = 'sending';
@@ -187,8 +214,7 @@ async function advanceTaskInner(dataRoot, taskId, client, opts) {
         t.state = 'cancelled';
         t.cancelled_by = 'operator';
         t.done_at = Date.now();
-        saveStore(dataRoot, store);
-        return t;
+        return saveTaskMerged(dataRoot, t);
     }
     try {
         // card 类型(markdown+按钮)走卡片接口; 其余走文本接口(2026-09-10)
@@ -211,8 +237,7 @@ async function advanceTaskInner(dataRoot, taskId, client, opts) {
         t.retries[tg.peerId] = (t.retries[tg.peerId] || 0) + 1;
         t.results[tg.peerId] = { ok: false, err: String(e?.message ?? e) };
     }
-    saveStore(dataRoot, store);
-    return t;
+    return saveTaskMerged(dataRoot, t);
 }
 /** 撤回某任务发给指定目标的某条消息(2 分钟窗口, 由调用方做权限判断) */
 export async function recallTaskMessage(dataRoot, taskId, peerId, client) {

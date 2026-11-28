@@ -165,12 +165,16 @@ const _rootsByAppId = new Map();
 let _store = null;
 
 export function getHistoryStore(appId, dataRoot) {
+    const previousRoot = appId ? _rootsByAppId.get(appId) : undefined;
     if (dataRoot)
         _rootsByAppId.set(appId, dataRoot);
     if (appId) {
         let store = _storesByAppId.get(appId);
+        const currentRoot = _rootsByAppId.get(appId);
+        if (store && dataRoot && previousRoot !== dataRoot)
+            store = undefined;
         if (!store) {
-            const root = _rootsByAppId.get(appId) ?? join(process.env.DSH_HOME || tmpdir(), '.dsh-qqbot-history');
+            const root = currentRoot ?? join(process.env.DSH_HOME || tmpdir(), '.dsh-qqbot-history');
             store = new FileHistoryStore(join(root, '.qqbot', 'history-cache', String(appId)));
             _storesByAppId.set(appId, store);
         }

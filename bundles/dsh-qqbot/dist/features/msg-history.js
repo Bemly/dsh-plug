@@ -14,7 +14,7 @@
  * 用途：`group_recall`（撤某人最近一条）、`group_msg_search`（按关键词/类型搜）、
  *       `group_recall_batch`（批量撤 + 顺带禁言）。与引用补全用的 msg-content.jsonl **互不干扰**。
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { md5sInText, normQuoteText } from '../shared/quote-match.js';
 import { appendLine, closeFile, ensureDir, forgetDirTree, hasActiveStream } from '../shared/async-append.js';
@@ -569,8 +569,13 @@ export function appendMsgHistory(scope, peerId, rec) {
         const c = dayCache.get(fp) ?? (() => { readDayRows(fp, true); return dayCache.get(fp); })();
         if (c) {
             c.rows.unshift(row);
-            // ⚠️ 不再按 CACHE_ROWS 截断：截断时 byNx/byMd5/sorted 里会残留已不在 rows 中的记录
-            //   （CodeRabbit 指出）。行数由 MAX_READ_LINES 兜底。
+            if (c.rows.length > MAX_READ_LINES + 1000) {
+                c.rows = c.rows.slice(0, MAX_READ_LINES);
+                const idx = buildIndex(c.rows);
+                c.sorted = idx.sorted;
+                c.byNx = idx.byNx;
+                c.byMd5 = idx.byMd5;
+            }
             // 增量维护双向前缀索引（不然下次查询判定 mtime 变了 → 重扫 500 行重建）
             for (const md of Array.isArray(row.f) ? row.f : []) {
                 const k = String(md).toLowerCase();
@@ -726,7 +731,25 @@ function readDayRows(file, cacheable) {
     }
     let text = '';
     try {
-        text = readFileSync(file, 'utf8');
+        const st = statSync(file);
+        const READ_TAIL_BYTES = 8 * 1024 * 1024;
+        if (st.size > READ_TAIL_BYTES) {
+            const fd = openSync(file, 'r');
+            try {
+                const buf = Buffer.alloc(READ_TAIL_BYTES);
+                const n = readSync(fd, buf, 0, READ_TAIL_BYTES, st.size - READ_TAIL_BYTES);
+                text = buf.subarray(0, n).toString('utf8');
+                const firstNl = text.indexOf('\n');
+                if (firstNl >= 0)
+                    text = text.slice(firstNl + 1);
+            }
+            finally {
+                closeSync(fd);
+            }
+        }
+        else {
+            text = readFileSync(file, 'utf8');
+        }
     }
     catch {
         // ★ 2026-11-15（CodeRabbit 抓到）：文件还不存在时，cacheable 也要**建一个空缓存** ——
@@ -858,9 +881,21 @@ export function latestGroupId() {
         for (const d of readdirSync(historyRoot)) {
             if (!d.startsWith('group_'))
                 continue;
-            const st = statSync(join(historyRoot, d));
-            if (st.mtimeMs > bestT) {
-                bestT = st.mtimeMs;
+            const dir = join(historyRoot, d);
+            let newest = 0;
+            try {
+                for (const name of readdirSync(dir)) {
+                    if (!name.endsWith('.jsonl'))
+                        continue;
+                    try { newest = Math.max(newest, statSync(join(dir, name)).mtimeMs); } catch { /* ignore */ }
+                }
+            }
+            catch { /* ignore */ }
+            if (newest === 0) {
+                try { newest = statSync(dir).mtimeMs; } catch { /* ignore */ }
+            }
+            if (newest > bestT) {
+                bestT = newest;
                 best = d.slice(6);
             }
         }

@@ -52,7 +52,27 @@ test('引用台账裁剪后旧索引失效且新索引可用', async () => {
         assert.equal(lookupMsgContent(dir, peer, '0'), undefined);
         assert.equal(lookupMsgContent(dir, peer, '2000')?.t, 'msg-2000');
         const file = await readFile(join(dir, '.qqbot', 'msg-content.jsonl'), 'utf8');
-        assert.equal(file.trim().split('\n').length, 2000);
+        // 单 peer 上限 500，超出后带 20% 余量重写 → 稳态落在 500~600 行
+        const lines = file.trim().split('\n').length;
+        assert.ok(lines >= 500 && lines <= 600, `单 peer 台账应维持在 500~600 行, 实际 ${lines}`);
+    }
+    finally {
+        await rm(dir, { recursive: true, force: true });
+    }
+});
+
+test('繁忙 peer 的裁剪不会挤掉其它会话的台账', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-botqq-msg-index-shared-'));
+    const busy = 'group:busy';
+    const quiet = 'c2c:quiet';
+    try {
+        rememberMsgContent(dir, quiet, 'q1', { t: '安静会话' });
+        for (let i = 0; i < 1200; i++)
+            rememberMsgContent(dir, busy, String(i), { t: `busy-${i}` });
+        // 上限必须按 peer 计：繁忙群不能把其它会话的消息挤出索引
+        assert.equal(lookupMsgContent(dir, quiet, 'q1')?.t, '安静会话');
+        assert.equal(lookupMsgContent(dir, busy, '1199')?.t, 'busy-1199');
+        assert.equal(lookupMsgContent(dir, busy, '0'), undefined);
     }
     finally {
         await rm(dir, { recursive: true, force: true });

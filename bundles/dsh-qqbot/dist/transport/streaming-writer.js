@@ -3,6 +3,8 @@ export class StreamingWriter {
     fullText = '';
     session = null;
     sentChunkCount = 0;
+    /** 最近一次成功 update 的完整快照；最终 update 失败时只补发它之后的尾部 */
+    sentText = '';
     failed = false;
     finished = false;
     aborted = false;
@@ -11,13 +13,17 @@ export class StreamingWriter {
     constructor(deps) {
         this.deps = deps;
     }
-    /** 是否应降级为静态发送：从未成功发送过任何分片 */
+    /** 从未成功发送，或最终 update 重试失败，都需要静态补发 */
     get shouldFallback() {
-        return this.sentChunkCount === 0;
+        return this.failed || this.sentChunkCount === 0;
     }
-    /** 累积全文（降级静态发送时使用） */
+    /** 累积全文 */
     get text() {
         return this.fullText;
+    }
+    /** 降级时只补缺失尾部，避免把已经流式发出的前缀再发一遍 */
+    get fallbackText() {
+        return this.failed ? this.fullText.slice(this.sentText.length) : this.fullText;
     }
     /** 追加增量文本，节流（throttle）后 update 全量 */
     append(delta) {
@@ -83,7 +89,7 @@ export class StreamingWriter {
     }
     /** 推送当前累积文本（首次 openStream + update 全量） */
     async pushUpdate() {
-        if (this.aborted || this.failed || !this.fullText)
+        if (this.aborted || this.failed || !this.fullText || this.deps.canSend?.(this.fullText) === false)
             return;
         if (!this.session) {
             try {
@@ -100,7 +106,9 @@ export class StreamingWriter {
             }
         }
         try {
-            await this.session.update(this.fullText);
+            const snapshot = this.fullText;
+            await this.session.update(snapshot);
+            this.sentText = snapshot;
             this.sentChunkCount++;
         }
         catch (err) {
@@ -113,12 +121,17 @@ export class StreamingWriter {
                 await new Promise((r) => setTimeout(r, 200));
                 // ★ 2026-11-14（CodeRabbit）：等待期间可能已被 abort —— 不重查就会在
                 //   abort 之后把全文再 update 一次，把 abort 排队的 complete() 覆盖掉。
-                if (this.aborted)
+                if (this.aborted || this.deps.canSend?.(this.fullText) === false)
                     return;
-                await this.session.update(this.fullText);
+                const snapshot = this.fullText;
+                await this.session.update(snapshot);
+                this.sentText = snapshot;
                 this.sentChunkCount++;
             }
             catch (err2) {
+                // 即使前面成功过，最终快照失败也必须降级；OutboundBuffer 会用 fallbackText
+                // 只静态补发缺失尾部，而不是重复整段。
+                this.failed = true;
                 this.deps.logger.warn(`im-qqbot: stream update FAILED after retry —— 本次流式末尾可能缺内容: ${err2 instanceof Error ? err2.message : String(err2)}`);
             }
         }

@@ -331,7 +331,8 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
                 ? _st.__autoRecall
                 : resolveAutoRecall(config);
             const msgId = String(msg.messageId ?? '');
-            if (ar?.enabled === true && String(msg.groupOpenid ?? '') !== '' && msgId !== '') {
+            const autoRecallHandled = !!(_st && '__autoRecallHandled' in _st && _st.__autoRecallHandled === true);
+            if (!autoRecallHandled && ar?.enabled === true && String(msg.groupOpenid ?? '') !== '' && msgId !== '') {
                 const kws = (ar.keywords ?? []).map((k) => String(k).trim()).filter(Boolean);
                 const kinds = (ar.kinds ?? []).map(String);
                 const textLower = String(msg.content ?? '').toLowerCase();
@@ -1055,6 +1056,15 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
             // 部分命令(如 /bot-help)直接经 cmdCtx.bot.sendMarkdown 分段发消息 → 桥到真实 sender
             bot: { sendMarkdown: async (t, c) => sender.sendMarkdown(t || target, c) },
         };
+        if (typeof cmd.authorized === 'function') {
+            let auth = false;
+            try {
+                auth = cmd.authorized(fakeCtx);
+            }
+            catch { /* 鉴权异常按拒绝处理 */ }
+            if (auth !== true)
+                return typeof auth === 'string' ? auth : '⚠️ 无权限执行此指令';
+        }
         const result = await cmd.handler(fakeCtx);
         if (typeof result === 'string')
             return result;
@@ -1337,6 +1347,8 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
                 scheduleTicker = undefined;
             }
             clearInterval(botplaySweeper);
+            try { stickerStore.flush(); } catch { /* 退出尽力落盘 */ }
+            try { getScheduleStore(scheduleDataDir)?.flush(); } catch { /* 退出尽力落盘 */ }
             flushStickerGate();
             // ── 启动钩子（ext-hooks）：卸载 / 宿主退出 / 保存连接设置后重建网关时清理本实例登记项 ──
             //    钩子可能在启动时注册了监听、定时器、订阅 —— 不清理就会在重建网关时不断累积（历史上踩过这个坑）。

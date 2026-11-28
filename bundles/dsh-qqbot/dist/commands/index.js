@@ -15,8 +15,8 @@ import { withOwnerOnly } from './auth.js';
  */
 export function buildCommandList(deps) {
     const commands = [
-        // 会话
-        resetCommand(deps),
+        // 会话：重置会清空共享群上下文，仅主人可用
+        withOwnerOnly(resetCommand(deps), deps.config, deps.logger),
         // ── 管理类命令：仅主人白名单（2026-10-30，对齐上游 0f050ec9）──────────
         //   /bot-new、/new、/preset、/bot-model、/model 都会改会话/人格/模型，
         //   等于改「AI 的人格与开销」，不能让群里任何人都能按。
@@ -36,9 +36,9 @@ export function buildCommandList(deps) {
         // 查自己的 openid（配白名单用）—— 不限制，谁都能查自己的
         meCommand(deps),
         // 出站模式(逃生通道: SDK 直通不经 LLM, nothink 也能唤醒)
-        outModeCommand(deps),
+        withOwnerOnly(outModeCommand(deps), deps.config, deps.logger),
         // 权限档位切换(宿主 permissionPresets)
-        permissionCommand(deps),
+        withOwnerOnly(permissionCommand(deps), deps.config, deps.logger),
         // 提问兜底(2026-09-11): /答 A 或 /ans A —— 提问卡片的文字回答通道
         // (必须带斜杠: 群聊裸文字被 @门控拦、私聊被 debounce 聚合层直接吞进 agent)
         answerCommand(deps),
@@ -46,16 +46,16 @@ export function buildCommandList(deps) {
         // botplay 互动事件(/botplay 列表/触发发卡)
         botplayCommand(deps),
         // 安全注入: /inject 文本 → 插入当前会话 LLM 回合(不打断当前回合)
-        injectCommand(deps),
+        withOwnerOnly(injectCommand(deps), deps.config, deps.logger),
         // 自重启(杀旧+自动拉起 dsh web; /bot-exit 兼容同款)
-        botRestartCommand(),
-        botExitCommand(),
+        withOwnerOnly(botRestartCommand(), deps.config, deps.logger),
+        withOwnerOnly(botExitCommand(), deps.config, deps.logger),
         // 杂项
         pingCommand(),
         versionCommand(deps),
-        stopCommand(),
+        withOwnerOnly(stopCommand(), deps.config, deps.logger),
         // 开发: 工具热刷新
-        toolsReloadCommand(deps),
+        withOwnerOnly(toolsReloadCommand(deps), deps.config, deps.logger),
     ];
     // help 需要访问完整列表（含自身），通过闭包惰性引用
     commands.push(helpCommand(deps, () => commands));

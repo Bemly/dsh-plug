@@ -331,6 +331,8 @@ function noteBreaker(name, logger) {
     return n;
 }
 let active = 0;
+/** 仍有效的链；超时/取消时立即移除，挂死扩展不会让 active 永久虚高 */
+const activeChains = new Set();
 let lastCtx = null;
 /**
  * 扩展调 `send(text)` **没给 target** 时，是否回落到"最近一次出站的会话"。
@@ -663,14 +665,14 @@ export function makeOutboundCtx(initialText, opts = {}, state = { text: initialT
             return storeForCached(currentExtName() || state.extension?.name || 'shared');
         },
         rewrite(newText) {
-            if (state.killed)
+            if (state.killed || state.stale)
                 return false;
             state.text = String(newText ?? '');
             self.text = state.text;
             return true;
         },
         transform(fn) {
-            if (state.killed || self.phase !== 'send')
+            if (state.killed || state.stale || self.phase !== 'send')
                 return false;
             // ★ CodeRabbit 第 6 轮：用 ALS 里的扩展，而不是共享的 state.extension ——
             //   扩展调 next() 之后才登记变换时，state.extension 已指向下游扩展，
@@ -679,6 +681,8 @@ export function makeOutboundCtx(initialText, opts = {}, state = { text: initialT
             return true;
         },
         annihilate(reason) {
+            if (state.stale)
+                return false;
             state.killed = true;
             state.reason = String(reason ?? '');
             return true;
@@ -771,16 +775,33 @@ export async function runOutboundChain(text, opts = {}) {
     const exts = bucket?.loaded ?? [];
     if (exts.length === 0)
         return { text, killed: false, reason: '', ran: 0 };
-    const state = { text: String(text ?? ''), killed: false, reason: '' };
+    const state = { text: String(text ?? ''), killed: false, reason: '', stale: false };
     const ctx = makeOutboundCtx(state.text, merged, state);
     lastCtx = ctx;
+    if (merged.signal?.aborted)
+        return { text: state.text, killed: false, reason: 'ext-hook-stale', stale: true, ran: 0 };
+    let counted = false;
+    const finishActive = () => {
+        if (!counted)
+            return;
+        counted = false;
+        active -= 1;
+        activeChains.delete(state);
+    };
+    const markStale = () => {
+        state.stale = true;
+        finishActive();
+    };
     active += 1;
+    counted = true;
+    activeChains.add(state);
+    merged.signal?.addEventListener('abort', markStale, { once: true });
     try {
         let i = 0;
         let ran = 0;
         const next = async () => {
-            if (state.killed)
-                return; // 消灭后链停
+            if (state.killed || state.stale)
+                return; // 消灭或超时后链停；迟到 next 不再执行下游
             if (i >= exts.length)
                 return;
             const ext = exts[i++];
@@ -789,20 +810,28 @@ export async function runOutboundChain(text, opts = {}) {
             ran += 1;
             if ((breaker.get(ext.name) ?? 0) >= BREAKER_LIMIT)
                 return next(); // 已停用 ⇒ 跳过
-            // 幂等：同一层重复调用 next 只算第一次
+            // 幂等：同一层重复调用 next 只算第一次。必须保留下游 Promise：
+            // 扩展写 `next();` 而不 await/return 时，引擎仍会等下游全部完成。
             let called = false;
-            const onceNext = async () => {
+            let downstream;
+            const onceNext = () => {
+                if (state.killed || state.stale)
+                    return Promise.resolve();
                 if (called)
-                    return;
+                    return downstream;
                 called = true;
-                await next();
+                downstream = next();
+                return downstream;
             };
             const previousExtension = state.extension;
             state.extension = ext;
             try {
                 // ★ 用 ALS 标记"这段异步调用链属于哪个扩展"——ctx.store / background 都靠它
                 await extAls.run(ext, () => ext.middleware(ctx, onceNext));
-                if (!called && !state.killed) {
+                if (called) {
+                    await downstream;
+                }
+                else if (!state.killed && !state.stale) {
                     // 既没调 next 也没消灭 ⇒ 替它放行（与 inbound 的"rescue"同语义），并记一笔
                     logger.warn(`[ext-outbound] ${ext.name} 既没调 next() 也没 annihilate()，已替它放行`);
                     await next();
@@ -811,9 +840,13 @@ export async function runOutboundChain(text, opts = {}) {
             catch (err) {
                 const n = noteBreaker(ext.name, logger);
                 logger.warn(`[ext-outbound] ${ext.name} 执行出错（第 ${n} 次，不影响出站）: ${err instanceof Error ? err.message : String(err)}`);
-                // 出错 ⇒ 放行（宁可不改，也不能把消息弄丢）
-                if (!state.killed)
-                    await next();
+                // 出错 ⇒ 放行；若已经调用过 next，只等待那个下游，不能额外再跳一层。
+                if (!state.killed && !state.stale) {
+                    if (called)
+                        await downstream.catch(() => { });
+                    else
+                        await next();
+                }
             }
             finally {
                 state.extension = previousExtension;
@@ -824,6 +857,8 @@ export async function runOutboundChain(text, opts = {}) {
         if (!state.killed && state.transforms?.length) {
             messages = [{ text: state.text, kind: ctx.kind, source: ctx.source }];
             for (const { fn, extension } of state.transforms) {
+                if (state.stale)
+                    break;
                 if (extension && (breaker.get(extension.name) ?? 0) >= BREAKER_LIMIT)
                     continue;
                 try {
@@ -862,10 +897,11 @@ export async function runOutboundChain(text, opts = {}) {
                 }
             }
         }
-        return { text: state.text, killed: state.killed, reason: state.reason, ran, ...(messages ? { messages } : {}) };
+        return { text: state.text, killed: state.killed, reason: state.stale ? 'ext-hook-stale' : state.reason, ran, ...(state.stale ? { stale: true } : {}), ...(messages && !state.stale ? { messages } : {}) };
     }
     finally {
-        active -= 1;
+        merged.signal?.removeEventListener('abort', markStale);
+        finishActive();
     }
 }
 /**

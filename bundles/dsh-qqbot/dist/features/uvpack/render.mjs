@@ -50,16 +50,18 @@ export async function renderCompositeBuffer(
             const padY = useLarge ? 6 : 4;
             const charW = useLarge ? 20 : 10;
             const textH = useLarge ? 32 : 16;
-            const badgeW = Math.min(p.w, text.length * charW + padX * 2);
-            const badgeH = Math.min(p.h, textH + padY * 2);
+            const badgeW = Math.max(1, Math.min(p.w, text.length * charW + padX * 2));
+            const badgeH = Math.max(1, Math.min(p.h, textH + padY * 2));
             const badge = new Jimp({ width: badgeW, height: badgeH, color: 0x000000b8 });
-            canvas.composite(badge, p.x + 4, p.y + 4);
-            canvas.print({
-                font,
-                x: p.x + 4 + padX,
-                y: p.y + 4 + padY,
-                text,
-            });
+            const labelX = Math.min(padX, Math.max(0, badgeW - 1));
+            const labelY = Math.min(padY, Math.max(0, badgeH - 1));
+            try {
+                badge.print({ font, x: labelX, y: labelY, text });
+            }
+            catch { /* 极小图块无法放字，保留背景块语义 */ }
+            const badgeX = p.x + Math.min(4, Math.max(0, p.w - badgeW));
+            const badgeY = p.y + Math.min(4, Math.max(0, p.h - badgeH));
+            canvas.composite(badge, badgeX, badgeY);
         }
     }
 

@@ -15,6 +15,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, rmSync,
 import { join, extname, resolve } from 'node:path';
 import * as dns from 'node:dns';
 import { Jimp } from 'jimp';
+const _captureInflight = new Map();
 /**
  * 从 QQ 图片/文件 URL 里抠出**稳定的 fileid**(2026-09-13 主人定, 解决"老是重复收藏"):
  * QQ 多媒体 URL 形如
@@ -185,14 +186,96 @@ function isPrivateIP(ip) {
         return true;
     return false;
 }
-async function assertSafeHostname(hostname) {
-    // v4+v6 全查（QQ 多媒体 CDN 域名常只有 AAAA 记录）
-    const addrs = await dns.promises.lookup(hostname, { all: true }).catch(() => []);
-    if (addrs.length === 0)
+async function assertSafeHostname(hostname, signal) {
+    const lookup = dns.promises.lookup(hostname, { all: true });
+    let onAbort;
+    const aborted = new Promise((_, reject) => {
+        onAbort = () => reject(new Error('DNS lookup aborted'));
+        if (signal?.aborted)
+            onAbort();
+        else
+            signal?.addEventListener('abort', onAbort, { once: true });
+    });
+    let addrs;
+    try {
+        addrs = await Promise.race([lookup, aborted]);
+    }
+    catch (err) {
+        if (signal?.aborted)
+            throw err;
+        throw new Error(`DNS resolution failed: ${hostname}`);
+    }
+    finally {
+        signal?.removeEventListener('abort', onAbort);
+    }
+    if (!addrs.length)
         throw new Error(`DNS resolution failed: ${hostname}`);
     for (const { address } of addrs) {
         if (isPrivateIP(address))
             throw new Error(`SSRF blocked: ${hostname} resolves to private IP ${address}`);
+    }
+}
+/** 带 DNS/重定向 SSRF、流式上限和总超时的安全下载，供图片/附件/引用图共用。 */
+export async function fetchSafeBytes(url, maxBytes, timeoutMs = DOWNLOAD_TIMEOUT_MS, signal) {
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason);
+    if (signal?.aborted)
+        abort();
+    else
+        signal?.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+    timer.unref?.();
+    try {
+        let target = new URL(url);
+        for (let redirects = 0; redirects <= 3; redirects++) {
+            if (target.protocol !== 'https:')
+                throw new Error(`Only HTTPS allowed: ${target.protocol}`);
+            await assertSafeHostname(target.hostname, controller.signal);
+            const resp = await fetch(target, {
+                signal: controller.signal,
+                redirect: 'manual',
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+            });
+            if ([301, 302, 303, 307, 308].includes(resp.status)) {
+                const location = resp.headers.get('location');
+                if (!location)
+                    throw new Error(`HTTP ${resp.status}`);
+                target = new URL(location, target);
+                continue;
+            }
+            if (!resp.ok)
+                throw new Error(`HTTP ${resp.status}`);
+            const declared = Number(resp.headers.get('content-length'));
+            if (Number.isFinite(declared) && declared > maxBytes)
+                throw new Error(`Download exceeds ${maxBytes} bytes`);
+            if (!resp.body?.getReader)
+                throw new Error('response body is not streamable');
+            const reader = resp.body.getReader();
+            const chunks = [];
+            let total = 0;
+            try {
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (done)
+                        break;
+                    total += value.length;
+                    if (total > maxBytes) {
+                        await reader.cancel().catch(() => undefined);
+                        throw new Error(`Download exceeds ${maxBytes} bytes`);
+                    }
+                    chunks.push(Buffer.from(value));
+                }
+            }
+            finally {
+                reader.releaseLock();
+            }
+            return { buf: Buffer.concat(chunks), contentType: resp.headers.get('content-type') ?? '' };
+        }
+        throw new Error('Too many redirects');
+    }
+    finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
     }
 }
 /** 魔数校验：仅接受 JPEG/PNG/GIF/WEBP/BMP（content_type 不可靠时的兜底，非图不入库） */
@@ -400,13 +483,28 @@ export class StickerStore {
         }
         return this.captureBuffer(buf, input, contentType, url);
     }
-    /** 已下载字节入库；并发下载只让胜者调用一次，避免争写 index。 */
+    /** 已下载字节入库；同库同字节并发只允许一个任务，避免双写/覆盖来源。 */
     async captureBuffer(buf, input, contentType, url) {
         if (!isImageBuffer(buf)) {
             return { status: 'error', error: 'not an image (magic bytes mismatch)' };
         }
         const hash = createHash('sha1').update(buf).digest('hex');
         const id = hash.slice(0, 12);
+        const key = `${this.dataDir}\u0000${id}`;
+        const running = _captureInflight.get(key);
+        if (running)
+            return running;
+        const task = this.captureBufferInner(buf, input, contentType, url, id, hash);
+        _captureInflight.set(key, task);
+        try {
+            return await task;
+        }
+        finally {
+            if (_captureInflight.get(key) === task)
+                _captureInflight.delete(key);
+        }
+    }
+    async captureBufferInner(buf, input, contentType, url, id, hash) {
         const now = Date.now();
         const existing = this.items.get(id);
         if (existing) {
@@ -438,7 +536,7 @@ export class StickerStore {
         };
         try {
             const dest = this.filePathOf(meta);
-            const tmp = `${dest}.tmp-${now}`;
+            const tmp = `${dest}.tmp-${now}-${randomBytes(4).toString('hex')}`;
             writeFileSync(tmp, buf);
             renameSync(tmp, dest);
         }
@@ -449,35 +547,10 @@ export class StickerStore {
         this.save();
         return { status: 'new', id };
     }
-    /** 安全下载：仅 HTTPS + SSRF + 上限 + 超时 */
+    /** 安全下载：HTTPS + DNS/重定向 SSRF + 流式上限 + 总超时，全部受同一 signal 控制 */
     async download(url, timeoutMs = DOWNLOAD_TIMEOUT_MS, signal) {
-        const parsed = new URL(url);
-        if (parsed.protocol !== 'https:')
-            throw new Error(`Only HTTPS allowed: ${parsed.protocol}`);
-        await assertSafeHostname(parsed.hostname);
-        const controller = new AbortController();
-        const abort = () => controller.abort();
-        if (signal?.aborted)
-            controller.abort();
-        else
-            signal?.addEventListener('abort', abort, { once: true });
-        const timer = setTimeout(abort, Math.max(1, timeoutMs));
-        try {
-            const resp = await fetch(url, {
-                signal: controller.signal,
-                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-            });
-            if (!resp.ok)
-                throw new Error(`HTTP ${resp.status}`);
-            const buf = Buffer.from(await resp.arrayBuffer());
-            if (buf.length > MAX_IMAGE_BYTES)
-                throw new Error(`Image exceeds 10MB (${buf.length})`);
-            return buf;
-        }
-        finally {
-            clearTimeout(timer);
-            signal?.removeEventListener('abort', abort);
-        }
+        const { buf } = await fetchSafeBytes(url, MAX_IMAGE_BYTES, timeoutMs, signal);
+        return buf;
     }
     /** 从本地已有文件入库（后续升级/负样本用） */
     addLocalFile(srcPath, meta) {
@@ -674,7 +747,7 @@ export class StickerStore {
             const dest = this.filePathOf(meta);
             mkdirSync(join(this.dataDir, LAYER_DIRS.candidate), { recursive: true });
             if (!existsSync(dest)) {
-                const tmp = `${dest}.tmp-${now}`;
+                const tmp = `${dest}.tmp-${now}-${randomBytes(4).toString('hex')}`;
                 writeFileSync(tmp, buf);
                 renameSync(tmp, dest);
             }

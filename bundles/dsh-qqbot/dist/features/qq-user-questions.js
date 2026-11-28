@@ -16,7 +16,7 @@ const MAX_QUESTIONS = 5;
  *  label 带字母前缀(A. xxx) —— 与文字兜底/卡片正文的字母表对齐。
  *  permission: 群聊限定"发起对话者本人"可点(specify_user_ids=ownerId), 防群里其他人替你选 */
 function optionsKeyboard(item, token, ownerId) {
-    const shown = item.opts.slice(0, CARD_MAX_OPTIONS);
+    const shown = item.opts.slice(0, item.claimable && !item.claimed ? CARD_MAX_OPTIONS - 1 : CARD_MAX_OPTIONS);
     // ★ c2c(私聊)修复: QQ **私聊不下发 permission.type=0(指定用户)按钮** —— 客户端直接拦,
     //   点击连 INTERACTION_CREATE 都不产生(2026-10-16 实测: 私聊里选项按钮点不动, 同一张卡上
     //   硬编码 type=2 的抢答按钮却能点)。私聊本来只有对方一个人, 一律放成全员可点,

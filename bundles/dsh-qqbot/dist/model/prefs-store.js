@@ -375,11 +375,17 @@ export class PrefsStore {
             }
             return out;
         };
-        const cfg = pick(this.sessionCfg, disk?.sessionCfg, this.deleted.sessionCfg);
-        const pre = pick(this.sessionPresets, disk?.sessionPresets, this.deleted.sessionPresets);
+        const cap = (obj) => {
+            const keys = Object.keys(obj);
+            if (keys.length <= PrefsStore.MAX_ENTRIES)
+                return obj;
+            return Object.fromEntries(keys.slice(-PrefsStore.MAX_ENTRIES).map((k) => [k, obj[k]]));
+        };
+        const cfg = cap(pick(this.sessionCfg, disk?.sessionCfg, this.deleted.sessionCfg));
+        const pre = cap(pick(this.sessionPresets, disk?.sessionPresets, this.deleted.sessionPresets));
         return {
-            overrides: pick(this.overrides, disk?.overrides, this.deleted.overrides),
-            sessionIds: pick(this.sessionIds, disk?.sessionIds, this.deleted.sessionIds),
+            overrides: cap(pick(this.overrides, disk?.overrides, this.deleted.overrides)),
+            sessionIds: cap(pick(this.sessionIds, disk?.sessionIds, this.deleted.sessionIds)),
             ...(Object.keys(cfg).length > 0 ? { sessionCfg: cfg } : {}),
             ...(Object.keys(pre).length > 0 ? { sessionPresets: pre } : {}),
         };

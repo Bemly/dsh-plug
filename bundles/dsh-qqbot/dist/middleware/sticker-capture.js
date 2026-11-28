@@ -43,8 +43,12 @@ function isCollectableImage(url) {
     return !!url && /^https:\/\//i.test(url) && /multimedia|qq\.com|download/i.test(url);
 }
 
-function captureKey(url) {
-    return extractQqFileId(url) || String(url);
+function captureScope(config) {
+    try { return String(stickerDirOf(config) || ''); }
+    catch { return ''; }
+}
+function captureKey(url, config) {
+    return `${captureScope(config)}\u0000${extractQqFileId(url) || String(url)}`;
 }
 
 function noteCaptureFailure(key, until) {
@@ -64,38 +68,56 @@ export async function downloadWithRetry(url, download, logger, attempts = IMAGE_
         const concurrency = Math.max(1, Math.floor(attempt.concurrency));
         const timeoutMs = Math.max(1, Math.floor(attempt.timeoutMs));
         const controllers = Array.from({ length: concurrency }, () => new AbortController());
-        let winner;
         let settled = false;
+        let timer;
+        const abortAll = () => { for (const controller of controllers) controller.abort(); };
         const jobs = controllers.map((controller) => Promise.resolve()
             .then(() => download(url, timeoutMs, controller.signal))
             .then((buf) => {
-            if (settled)
-                return;
-            winner = buf;
+            if (settled || !buf)
+                return undefined;
             settled = true;
-            for (const other of controllers) {
-                if (other !== controller)
-                    other.abort();
-            }
-        })
-            .catch((err) => {
-            if (!settled) {
+            abortAll();
+            return buf;
+        }, (err) => {
+            if (!settled)
                 logger?.debug?.(`[sticker] 图片下载失败 attempt=${index + 1} concurrency=${concurrency}: ${err instanceof Error ? err.message : String(err)}`);
-            }
+            return undefined;
         }));
-        let timer;
         const timeout = new Promise((resolve) => {
             timer = setTimeout(() => {
                 if (settled)
                     return;
                 settled = true;
-                for (const controller of controllers)
-                    controller.abort();
+                abortAll();
                 resolve(undefined);
             }, timeoutMs);
+            // 不能 unref：这是"下载必须在上限内结束"的**硬期限**。unref 后若事件循环里只剩它，
+            // 进程会先判定无事可做，等待方永远等不到 settled —— 表现为下载链路静默挂死
+            // （tests/sticker-tagger.test.mjs「enforces attempt timeout even when the downloader ignores abort」）。
         });
-        await Promise.race([Promise.all(jobs), timeout]);
-        clearTimeout(timer);
+        const firstSuccess = new Promise((resolve) => {
+            let remaining = jobs.length;
+            for (const job of jobs) {
+                job.then((buf) => {
+                    if (buf)
+                        resolve(buf);
+                    else if (--remaining === 0)
+                        resolve(undefined);
+                }, () => {
+                    if (--remaining === 0)
+                        resolve(undefined);
+                });
+            }
+        });
+        let winner;
+        try {
+            winner = await Promise.race([firstSuccess, timeout]);
+        }
+        catch { /* 全部失败 */ }
+        finally {
+            clearTimeout(timer);
+        }
         if (winner)
             return winner;
         logger?.warn?.(`[sticker] 图片下载第 ${index + 1} 轮未成功 concurrency=${concurrency} timeout=${timeoutMs}ms`);
@@ -104,10 +126,11 @@ export async function downloadWithRetry(url, download, logger, attempts = IMAGE_
 }
 
 async function captureOne(url, contentType, msg, config, logger) {
-    const cached = lookupImagePath(url, logger);
+    const scope = captureScope(config);
+    const cached = lookupImagePath(url, logger, scope);
     if (cached)
         return cached;
-    const key = captureKey(url);
+    const key = captureKey(url, config);
     const failUntil = captureFailures.get(key) ?? 0;
     if (Date.now() < failUntil) {
         logger?.debug?.(`[sticker] 图片下载失败冷却中 key=${key.slice(0, 16)}…`);
@@ -150,7 +173,7 @@ async function captureOne(url, contentType, msg, config, logger) {
         recordImageUrl(stickerDirOf(config), resolved.id, url);
         const localPath = store.pathOf(resolved.id);
         if (localPath)
-            rememberImagePath(url, localPath);
+            rememberImagePath(url, localPath, scope);
         if (resolved.status === 'new') {
             logger.debug(`[sticker] captured #${resolved.id} → ${localPath ?? '(path?)'}`);
             if (localPath && config.sticker.autoTagEnabled !== false) {

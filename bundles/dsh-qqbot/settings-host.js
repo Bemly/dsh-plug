@@ -3,13 +3,16 @@
  * ②表情包图库管理 API(列表/缩略图/批量/导入), 与 dsh-qqbot 共享同进程 store 单例。
  * 仅 web profile 装配; 同源 fence 抄 modsearch。
  */
-import { readFileSync, writeFileSync, appendFileSync, rmSync, mkdirSync, existsSync, readdirSync, statSync, cpSync, renameSync, openSync, readSync, closeSync, createWriteStream } from 'node:fs';
-import { basename, extname, join, resolve, dirname, normalize, sep } from 'node:path';
+import { readFileSync, writeFileSync, appendFileSync, rmSync, mkdirSync, existsSync, readdirSync, statSync, realpathSync, cpSync, renameSync, openSync, readSync, closeSync, createWriteStream } from 'node:fs';
+import { basename, extname, join, resolve, dirname, normalize, sep, relative, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';   // 懒加载 zlib（zstd 是 Node 22.15+ 才有，静态 import 会在老 Node 上直接炸）
 import { spawn, execFileSync } from 'node:child_process';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
+import { lookup as dnsLookup } from 'node:dns/promises';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { getStickerStore } from 'dsh-botqq/sticker-store';
 import { getScheduleStore } from 'dsh-botqq/schedule-store';
 
@@ -180,18 +183,158 @@ function hostAllowed(host, hostname) {
   return false;
 }
 
+/** realpath + relative 包含校验；不能只用 startsWith('/data')（会误放行 /data-evil）。 */
+function pathWithin(root, target) {
+  const rel = relative(root, target);
+  return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`));
+}
+
+/** 对尚不存在的写入目标，从其最近已存在祖先推导真实路径，并验证全部缺失后缀。 */
+function canonicalPathAllowMissing(p) {
+  const abs = resolve(String(p || ''));
+  const suffix = [];
+  let cur = abs;
+  for (;;) {
+    try { return resolve(realpathSync(cur), ...suffix); } catch { /* 向上找已存在祖先 */ }
+    const parent = dirname(cur);
+    if (parent === cur) throw new Error('无法解析路径');
+    suffix.unshift(basename(cur));
+    cur = parent;
+  }
+}
+
+function canonicalAllowedRoots(roots) {
+  const out = [];
+  for (const root of roots || []) {
+    try { out.push(canonicalPathAllowMissing(root)); } catch { /* 无效根不放行 */ }
+  }
+  return out;
+}
+
+const QQ_MEDIA_HOSTS = ['multimedia.nt.qq.com.cn', 'multimedia.qq.com', 'qpic.cn', 'qlogo.cn'];
+function isQQMediaHostname(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  return QQ_MEDIA_HOSTS.some((base) => host === base || host.endsWith('.' + base));
+}
+function privateAddress(ip) {
+  const addr = String(ip || '').toLowerCase().split('%')[0];
+  if (addr.startsWith('::ffff:')) return privateAddress(addr.slice(7));
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(addr)) {
+    const [a, b] = addr.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+      || (a === 100 && b >= 64 && b <= 127) || a >= 224;
+  }
+  return addr === '::1' || /^f[cd]/.test(addr) || /^fe[89ab]/.test(addr) || addr === '::';
+}
+async function assertPublicQQMediaHost(hostname) {
+  if (!isQQMediaHostname(hostname)) throw new Error('仅允许 QQ 媒体域名');
+  const addrs = await dnsLookup(hostname, { all: true });
+  if (!addrs.length || addrs.some((x) => privateAddress(x.address))) throw new Error('QQ 媒体域名解析到私网地址');
+}
+async function fetchQQMediaLimited(url, maxBytes, timeoutMs = 15_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+  try {
+    let target = new URL(url);
+    for (let redirects = 0; redirects <= 3; redirects++) {
+      if (target.protocol !== 'https:') throw new Error('仅允许 HTTPS QQ 媒体 URL');
+      await assertPublicQQMediaHost(target.hostname);
+      const resp = await fetch(target, { signal: controller.signal, redirect: 'manual', headers: { 'user-agent': 'Mozilla/5.0' } });
+      if ([301, 302, 303, 307, 308].includes(resp.status)) {
+        const location = resp.headers.get('location');
+        if (!location) throw new Error('QQ 媒体重定向缺少 Location');
+        target = new URL(location, target);
+        continue;
+      }
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const declared = Number(resp.headers.get('content-length'));
+      if (Number.isFinite(declared) && declared > maxBytes) throw new Error('QQ 媒体响应过大');
+      if (!resp.body?.getReader) throw new Error('QQ 媒体响应不支持流式读取');
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let total = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.length;
+          if (total > maxBytes) {
+            await reader.cancel().catch(() => undefined);
+            throw new Error('QQ 媒体响应过大');
+          }
+          chunks.push(Buffer.from(value));
+        }
+      }
+      finally {
+        reader.releaseLock();
+      }
+      return Buffer.concat(chunks);
+    }
+    throw new Error('QQ 媒体重定向过多');
+  }
+  finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 返回 realpath 后的允许路径；读写都在真实路径上执行，阻断目录/文件符号链接逃逸。 */
+function resolveAllowedLocalPath(p, roots, { write = false } = {}) {
+  try {
+    if (!String(p || '').trim() || String(p).includes('\0')) return { ok: false, reason: '缺路径或路径非法' };
+    const allowed = canonicalAllowedRoots(roots);
+    const target = write ? canonicalPathAllowMissing(p) : realpathSync(resolve(String(p)));
+    if (!allowed.some((root) => pathWithin(root, target))) {
+      return { ok: false, reason: '路径不在显式允许的目录内' };
+    }
+    return { ok: true, path: target };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+function isLoopbackAddress(value) {
+  let addr = String(value || '').trim().toLowerCase();
+  if (addr.startsWith('[') && addr.endsWith(']')) addr = addr.slice(1, -1);
+  if (addr.startsWith('::ffff:')) addr = addr.slice(7);
+  if (addr === '::1') return true;
+  if (!/^127(?:\.\d{1,3}){3}$/.test(addr)) return false;
+  return addr.split('.').every((part) => Number(part) <= 255);
+}
+
+/** 反代信任必须由部署者显式开启；Host 白名单本身绝不能代替 socket 回环校验。 */
+function loopbackProxyEnabled() {
+  const env = String(process.env.DSH_QQBOT_LOOPBACK_PROXY || '').trim().toLowerCase();
+  return env === '1' || env === 'true' || env === 'yes'
+    || (process.argv || []).includes('--qqbot-loopback-proxy');
+}
+
 function isTrusted(req) {
   const h = req.headers?.host;
   if (typeof h !== 'string') return false;
-  let hostname;
-  try { hostname = new URL(`http://${h}`).hostname; } catch { return false; }
-  const loopback = /^(\[::1\]|localhost|127(\.\d{1,3}){3})$/.test(hostname);
-  // ★ 2026-10-26（issue #22）：loopback ∪ 宿主 --trusted-host 白名单
-  if (!loopback && !hostAllowed(String(h).toLowerCase(), hostname)) return false;
+  let hostUrl;
+  try {
+    hostUrl = new URL(`http://${h}`);
+    if (hostUrl.username || hostUrl.password || !hostUrl.hostname) return false;
+  } catch { return false; }
+  const hostname = hostUrl.hostname;
+  const loopbackHost = isLoopbackAddress(hostname) || hostname === 'localhost';
+  if (!loopbackHost && !hostAllowed(h.toLowerCase(), hostname)) return false;
+
+  // 第一判据永远是 TCP 对端地址，不能从 Host/X-Forwarded-For 推断。
+  const peer = req.socket?.remoteAddress ?? req.connection?.remoteAddress;
+  if (!isLoopbackAddress(peer)) return false;
   if (req.headers?.['sec-fetch-site'] === 'cross-site') return false;
   const o = req.headers?.origin;
-  if (o === undefined) return true;
-  try { return new URL(o).host === req.headers.host; } catch { return false; }
+  if (o === undefined) {
+    // 反代必须证明浏览器看到了同一个 Origin；直接本机请求继续兼容无 Origin 的工具调用。
+    return !loopbackProxyEnabled();
+  }
+  try {
+    const origin = new URL(o);
+    return origin.host === hostUrl.host;
+  } catch { return false; }
 }
 
 function writeJson(res, status, body) {
@@ -208,6 +351,70 @@ async function readJsonBody(req) {
     chunks.push(c);
   }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return undefined; }
+}
+
+/** 流式上传：错误、取消、超时和上限都会唤醒等待并 destroy，绝不永久等 drain/finish。 */
+async function streamUploadToFile(req, target, { max = 300 * 1024 * 1024, timeoutMs = 5 * 60_000, cancelSource } = {}) {
+  const ws = createWriteStream(target);
+  let size = 0;
+  let failed = null;
+  let wake = null;
+  let timer = null;
+  let tooLarge = false;
+  const wakeUp = () => { const fn = wake; wake = null; try { fn?.(); } catch { /* ignore */ } };
+  const fail = (reason) => {
+    if (!failed) failed = reason;
+    wakeUp();
+    try { ws.destroy(); } catch { /* ignore */ }
+    try { req.destroy(); } catch { /* ignore */ }
+  };
+  const onAborted = () => fail('upload cancelled');
+  const onRequestError = (e) => fail(String((e && e.message) || e));
+  const onCancelClose = () => { if (!cancelSource?.writableEnded) fail('upload cancelled'); };
+  const cleanup = () => {
+    if (timer) clearTimeout(timer);
+    req.off('aborted', onAborted);
+    req.off('error', onRequestError);
+    cancelSource?.off?.('close', onCancelClose);
+  };
+  ws.on('error', onRequestError);
+  req.on('aborted', onAborted);
+  req.on('error', onRequestError);
+  cancelSource?.on?.('close', onCancelClose);
+  timer = setTimeout(() => fail('upload timeout'), timeoutMs);
+  timer.unref?.();
+  try {
+    for await (const chunk of req) {
+      if (failed) break;
+      size += chunk.length;
+      if (size > max) { tooLarge = true; failed = 'too large'; break; }
+      if (!ws.write(chunk)) {
+        await new Promise((resolve) => {
+          wake = resolve;
+          ws.once('drain', wakeUp);
+          ws.once('close', wakeUp);
+          if (failed || ws.destroyed) wakeUp();
+        });
+        ws.off('drain', wakeUp);
+        ws.off('close', wakeUp);
+      }
+    }
+    if (!failed && size <= 0) failed = 'empty file';
+    if (!failed) {
+      await new Promise((resolve) => {
+        ws.once('close', resolve);
+        ws.once('error', (e) => { failed = failed || String((e && e.message) || e); resolve(); });
+        ws.end();
+      });
+    }
+  } catch (e) {
+    failed = failed || String((e && e.message) || e);
+  } finally {
+    cleanup();
+    try { ws.destroy(); } catch { /* ignore */ }
+    if (failed) { try { rmSync(target, { force: true }); } catch { /* ignore */ } }
+  }
+  return { ok: !failed, size, error: failed || '', status: tooLarge ? 413 : failed ? 400 : 200 };
 }
 
 /** 读命名空间当前解析值 + revision(redact 防密钥外泄) */
@@ -1238,29 +1445,24 @@ export function apply(ctx) {
           }
           j += 1;
         }
-        bots.push({ id, start, end: j, ins: false, cfg, disabled, headLine: start });
+        bots.push({ id, start, end: j, blockEnd: j, ins: false, cfg, disabled, headLine: start });
         i = j;
       } else if (isTopLine(t) && /^\s*-\s*insert:\s*$/.test(t)) {
-        // insert 形态: 找其下 4 空格 `- id: im-qqbot*`
+        // insert 下可能有多个插件/机器人。逐个识别同级 - id，不能把整棵 insert 当成一个机器人块。
         const insStart = i;
+        let insertEnd = i + 1;
+        while (insertEnd < lines.length && !isTopLine(lines[insertEnd])) insertEnd += 1;
         let k = i + 1;
-        let found = null;
-        while (k < lines.length && (lines[k].trim() === '' || /^\s/.test(lines[k]) && !/^-\s/.test(lines[k]) || /^\s{2,}/.test(lines[k]))) {
-          // 在 insert 列表内(行以空白开头或为列表项), 找 4 空格 "- id:"
-          const c = lines[k];
-          const m4 = /^\s{4}-\s*id:\s*(\S+)\s*$/.exec(c);
-          if (m4 && /^im-qqbot(-|$)/.test(unq(m4[1]))) { found = { line: k, id: unq(m4[1]) }; break; }
-          if (/^-\s/.test(c) && !/^\s/.test(c)) break; // 下一个顶层条目
-          if (c.trim() !== '' && !/^\s/.test(c) && !/^-\s/.test(c)) break;
-          k += 1;
-        }
-        if (found) {
-          const id = found.id;
-          let j = found.line + 1;
+        while (k < insertEnd) {
+          const m4 = /^\s{4}-\s*id:\s*(\S+)\s*$/.exec(lines[k]);
+          if (!m4 || !/^im-qqbot(-|$)/.test(unq(m4[1]))) { k += 1; continue; }
+          const id = unq(m4[1]);
+          const headLine = k;
+          let j = k + 1;
           const cfg = {};
           let disabled = false;
           let inCfg = false;
-          while (j < lines.length && (lines[j].trim() === '' || /^\s{2,}/.test(lines[j]) && !isTopLine(lines[j]))) {
+          while (j < insertEnd && (lines[j].trim() === '' || /^\s{2,}/.test(lines[j]) && !/^\s{4}-\s/.test(lines[j]))) {
             const c = lines[j];
             if (/^\s{6}config:\s*$/.test(c)) inCfg = true;
             else if (/^\s{6}disabled:\s*true\s*$/.test(c)) disabled = true;
@@ -1268,14 +1470,12 @@ export function apply(ctx) {
               const km = /^\s{8}(\S[^:]*):\s*(.*)$/.exec(c);
               cfg[km[1]] = km[2].trim().replace(/^'|'$/g, '').replace(/''/g, "'");
             }
-            if (isTopLine(lines[j])) break;
             j += 1;
           }
-          bots.push({ id, start: insStart, end: j, ins: true, cfg, disabled, headLine: found.line });
-          i = j;
-        } else {
-          i += 1;
+          bots.push({ id, start: insStart, end: j, blockEnd: j, insertEnd, ins: true, cfg, disabled, headLine });
+          k = j;
         }
+        i = insertEnd;
       } else {
         i += 1;
       }
@@ -1432,13 +1632,22 @@ export function apply(ctx) {
       return hasCred;
     });
     for (const b of doomed) {
-      const sameGroup = bots
-        .filter((o) => o !== b && o.ins === b.ins && o.start === b.start && o.headLine > b.headLine)
-        .sort((x, y) => x.headLine - y.headLine);
-      const nextHead = sameGroup.length ? sameGroup[0].headLine : b.end;
-      let tail = nextHead;
-      while (tail > b.headLine + 1 && (lines[tail - 1] ?? '').trim() === '') tail -= 1;
-      removals.push({ start: b.headLine, end: tail });
+      let start = b.headLine;
+      let end = b.blockEnd ?? b.end;
+      if (b.ins) {
+        // 只有整个 insert 的所有同级条目都删除时才移除包装；否则绝不跨过其它插件。
+        const siblings = lines.slice(b.start + 1, b.insertEnd)
+          .map((line, i) => /^\s{4}-\s/.test(line) ? b.start + 1 + i : -1)
+          .filter((i) => i >= 0);
+        const allRemoved = siblings.length > 0 && siblings.every((line) => doomed.some((d) => d.headLine === line));
+        if (allRemoved) {
+          if (b.headLine === siblings[0]) removals.push({ start: b.start, end: b.insertEnd });
+          continue;
+        }
+      }
+      let tail = end;
+      while (tail > start + 1 && (lines[tail - 1] ?? '').trim() === '') tail -= 1;
+      removals.push({ start, end: tail });
     }
     for (const inst of instances) {
       if (inst.remove) continue;
@@ -1494,7 +1703,7 @@ export function apply(ctx) {
         fresh = reparsed.bots.find((b) => b.id === u.id) ?? null;
       } catch { fresh = null; }
       if (!fresh) continue;
-      updateKeysInBlock(lines, fresh.start, fresh.end, u.kv);
+      updateKeysInBlock(lines, fresh.start, fresh.blockEnd ?? fresh.end, u.kv);
     }
     let out = lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
     if (appends.length) out += (out.trimEnd() ? '\n' : '') + appends.join('\n') + '\n';
@@ -2680,6 +2889,26 @@ export function apply(ctx) {
     const cfgMerged = { ...m, dataRoot: m.dataRoot || cwd };
     return { id, appId, appSecret, cwd, ns: id, cfg: cfgMerged };
   }
+
+  /** 设置桥文件能力的显式根：机器人 cwd/dataRoot、系统临时目录及该插件的上传目录。 */
+  function localRootsForNs(ns) {
+    const id = ns && ns !== 'im-qqbot' ? String(ns) : 'im-qqbot';
+    let bot = nsBot(id);
+    if (!bot) {
+      const raw = parsePatch().bots.find((b) => b.id === id);
+      if (raw) {
+        const cfg = mergeOwnIntoCfg(raw.cfg || {}, raw.cfg?.settingsNs || id);
+        bot = { cwd: cfg.dataRoot || (cfg.cwd ? join(cfg.cwd, 'dshqqbot') : ''), cfg };
+      }
+    }
+    const cfg = (bot && bot.cfg) || {};
+    const roots = [tmpdir()];
+    for (const root of [bot && bot.cwd, cfg.dataRoot, cfg.cwd]) {
+      if (!root) continue;
+      roots.push(root, join(root, '.qqbot', 'dock-uploads'));
+    }
+    return canonicalAllowedRoots(roots);
+  }
   async function groupClientOf(ns) {
     const bot = nsBot(ns);
     if (!bot) return null;
@@ -2955,7 +3184,9 @@ export function apply(ctx) {
       // 逐个校验有效性 + 用官方群名补全显示名(注册表里的群也顺手回写官方名)
       const gc = await groupClientOf(NSQ(u));
       const out = [];
-      const aliveReg = {};
+      // 注册表是持久化事实，网络探测只允许明确注销的群变更它；失败/未检查的条目必须原样保留。
+      const aliveReg = Object.fromEntries(Object.entries(reg).map(([gid, meta]) => [gid, { ...(meta || {}) }]));
+      let registryChanged = false;
       if (gc) {
         for (const g of [...map.values()].sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0))) {
           // 死群退避（2026-09-14 补）：已判「群不存在」的 gid 24h 内不再重复校验 ——
@@ -2969,19 +3200,27 @@ export function apply(ctx) {
               const official = info.data.group_name || '';
               if (official) g.name = official;
               out.push(g);
-              aliveReg[g.gid] = { name: official || (reg[g.gid] && reg[g.gid].name) || '', lastAt: (reg[g.gid] && reg[g.gid].lastAt) || Date.now() };
-            } else {
-              // 11255 等 = 群已注销/不存在 → 不返回给 UI(避免选中后调用报错), 仅保留审计
+              const previous = aliveReg[g.gid] || {};
+              const next = { name: official || previous.name || '', lastAt: previous.lastAt || Date.now() };
+              aliveReg[g.gid] = next;
+              if (JSON.stringify(previous) !== JSON.stringify(next)) registryChanged = true;
+            } else if (Number(info.err && info.err.code) === 11255) {
+              // 只有明确的「资源不存在/已注销」才剔除；限流、无权限、网络异常一律保留。
+              delete aliveReg[g.gid];
+              registryChanged = true;
               DEAD_GROUP_CACHE.set(g.gid, Date.now());
               audit(bot.cwd, { ev: 'group.dead', ns: bot.id, gid: g.gid, code: info.err && info.err.code, human: info.err && info.err.human });
+            } else {
+              out.push(g);
+              audit(bot.cwd, { ev: 'group.check-error', ns: bot.id, gid: g.gid, code: info.err && info.err.code, human: info.err && info.err.human });
             }
           } catch (e2) {
             audit(bot.cwd, { ev: 'group.check-error', ns: bot.id, gid: g.gid, error: String((e2 && e2.message) || e2) });
             out.push(g); // 网络类错误不判死, 保守保留
           }
         }
-        // 回写有效群注册表(自动剔除已注销群)
-        if (Object.keys(aliveReg).length >= 0) writeGroupsJson(bot.cwd, aliveReg);
+        // 回写有效群注册表；仅明确注销会改变它，dead-cache 命中也不会清空未检查项。
+        if (registryChanged) writeGroupsJson(bot.cwd, aliveReg);
       } else {
         out.push(...map.values());
       }
@@ -5026,25 +5265,11 @@ export function apply(ctx) {
       mkdirSync(dir, { recursive: true });
       const name = 'up' + Date.now() + '-' + Math.floor(Math.random() * 1e6) + '.' + ext;
       const target = join(dir, name);
-      const ws = createWriteStream(target);
-      const MAX = 300 * 1024 * 1024;
-      let size = 0;
-      let failed = null;
-      try {
-        for await (const chunk of req) {
-          size += chunk.length;
-          if (size > MAX) { failed = 'too large(>300MB)'; break; }
-          if (!ws.write(chunk)) await new Promise((r) => ws.once('drain', r));
-        }
-      } catch (e) {
-        failed = String((e && e.message) || e);
+      const result = await streamUploadToFile(req, target, { max: 300 * 1024 * 1024, timeoutMs: 5 * 60_000, cancelSource: res });
+      if (!result.ok) {
+        return writeJson(res, result.status || 400, { error: result.error || '上传失败' });
       }
-      await new Promise((r) => ws.end(r));
-      if (failed || size <= 0) {
-        try { rmSync(target, { force: true }); } catch { /* 忽略 */ }
-        return writeJson(res, failed ? 413 : 400, { error: failed || '空文件' });
-      }
-      writeJson(res, 200, { ok: true, path: target, size });
+      writeJson(res, 200, { ok: true, path: target, size: result.size });
     } catch (e) {
       writeJson(res, 500, { error: String((e && e.message) || e) });
     }
@@ -5057,10 +5282,14 @@ export function apply(ctx) {
       const u = new URL(req.url ?? '/', 'http://x');
       const p = String(u.searchParams.get('p') || '').trim();
       if (!p) return writeJson(res, 400, { error: 'p 必填' });
-      const st = statSync(p);
+      const ns = String(u.searchParams.get('ns') || '').trim() || undefined;
+      const safe = resolveAllowedLocalPath(p, localRootsForNs(ns));
+      if (!safe.ok) return writeJson(res, 403, { error: safe.reason });
+      const realPath = safe.path;
+      const st = statSync(realPath);
       if (!st.isFile()) return writeJson(res, 404, { error: 'file not found' });
       if (st.size > 200 * 1024 * 1024) return writeJson(res, 413, { error: 'too large(>200MB)' });
-      const ext = extname(p).slice(1).toLowerCase();
+      const ext = extname(realPath).slice(1).toLowerCase();
       const AUDIO = { ogg: 'audio/ogg', opus: 'audio/ogg', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac', amr: 'audio/amr', silk: 'audio/silk', webm: 'audio/webm' };
       const VIDEO = { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', m4v: 'video/mp4' };
       const type = MIME[ext] || AUDIO[ext] || VIDEO[ext] || 'application/octet-stream';
@@ -5081,7 +5310,7 @@ export function apply(ctx) {
         }
       }
       const len = end - start + 1;
-      const fd = openSync(p, 'r');
+      const fd = openSync(realPath, 'r');
       const buf = Buffer.alloc(len);
       try { readSync(fd, buf, 0, len, start); } finally { closeSync(fd); }
       const headers = {
@@ -5104,16 +5333,17 @@ export function apply(ctx) {
     try {
       const u = new URL(req.url ?? '/', 'http://x');
       const src = String(u.searchParams.get('u') || '').trim();
-      if (!/^https?:\/\//i.test(src) || !QQ_MEDIA_RE.test(src)) return writeJson(res, 400, { error: 'u 必须为 QQ 媒体 URL' });
+      let srcUrl;
+      try { srcUrl = new URL(src); } catch { return writeJson(res, 400, { error: 'u 必须为 QQ 媒体 URL' }); }
+      if (srcUrl.protocol !== 'https:' || !isQQMediaHostname(srcUrl.hostname))
+        return writeJson(res, 400, { error: 'u 必须为 QQ 媒体 URL' });
       const bot = nsBot(undefined);
       const cacheDir = join((bot && bot.cwd) || homedir(), '.qqbot', 'voice-cache');
       mkdirSync(cacheDir, { recursive: true });
       const key = createHash('sha256').update(src).digest('hex');
       const cf = join(cacheDir, key + '.mp3');
       if (!existsSync(cf)) {
-        const resp = await fetch(src, { headers: { 'user-agent': 'Mozilla/5.0' } });
-        if (!resp.ok) return writeJson(res, 502, { error: '语音下载失败(HTTP ' + resp.status + ')' });
-        const buf = Buffer.from(await resp.arrayBuffer());
+        const buf = await fetchQQMediaLimited(src, 20 * 1024 * 1024, 20_000);
         const mod = await import('./voice-convert.mjs');
         if (!mod.isSilk(buf)) return writeJson(res, 415, { error: '该语音非 SILK 格式(QQ 语音均为 SILK)' });
         const { mp3 } = await mod.silkToMp3(buf);
@@ -5851,40 +6081,47 @@ const WHY_MAP = { busy: '目标会话回合活跃,已等待至回合结束仍超
     },
     // 往当前会话发消息（需要请求里带 peer）
     'text': async (c, a) => (typeof c.text === 'function' ? await c.text(String(a[0])) : false),
-    // ★ 任意文本文件读写（2026-10-27 主人要求：卡片能选电脑上任意 txt 展示并修改）
-    //   只放行文本类扩展名，避免被当成二进制搬运工。
-    'fs.read': async (_c, a) => {
+    // 文本文件读写：只允许机器人显式 cwd/dataRoot、系统临时目录和 dock-uploads。
+    'fs.read': async (c, a) => {
       const p = String(a[0] || '').trim();
       if (!p) return { ok: false, reason: '缺路径' };
-      if (!/\.(txt|md|json|log|yml|yaml|csv|ini|conf|js|ts|mjs|cjs|html|css)$/i.test(p)) {
+      const safe = resolveAllowedLocalPath(p, c.__localRoots);
+      if (!safe.ok) return safe;
+      if (!/\.(txt|md|json|log|yml|yaml|csv|ini|conf|js|ts|mjs|cjs|html|css)$/i.test(safe.path)) {
         return { ok: false, reason: '只允许文本文件（txt/md/json/log/yml/csv/ini/js/ts/html/css）' };
       }
       try {
-        if (!existsSync(p)) return { ok: false, reason: '文件不存在' };
-        const st = statSync(p);
+        const st = statSync(safe.path);
         if (!st.isFile()) return { ok: false, reason: '不是文件' };
         if (st.size > 2 * 1024 * 1024) return { ok: false, reason: '文件太大（>2MB）' };
-        return { ok: true, path: p, text: readFileSync(p, 'utf8'), size: st.size, mtime: st.mtimeMs };
+        return { ok: true, path: safe.path, text: readFileSync(safe.path, 'utf8'), size: st.size, mtime: st.mtimeMs };
       } catch (e) {
         return { ok: false, reason: e instanceof Error ? e.message : String(e) };
       }
     },
-    'fs.write': async (_c, a) => {
+    'fs.write': async (c, a) => {
       const p = String(a[0] || '').trim();
       const txt = String(a[1] == null ? '' : a[1]);
       if (!p) return { ok: false, reason: '缺路径' };
-      if (!/\.(txt|md|json|log|yml|yaml|csv|ini|conf|js|ts|mjs|cjs|html|css)$/i.test(p)) {
+      const size = Buffer.byteLength(txt, 'utf8');
+      if (size > 2 * 1024 * 1024) return { ok: false, reason: '文件太大（>2MB）' };
+      const safe = resolveAllowedLocalPath(p, c.__localRoots, { write: true });
+      if (!safe.ok) return safe;
+      if (!/\.(txt|md|json|log|yml|yaml|csv|ini|conf|js|ts|mjs|cjs|html|css)$/i.test(safe.path)) {
         return { ok: false, reason: '只允许文本文件' };
       }
       try {
-        // 写前备份一份（原地 .bak-时间戳），出问题能捞回来
-        if (existsSync(p)) {
-          try { writeFileSync(p + '.bak-' + Date.now(), readFileSync(p)); } catch { /* ignore */ }
+        // 写前备份一份；备份同样过根目录/realpath 校验，不能跟随符号链接逃逸。
+        if (existsSync(safe.path)) {
+          const backup = resolveAllowedLocalPath(safe.path + '.bak-' + Date.now(), c.__localRoots, { write: true });
+          if (backup.ok) writeFileSync(backup.path, readFileSync(safe.path));
         } else {
-          mkdirSync(dirname(p), { recursive: true });
+          mkdirSync(dirname(safe.path), { recursive: true });
         }
-        writeFileSync(p, txt, 'utf8');
-        return { ok: true, path: p, size: Buffer.byteLength(txt, 'utf8') };
+        const checked = resolveAllowedLocalPath(safe.path, c.__localRoots, { write: true });
+        if (!checked.ok) return checked;
+        writeFileSync(checked.path, txt, 'utf8');
+        return { ok: true, path: checked.path, size };
       } catch (e) {
         return { ok: false, reason: e instanceof Error ? e.message : String(e) };
       }
@@ -6022,6 +6259,8 @@ const WHY_MAP = { busy: '目标会话回合活跃,已等待至回合结束仍超
           // ★ 2026-10-27：按 peer 找当前会话的 agent —— appendSilent/appendWake 靠它
           agent: __agentForCap,
         });
+        // 文件根来自服务端账号配置，绝不接受 query 任意指定；放在 caps 上仅供白名单实现读取。
+        caps.__localRoots = localRootsForNs(capNs);
         // 诊断信息挂到 caps 上，白名单里的实现可以读它来解释"为什么失败"
         try {
           const gm = globalThis.__qqbotManagers;
@@ -6273,16 +6512,24 @@ const WHY_MAP = { busy: '目标会话回合活跃,已等待至回合结束仍超
       }
 
       if (!kind || !file) return writeJson(res, 400, { error: 'kind 与 file 必填' });
+      if (!EXT_KINDS.includes(kind)) return writeJson(res, 400, { error: 'kind 不合法' });
+      file = basename(file);
+      if (!file || file === '.' || file === '..') return writeJson(res, 400, { error: 'file 不合法' });
 
-      // 定位文件（只允许 EXT_KINDS 内的六类，防路径逃逸）
       const { dataRoot } = resolveDataRootForWorkspace(cwdParam);
       if (!dataRoot) return writeJson(res, 500, { error: '推不出 dataRoot' });
-      // 内置目录 + 所有扩展包里找（扩展包的扩展不在 .qqbot-extensions 下）
+      const extRoots = canonicalAllowedRoots([
+        join(dataRoot, '.qqbot-extensions'),
+        join(dataRoot, 'extension-packs'),
+      ]);
       let abs = findExtFileInAnyRoot(dataRoot, kind, file);
       if (!abs) abs = findExtFileDeep(dataRoot, kind, file);
       if (!abs) {
         return writeJson(res, 404, { error: '扩展文件不存在：' + file + '（已在内置目录与 extension-packs 下查找）' });
       }
+      const safeAbs = resolveAllowedLocalPath(abs, extRoots);
+      if (!safeAbs.ok) return writeJson(res, 403, { error: safeAbs.reason });
+      abs = safeAbs.path;
 
       const extId = String(file).replace(/\.(mjs|js|cjs)$/i, '');
 

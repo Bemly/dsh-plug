@@ -194,7 +194,7 @@ function attachmentNote(atts, processed) {
         const url = String(a?.url ?? '');
         const kind = inferMediaKind(a);
         if (kind === 'image') {
-            const local = url ? lookupImagePath(url) : undefined;
+            const local = url ? lookupImagePath(url, undefined, stickerDirOf(config)) : undefined;
             out.push(`[图片: ${local ?? (url || '（无链接）')}]`);
         }
         else if (kind === 'voice') {
@@ -313,7 +313,7 @@ injectRules, isActive) {
                     if (inferMediaKind(a) !== 'image')
                         continue;
                     const url = String(a?.url ?? '');
-                    let p = url ? lookupImagePath(url) : undefined;
+                    let p = url ? lookupImagePath(url, undefined, stickerDirOf(config)) : undefined;
                     if (!p) {
                         const note = attachmentNote([raw], e.processed);
                         const mm = /\[图片:\s*([^\]]+)\]/.exec(note);
@@ -429,8 +429,9 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
     }
     function scheduleFlush(key, w, delayMs) {
         clearTimer(w);
+        // 不能 unref：这个定时器就是"攒批到期必须派发"的唯一保证。unref 后若进程只剩它，
+        // 事件循环会先判定无事可做退出，窗口里的消息既不派发也不落盘（测试里表现为整个用例悬挂）。
         w.timer = setTimeout(() => void flush(key, w), Math.max(0, delayMs));
-        w.timer.unref?.();
     }
     function restoreBatch(key, w, delayMs) {
         const current = windows.get(key);
@@ -507,10 +508,13 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                 // ★ 2026-11-26：忙判定不能只看 turnActive —— 实测它经常是 undefined
                 //   （回合由宿主侧驱动、outbound 事件没回到本插件时会不同步），
                 //   而 agent.status 已是 running。只认 turnActive 会让插话整体失效。
-                const busyNow = busyRec?.turnActive === true || busyRec?.agent?.status === 'running';
+                let busyNow = busyRec?.turnActive === true || busyRec?.agent?.status === 'running';
                 if (busyRec?.turnActive && busyRec.agent?.status === 'idle') {
                     busyRec.turnActive = false;
                     busyRec.interjectSeq = 0;
+                    // 复位后必须重新读取两个信号；沿用旧的 busyNow=true 会继续 defer，
+                    // 表现为 idle 会话的消息仍被幻影 busy 卡住。
+                    busyNow = busyRec?.turnActive === true || busyRec?.agent?.status === 'running';
                     logger.info?.(`[debounce] 检测到幻影忙标记(turnActive=true 但 agent.status=idle)，已复位并走正常唤醒 key=${key}`);
                 }
                 if (busyNow && !busyRec?.turnActive && busyRec?.agent?.status === 'running')
@@ -550,22 +554,30 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                             return; // 已插进当前回合, 窗口清空
                         }
                         dbg(`flush 插话不可用(${busyRec.__interjectSkip || 'unknown'}; agentStatus=${busyRec.agent?.status}; turnActive=${busyRec.turnActive}) → 回落排队 key=${key} n=${pre.length}`);
+                        // ★ 插话前要预解码/下载图片，await 可能持续数十秒；这段时间会话可能被 reset/remove、
+                        //   回合也可能已经结束。沿用 await 之前的 busyNow 会把消息继续 defer 到旧回合，
+                        //   表现为"reset 之后既没插话、也不派发，一直等到超时"。
+                        busyNow = busyRec?.turnActive === true || busyRec?.agent?.status === 'running';
+                        if (!busyNow)
+                            w.busySince = undefined;
                     }
-                    // 回合忙：本来"一直等到 turn/end"。2026-09-15 起加**超时兜底** ——
-                    //   卡死的回合会把该会话的消息通道永久堵住（主人实测"发完语音后消息全不进"），
-                    //   超过 BUSY_MAX_WAIT_MS 就强制放行（warn 留痕），宁可挤一点也不能哑掉。
-                    const since = w.busySince ?? (w.busySince = Date.now());
-                    const waitedMs = Date.now() - since;
-                    if (waitedMs < BUSY_MAX_WAIT_MS) {
-                        w.turnDeferred = true; // 本次窗口因回合忙被 defer → 派发时带系统时间提示
-                        restoreBatch(key, w, 800);
-                        dbg(`flush 回合忙 defer(等 turn/end, 已等 ${Math.round(waitedMs / 1000)}s) key=${key} n=${pre.length}`);
-                        return; // 窗口保留, 不派发
+                    if (busyNow) {
+                        // 回合忙：本来"一直等到 turn/end"。2026-09-15 起加**超时兜底** ——
+                        //   卡死的回合会把该会话的消息通道永久堵住（主人实测"发完语音后消息全不进"），
+                        //   超过 BUSY_MAX_WAIT_MS 就强制放行（warn 留痕），宁可挤一点也不能哑掉。
+                        const since = w.busySince ?? (w.busySince = Date.now());
+                        const waitedMs = Date.now() - since;
+                        if (waitedMs < BUSY_MAX_WAIT_MS) {
+                            w.turnDeferred = true; // 本次窗口因回合忙被 defer → 派发时带系统时间提示
+                            restoreBatch(key, w, 800);
+                            dbg(`flush 回合忙 defer(等 turn/end, 已等 ${Math.round(waitedMs / 1000)}s) key=${key} n=${pre.length}`);
+                            return; // 窗口保留, 不派发
+                        }
+                        logger.warn(`[debounce] 回合忙等超时(${Math.round(waitedMs / 1000)}s ≥ ${BUSY_MAX_WAIT_MS / 1000}s) → 强制放行 ` +
+                            `key=${key} n=${pre.length}（该会话的回合疑似卡死，消息不能一直堵着）`);
+                        w.busySince = undefined; // 放行后复位，下一轮重新计时
+                        // 不 return —— 落到下面照常走冷却/派发链
                     }
-                    logger.warn(`[debounce] 回合忙等超时(${Math.round(waitedMs / 1000)}s ≥ ${BUSY_MAX_WAIT_MS / 1000}s) → 强制放行 ` +
-                        `key=${key} n=${pre.length}（该会话的回合疑似卡死，消息不能一直堵着）`);
-                    w.busySince = undefined; // 放行后复位，下一轮重新计时
-                    // 不 return —— 落到下面照常走冷却/派发链
                 }
                 else {
                     w.busySince = undefined; // 回合已结束 → 复位计时
@@ -765,7 +777,6 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
             w.entries.push({ msg: fake, wasMentioned: opts?.wasMentioned !== false, ts });
             clearTimer(w);
             w.timer = setTimeout(() => void flush(key, w), silenceMs);
-            w.timer.unref?.();
             dbg(`inject ${key} n=${w.entries.length} text=${JSON.stringify(text.slice(0, 30))}`);
             logger.debug(`[debounce] 合成消息入窗 ${key}(窗口${w.entries.length}条): ${text.slice(0, 40)}`);
             return true;
@@ -889,7 +900,6 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
             // 最近说话者(按服务器时间)刚又开口 → 重新等 ta 停口 silenceMs
             clearTimer(w);
             w.timer = setTimeout(() => void flush(key, w), silenceMs);
-            w.timer.unref?.();
         }
         // 攒满上限立即发, 不等对方停
         if (w.entries.length >= maxMsgs) {

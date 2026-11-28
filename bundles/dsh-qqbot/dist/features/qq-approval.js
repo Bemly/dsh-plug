@@ -13,6 +13,19 @@ export function parseApprovalCommand(content) {
         code: match[2].toUpperCase(),
     };
 }
+/** 交互事件的真实会话坐标；群成员 openid 不是群 openid。 */
+export function approvalInteractionPeer(event) {
+    const e = event;
+    if (e?.group_openid)
+        return { scope: 'group', peerId: String(e.group_openid) };
+    if (e?.user_openid)
+        return { scope: 'c2c', peerId: String(e.user_openid) };
+    return undefined;
+}
+function sameApprovalPeer(rec, event) {
+    const peer = approvalInteractionPeer(event);
+    return !!peer && peer.scope === rec?.scope && peer.peerId === String(rec?.peerId ?? '');
+}
 /** 面板/卡片按钮动作负载: {v:'approval', code, act:'allow'|'deny'} */
 const BTN_PREFIX = 'ap:';
 /** openid 只打印尾几位（日志里没必要留完整 id，也方便肉眼比对） */
@@ -105,25 +118,27 @@ export class QqApprovalController {
             '（点上方按钮最快; 按钮不可用时回复 `/approve ' + code + '` 或 `/deny ' + code + '`）',
         ].filter(Boolean).join('\n');
         try {
-            // ① 按钮卡片优先: 按钮仅发起者本人可点(permission.specify_user_ids = 发起者 openid)
+            // ① 按钮卡片优先。群聊仅发起者+主人可点；C2C 指定用户按钮在部分客户端
+            //   根本不下发交互，改用 type=2 可点击形状，并由回调按 samePeer+allowedDeciders 兜底鉴权。
             const kb = approvalKeyboard(code);
-            // ⚠️ 2026-09-28 修：原来只把【发起者本人】放进可点名单，导致"别人发起审批时主人点不动"。
-            //   现在 = 发起者 + 主人白名单(config.groupAdmin.owners)。私聊场景仍不设限制（本就只有双方）。
             const ownerExtra = this.manager.adminOwners();
             const ownerIds = record.scope === 'group'
-                ? Array.from(new Set([record.senderId, ...ownerExtra].filter((x) => typeof x === 'string' && x.length > 0)))
+                ? Array.from(new Set([record.senderId, ...ownerExtra].map((x) => String(x ?? '').trim()).filter(Boolean)))
                 : [];
-            const kbRows = kb;
-            for (const row of kbRows.content.rows) {
+            for (const row of kb.content.rows) {
                 for (const b of row.buttons) {
-                    if (ownerIds.length > 0)
-                        b.action.permission.specify_user_ids = ownerIds;
+                    b.action.permission = record.scope === 'group' && ownerIds.length > 0
+                        ? { type: 0, specify_user_ids: ownerIds }
+                        : { type: 2 };
                 }
             }
             const sent = await this.sender.sendMarkdownWithKeyboard(record.replyTarget, prompt, kb);
-            if (sent !== undefined || ownerIds.length > 0) {
-                // 有 keyboard 支持或明确成功 → 按钮模式
+            if (sent !== undefined) {
                 this.logger.info(`QQ approval requested (button): code=${code} tool=${tool}`);
+            }
+            else {
+                // 未明确返回成功（旧 sender/不支持键盘）→ 明确文字降级，不假定按钮可用。
+                throw new Error('keyboard sender did not confirm delivery');
             }
         }
         catch (err) {
@@ -245,10 +260,11 @@ export class QqApprovalController {
         }
         // 校验: "发起者本人 **或 主人白名单**"(c2c 看 user_openid; group 看 group_member_openid)
         //   —— 与发卡片时的可点名单同一口径（2026-10-08 修，详见 allowedDeciders 注释）。
-        const presserId = String(e.group_member_openid ?? e.user_openid ?? '');
+        const samePeer = sameApprovalPeer(pending.record, e);
+        const presserId = String(e.group_member_openid ?? e.user_openid ?? '').trim();
         const allowed = this.allowedDeciders(pending.record);
-        if (!presserId || !allowed.has(presserId)) {
-            this.logger.warn?.(`[qq-approval] 按钮被拒(非授权点击者): presser=${tail(presserId)} allowed=[${[...allowed].map((x) => tail(x)).join(', ')}] code=${parsed.code}`);
+        if (!samePeer || !presserId || !allowed.has(presserId)) {
+            this.logger.warn?.(`[qq-approval] 按钮被拒(非授权点击者或跨 peer): presser=${tail(presserId)} scope=${String(pending.record.scope)} peer=${tail(pending.record.peerId)} samePeer=${String(samePeer)} code=${parsed.code}`);
             try {
                 await this.sender.sendMarkdown(replyTarget, '你无权处理这项权限申请。');
             }

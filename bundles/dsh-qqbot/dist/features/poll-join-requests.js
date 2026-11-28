@@ -16,7 +16,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { pushPendingJoinRequest } from './group-join-request.js';
+import { pushPendingJoinRequest, readPendingJoinRequests } from './group-join-request.js';
 import { notifyGroupHub, wakeHubAgent, safeAppendUserMessage, wakeSessionAgent } from './group-hub.js';
 import { groupRegistryPath } from '../api/group-admin.js';
 import { verifyHuman } from '../api/group-admin.js';
@@ -44,15 +44,16 @@ function loadState(config) {
     try {
         const p = statePath(config);
         if (!existsSync(p))
-            return { seen: {}, lastWakeAt: {} };
+            return { seen: {}, lastWakeAt: {}, notified: {} };
         const raw = JSON.parse(readFileSync(p, 'utf8'));
         return {
             seen: raw?.seen ?? {},
             lastWakeAt: raw?.lastWakeAt ?? {},
+            notified: raw?.notified ?? {},
         };
     }
     catch {
-        return { seen: {}, lastWakeAt: {} };
+        return { seen: {}, lastWakeAt: {}, notified: {} };
     }
 }
 function saveState(config, s) {
@@ -67,7 +68,13 @@ function saveState(config, s) {
             if (arr)
                 seen[g] = arr.slice(0, 200);
         }
-        writeFileSync(p, JSON.stringify({ seen, lastWakeAt: s.lastWakeAt }, null, 1), 'utf8');
+        const notified = {};
+        for (const g of gids) {
+            const arr = s.notified?.[g];
+            if (arr)
+                notified[g] = arr.slice(0, 200);
+        }
+        writeFileSync(p, JSON.stringify({ seen, lastWakeAt: s.lastWakeAt, notified }, null, 1), 'utf8');
     }
     catch { /* 落盘失败不阻断 */ }
 }
@@ -140,33 +147,41 @@ export function startJoinRequestPolling(manager, config, logger) {
                     state.seen[gid] = [...(state.seen[gid] ?? []), ...fresh.map((f) => f.join_request_id)].slice(0, 200);
                     persist();
                 }
-                if (fresh.length === 0)
+                // 新申请先入 pending；minCount / 冷却都不丢，下一轮继续累计。
+                if (fresh.length > 0) {
+                    for (const it of fresh) {
+                        pushPendingJoinRequest(dataRootOf(config), {
+                            group_openid: gid,
+                            join_request_id: it.join_request_id,
+                            member_openid: it.member_openid,
+                            username: it.username,
+                            apply_at: it.apply_at,
+                            apply_source: it.apply_source,
+                            invited_by: it.invited_by,
+                            risk_tips: it.risk_tips,
+                            verify_message: verifyHuman(it.verify_info),
+                            seen_at: new Date().toISOString(),
+                            notified: false,
+                        });
+                    }
+                }
+                const notified = new Set(state.notified?.[gid] ?? []);
+                const candidates = readPendingJoinRequests(dataRootOf(config), gid)
+                    .filter((it) => it?.join_request_id && !notified.has(it.join_request_id));
+                if (candidates.length === 0)
                     continue;
-                // 攒批防打扰: 同一群两次唤醒之间至少隔 intervalMin 分钟(新申请攒着下轮再报)
+                const minCount = poll.minCount ?? 2;
+                if (candidates.length < minCount) {
+                    logger.info(`[join-poll] ${gid.slice(0, 8)}… 待审 ${candidates.length} 条，不足 minCount=${minCount}，继续累计`);
+                    continue;
+                }
                 const minGap = (poll.intervalMin ?? 5) * 60_000;
                 const lastWake = state.lastWakeAt[gid] ?? 0;
                 if (now - lastWake < minGap) {
-                    logger.info(`[join-poll] ${gid.slice(0, 8)}… 新增${fresh.length}条, 冷却中(距上次唤醒 ${Math.round((now - lastWake) / 1000)}s)暂缓`);
+                    logger.info(`[join-poll] ${gid.slice(0, 8)}… 待审 ${candidates.length} 条, 冷却中(距上次唤醒 ${Math.round((now - lastWake) / 1000)}s)暂缓`);
                     continue;
                 }
-                // 组装待办条目(与事件链路同形, 落盘共享)
-                const items = fresh.map((it) => ({
-                    group_openid: gid,
-                    join_request_id: it.join_request_id,
-                    member_openid: it.member_openid,
-                    username: it.username,
-                    apply_at: it.apply_at,
-                    apply_source: it.apply_source,
-                    invited_by: it.invited_by,
-                    risk_tips: it.risk_tips,
-                    verify_message: verifyHuman(it.verify_info),
-                    seen_at: new Date().toISOString(),
-                    notified: false,
-                }));
-                // 先落盘(即使本轮不唤醒, 下轮也认作"已见过", 不重复)
-                for (const it of items)
-                    pushPendingJoinRequest(dataRootOf(config), it);
-                newlyFound.push({ gid, items });
+                newlyFound.push({ gid, items: candidates });
             }
             catch (err) {
                 logger.warn?.(`[join-poll] ${gid.slice(0, 8)}… 拉取失败: ${err instanceof Error ? err.message : String(err)}`);
@@ -174,13 +189,7 @@ export function startJoinRequestPolling(manager, config, logger) {
         }
         if (newlyFound.length === 0)
             return;
-        // ── 汇总要唤醒的群: 满足 minCount 的才唤醒(默认 1 = 任何新增都唤醒) ──
-        const minCount = poll.minCount ?? 1;
-        const wakeTargets = newlyFound.filter((n) => n.items.length >= minCount);
-        if (wakeTargets.length === 0) {
-            logger.info(`[join-poll] 新增不足 minCount=${minCount}, 仅落盘不唤醒`);
-            return;
-        }
+        const wakeTargets = newlyFound;
         const total = wakeTargets.reduce((acc, n) => acc + n.items.length, 0);
         const lines = [`【审批轮询】发现 ${total} 个新的入群申请:`];
         for (const { gid, items } of wakeTargets) {
@@ -190,6 +199,7 @@ export function startJoinRequestPolling(manager, config, logger) {
             }
             lines.push(`(群 …${gid.slice(-6)}; 回复我处理, 如: 通过 ${items[0]?.username ?? '该申请人'})`);
             state.lastWakeAt[gid] = now;
+            state.notified[gid] = [...new Set([...(state.notified[gid] ?? []), ...items.map((x) => x.join_request_id)])].slice(-200);
         }
         persist();
         const summary = lines.join('\n');
@@ -226,37 +236,59 @@ export function startJoinRequestPolling(manager, config, logger) {
             // 通知普通群(独立开关, 默认 false): 申请所在群会话 append 一条(web 可见, **不唤醒 AI**)
             // 2026-09-11 主人要求拆分: 原实现走 handleInbound 会唤醒普通群 AI 并可能发 QQ 消息;
             // 现在「通知普通群」只做 web 可见, 唤醒由独立开关 wakeGroup 控制。
-            if (poll.notifyGroup !== false) {
-                const rec = await groupRecOf(manager, first.gid, first.items[0]?.member_openid ?? 'master');
-                if (rec) {
-                    const r = await safeAppendUserMessage(rec.agent, summary, logger);
-                    logger.info(`[join-poll] 普通群已通知(notifyGroup, 不唤醒): ${r}`);
+            for (const tg of wakeTargets) {
+                if (poll.notifyGroup !== false) {
+                    const rec = await groupRecOf(manager, tg.gid, tg.items[0]?.member_openid ?? 'master');
+                    if (rec) {
+                        const r = await safeAppendUserMessage(rec.agent, summary, logger);
+                        logger.info(`[join-poll] 普通群已通知(notifyGroup, 不唤醒): ${tg.gid.slice(0, 8)}… ${r}`);
+                    }
+                    else {
+                        logger.warn?.(`[join-poll] 普通群会话不可用(notifyGroup 跳过): ${tg.gid.slice(0, 8)}…`);
+                    }
                 }
-                else {
-                    logger.warn?.(`[join-poll] 普通群会话不可用(notifyGroup 跳过): ${first.gid.slice(0, 8)}…`);
-                }
-            }
-            // 唤醒普通群 AI(独立开关, 默认 false): followup 申请所在群会话的 AI
-            // 2026-09-11 主人确认: 【入群申请】=消息注记(不唤醒), 【审批轮询】=系统提醒(唤醒), 两者不同用途, 不互斥不去重。
-            if (poll.wakeGroup !== false) {
-                const rec = await groupRecOf(manager, first.gid, first.items[0]?.member_openid ?? 'master');
-                if (rec) {
-                    const w = await wakeSessionAgent(manager, rec.sessionId, logger, `${summary}\n\n可回复我处理(如: 查看入群申请 / 通过 某人 / 拒绝 某人)`);
-                    logger.info(`[join-poll] 唤醒普通群 AI: ${w}`);
-                }
-                else {
-                    logger.warn?.(`[join-poll] 普通群会话不可用(wakeGroup 跳过): ${first.gid.slice(0, 8)}…`);
+                if (poll.wakeGroup !== false) {
+                    const rec = await groupRecOf(manager, tg.gid, tg.items[0]?.member_openid ?? 'master');
+                    if (rec) {
+                        const w = await wakeSessionAgent(manager, rec.sessionId, logger, `${summary}\n\n可回复我处理(如: 查看入群申请 / 通过 某人 / 拒绝 某人)`);
+                        logger.info(`[join-poll] 唤醒普通群 AI(${tg.gid.slice(0, 8)}…): ${w}`);
+                    }
+                    else {
+                        logger.warn?.(`[join-poll] 普通群会话不可用(wakeGroup 跳过): ${tg.gid.slice(0, 8)}…`);
+                    }
                 }
             }
         }
     }
-    const timer = setInterval(() => { void pollOnce(); }, TICK_MS);
-    timer.unref?.();
-    void pollOnce();
+    let stopped = false;
+    let running = false;
+    let timer = null;
+    const intervalMs = () => Math.max(60_000, (Number(config.groupAdmin?.pollJoinRequests?.intervalMin) || 5) * 60_000);
+    const schedule = () => {
+        if (stopped)
+            return;
+        timer = setTimeout(() => { void runOnce(); }, intervalMs());
+        timer.unref?.();
+    };
+    const runOnce = async () => {
+        if (running || stopped)
+            return;
+        running = true;
+        try {
+            await pollOnce();
+        }
+        finally {
+            running = false;
+            schedule();
+        }
+    };
+    void runOnce();
     const poll = config.groupAdmin?.pollJoinRequests;
     logger.info(`[join-poll] started (enabled=${poll?.enabled} interval=${poll?.intervalMin}min minCount=${poll?.minCount} wakeLlm=${poll?.wakeLlm} hubNotify=${poll?.hubNotify} notifyGroup=${poll?.notifyGroup} wakeGroup=${poll?.wakeGroup})`);
     return () => {
-        clearInterval(timer);
+        stopped = true;
+        if (timer)
+            clearTimeout(timer);
         persist();
         logger.info('[join-poll] stopped');
     };

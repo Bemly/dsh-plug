@@ -23,14 +23,16 @@ test('matches refusal phrases in final assistant text', () => {
 
 test('matches refusal phrases through markdown links and mixed whitespace', () => {
     assert.equal(isRefusalText('Your request may go against my [guidelines](https://example.com/policy).'), true);
-    assert.equal(isRefusalText('A\nLANGUAGE   MODEL replied'), true);
+    assert.equal(isRefusalText('I am\n  just  a LANGUAGE   MODEL, I cannot help with that.'), true);
 });
 
-test('matches configured substrings without word boundaries', () => {
-    assert.equal(isRefusalText('policyholder'), true);
-    assert.equal(isRefusalText('policies'), true);
-    assert.equal(isRefusalText('guidelines'), true);
-    assert.equal(isRefusalText('A LANGUAGE MODEL'), true);
+test('does not treat bare policy/guideline/language-model substrings as refusals', () => {
+    // 2026-11-28 审计：原来拿 policy/guideline 做子串匹配，policyholder、正常讨论 policies
+    // 都会被误判成拒答并触发会话轮换。现在只认明确的拒答句式或结构化错误码。
+    assert.equal(isRefusalText('policyholder'), false);
+    assert.equal(isRefusalText('policies'), false);
+    assert.equal(isRefusalText('guidelines'), false);
+    assert.equal(isRefusalText('A LANGUAGE MODEL'), false);
 });
 
 test('does not match text without configured substrings', () => {

@@ -14,7 +14,20 @@ export function ownerListOf(config) {
     return raw.map((x) => String(x ?? '').trim()).filter(Boolean);
 }
 /**
- * 构造 `authorized` 回调。
+ * 命令执行鉴权（普通斜杠命令与按钮执行器共用）。
+ * 返回 true 放行；返回字符串作为拒绝原因。未定义 authorized 的命令保持公开行为。
+ * 点击者身份只取明确 senderId，不用 peerId 冒充，避免跨身份放行。
+ */
+export function authorizeCommand(cmd, ctx, config, logger) {
+    const authorized = cmd?.authorized;
+    if (typeof authorized !== 'function')
+        return true;
+    const verdict = authorized(ctx);
+    if (verdict === true)
+        return true;
+    return typeof verdict === 'string' ? verdict : DENIED;
+}
+/** 构造 `authorized` 回调。
  * @param config 插件配置（读 groupAdmin.owners）
  * @param logger 拒绝时留痕（真机上排查"为什么他被拒了"）
  */
@@ -26,7 +39,7 @@ export function ownerOnlyAuth(config, logger) {
             logger?.warn?.('[cmd-auth] 拒绝：主人白名单为空（groupAdmin.owners 未配置）');
             return NOT_CONFIGURED;
         }
-        const sender = String(ctx?.message?.senderId ?? '').trim();
+        const sender = String(ctx?.message?.senderId ?? ctx?.senderId ?? '').trim();
         if (!sender) {
             logger?.warn?.('[cmd-auth] 拒绝：拿不到 senderId（身份缺失，fail-closed）');
             return DENIED;

@@ -35,6 +35,7 @@ function touchNameCache(map, key, value) {
 /** 在途请求（避免同一目标并发打点） */
 const inflight = new Set();
 const injectedRegistries = new Map();
+const MAX_SESSION_KIND_IDS = 20_000;
 
 function registryFile(dataRoot) {
     return join(dataRoot, '.qqbot', 'session-kind-injected.json');
@@ -98,6 +99,8 @@ export function markSessionKindInjected(dataRoot, sessionId) {
     if (!sessionId || !registry || registry.sessions.has(sessionId))
         return;
     registry.sessions.add(sessionId);
+    while (registry.sessions.size > MAX_SESSION_KIND_IDS)
+        registry.sessions.delete(registry.sessions.values().next().value);
     registry.dirty = true;
     persistRegistry(registry.file, registry);
 }

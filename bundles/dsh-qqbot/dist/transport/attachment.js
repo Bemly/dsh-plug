@@ -4,9 +4,10 @@
  * 下载后仅通过 @路径 提示模型，由模型通过 tool-bash / tool-fs 自行读取，
  * 不内联内容（避免 token 浪费与上下文污染）。
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import * as dns from 'node:dns';
+import { fetchSafeBytes } from '../features/sticker-store.js';
 /** 下载大小上限（超过则跳过下载，仅保留路径提示） */
 const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
 /** 下载超时（毫秒） */
@@ -16,6 +17,49 @@ function sanitizeFilename(name) {
     const base = basename(name.replace(/\\/g, '/'));
     const safe = base.replace(/[^a-zA-Z0-9._-]/g, '_');
     return safe || 'attachment';
+}
+const ATTACHMENT_KEEP_DAYS = 14;
+const ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+function pruneAttachments(cwd) {
+    const root = resolve(cwd, '.qqbot', 'attachments');
+    let entries;
+    try { entries = readdirSync(root, { withFileTypes: true }); }
+    catch { return; }
+    const cutoff = Date.now() - ATTACHMENT_KEEP_DAYS * 24 * 3600_000;
+    const files = [];
+    let total = 0;
+    for (const ent of entries) {
+        if (!ent.isDirectory() || !/^\d{4}-\d{2}-\d{2}$/.test(ent.name))
+            continue;
+        const dir = join(root, ent.name);
+        let st;
+        try { st = statSync(dir); } catch { continue; }
+        if (st.mtimeMs < cutoff) {
+            try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+            continue;
+        }
+        let names = [];
+        try { names = readdirSync(dir); } catch { continue; }
+        for (const name of names) {
+            const full = join(dir, name);
+            try {
+                const fs = statSync(full);
+                if (!fs.isFile())
+                    continue;
+                total += fs.size;
+                files.push({ full, size: fs.size, mtime: fs.mtimeMs });
+            }
+            catch { /* ignore */ }
+        }
+    }
+    if (total <= ATTACHMENT_MAX_BYTES)
+        return;
+    files.sort((a, b) => a.mtime - b.mtime);
+    for (const file of files) {
+        if (total <= ATTACHMENT_MAX_BYTES)
+            break;
+        try { rmSync(file.full, { force: true }); total -= file.size; } catch { /* ignore */ }
+    }
 }
 /** 字节数格式化 */
 function formatSize(bytes) {
@@ -54,18 +98,7 @@ async function assertSafeHostname(hostname) {
 /** 安全下载：仅 HTTPS + SSRF 防护 + 大小上限 + 超时，返回下载字节数。
  *  (2026-09-13 起 export: 图片预检要复用它下载后算内容哈希 —— QQ 的 fileid/rkey 都会变, 只有字节哈希恒定) */
 export async function download(url, destPath, maxBytes) {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:') {
-        throw new Error(`Only HTTPS allowed: ${parsed.protocol}`);
-    }
-    await assertSafeHostname(parsed.hostname);
-    const resp = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-    if (!resp.ok)
-        throw new Error(`HTTP ${resp.status}`);
-    const buf = Buffer.from(await resp.arrayBuffer());
-    if (buf.length > maxBytes) {
-        throw new Error(`Download exceeds ${Math.floor(maxBytes / 1024 / 1024)}MB`);
-    }
+    const { buf } = await fetchSafeBytes(url, maxBytes, DOWNLOAD_TIMEOUT_MS);
     writeFileSync(destPath, buf);
     return buf.length;
 }
@@ -77,6 +110,7 @@ export async function download(url, destPath, maxBytes) {
  */
 export async function downloadFileAttachments(attachments, cwd, _messageId, // 保留形参(调用方按位置传): 2026-09-13 起目录名不再用 msg_id(会堆空目录)
 logger) {
+    pruneAttachments(cwd);
     const files = (attachments ?? []).filter(a => a.content_type === 'file' && a.url);
     if (files.length === 0)
         return [];

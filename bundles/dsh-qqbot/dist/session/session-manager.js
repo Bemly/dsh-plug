@@ -33,7 +33,7 @@ import { dataRootOf, stickerDirOf } from '../gateway/data-root.js';
 import { ModelResolver } from '../model/model-resolver.js';
 import { IdleEvictor } from './idle-evictor.js';
 import { markTurnAborted } from '../gateway/debounce.js';
-import { resetAggImages } from '../features/image-aggregate.js';
+import { clearAggImages, resetAggImages } from '../features/image-aggregate.js';
 import { apply as mountChannelTools, readContextPending, clearContextPending, syncChannelScopedTools, ensureExtToolsGlobal, applyExtToolVisibility, instanceTagOfManager, setCtxEnv, forgetExtToolContext } from '../channel-tools.js';
 import { createGroupAdmin } from '../api/group-admin.js';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
@@ -84,13 +84,13 @@ export class SessionManager {
     logger;
     sessions = new Map();
     creating = new Map();
+    /** 同 key fork 单飞；reset/remove/disposeAll 会删除映射以立即使在途 fork 失效。 */
+    forking = new Map();
     sessionGenerations = new Map();
     evictor;
     modelResolver;
     /** QQ 通道发送能力(由 bootstrap 注入)；仅作为 qqChannel service 暴露给通道工具，不在此注册工具 */
     channelSender;
-    /** 最近一次 setup 收到的 agent ctx(工具自愈用；getOrCreate 完成后读走并清空) */
-    lastSetupCtx;
     /** 注入 QQ 通道发送能力(供通道工具)；bootstrap 调用 */
     /**
      * 取本实例的**真发送器**（bootstrap 里那个 QQBotSender：sendMedia / sendTuwenCard /
@@ -177,9 +177,13 @@ export class SessionManager {
         this.modelResolver = new ModelResolver(ctx, config, logger);
         this.evictor = new IdleEvictor(this.sessions, config.sessionIdleTimeout, (key, record) => {
             this.logger.info(`evicting idle session: key=${key}`);
+            // 回收也是生命周期变更：先 bump，让在途 create/fork 在 await 后自毁新 agent。
+            this.bumpSessionGeneration(key);
+            this.creating.delete(key);
+            this.forking.delete(key);
             this.sessions.delete(key);
-            this.sessionGenerations.delete(key);
             this.lastHostModel.delete(key);
+            clearAggImages(`${record.scope}:${record.peerId}`);
             this.cancelRecordOutbound(record);
             forgetExtToolContext(record.agentCtx);
             record.agent.cancel({ kind: 'user' });
@@ -479,6 +483,25 @@ export class SessionManager {
     }
     /** fork 当前会话 → 新 childId; inherit=true 用旧历史做 seed(切模型), false 全新空档; 失败降级 dispose */
     async forkCurrentSession(key, record, route, inherit, signal) {
+        if (!this.forking)
+            return this.forkCurrentSessionInner(key, record, route, inherit, signal);
+        const running = this.forking.get(key);
+        if (running)
+            return running;
+        const task = this.forkCurrentSessionInner(key, record, route, inherit, signal);
+        this.forking.set(key, task);
+        try {
+            return await task;
+        }
+        finally {
+            if (this.forking.get(key) === task)
+                this.forking.delete(key);
+        }
+    }
+    async forkCurrentSessionInner(key, record, route, inherit, signal) {
+        const generationOf = () => Number(this.sessionGenerations?.get?.(key) ?? 0);
+        const generation = generationOf();
+        const forkFromSessionId = String(record.sessionId ?? '');
         const sessionsService = this.getSessionsService();
         if (!sessionsService) {
             this.logger.warn(`fork unavailable, keep current session: key=${key}`);
@@ -499,9 +522,14 @@ export class SessionManager {
         const childId = SessionId(randomUUID());
         let created;
         let composed;
+        let setupCtx;
         try {
-            composed = await this.composePreset(this.effectivePreset(key));
+            composed = await this.composePreset(this.effectivePreset(key), (ctx0) => { setupCtx = ctx0; });
             if (signal?.aborted)
+                return false;
+            if (generationOf() !== generation
+                || this.sessions?.get?.(key) !== record
+                || String(record.sessionId ?? '') !== forkFromSessionId)
                 return false;
             created = await this.agents.create({
                 sessionId: childId,
@@ -520,9 +548,12 @@ export class SessionManager {
             this.logger.warn(`fork failed, keep current session: key=${key} err=${err instanceof Error ? err.message : String(err)}`);
             return false;
         }
-        if (signal?.aborted) {
+        if (signal?.aborted
+            || generationOf() !== generation
+            || this.sessions?.get?.(key) !== record
+            || String(record.sessionId ?? '') !== forkFromSessionId) {
             await created.dispose().catch(() => { });
-            this.logger.warn(`fork aborted, keep current session: key=${key}`);
+            this.logger.warn(`fork aborted or superseded, keep current session: key=${key}`);
             return false;
         }
         this.modelResolver.setSessionId(key, childId);
@@ -540,6 +571,8 @@ export class SessionManager {
         this.cancelRecordOutbound(record);
         forgetExtToolContext(record.agentCtx);
         void oldHandle.dispose().catch(() => { });
+        record.agentCtx = setupCtx;
+        record.channelToolsReady = setupCtx?.[CTX_TOOLS_READY] === true;
         void attachSessionToWorkspaceWithRetry(this.ctx, this.config.cwd, childId, this.logger, {
             // 这个 childId 已经被下一次 fork/new 取代的话，别再挂、更别反归档（会撤销别人的自动归档）
             //
@@ -655,7 +688,7 @@ export class SessionManager {
     currentSessionId(sessionKey) {
         return this.modelResolver.getSessionId(sessionKey) ?? this.deriveSessionId(sessionKey);
     }
-    async composePreset(presetId) {
+    async composePreset(presetId, onSetupCtx) {
         let presets;
         try {
             presets = this.ctx.get('agentPresets');
@@ -672,7 +705,7 @@ export class SessionManager {
         const provideChannel = this.channelSender === undefined
             ? undefined
             : (agentCtx) => {
-                this.lastSetupCtx = agentCtx;
+                onSetupCtx?.(agentCtx);
                 try {
                     agentCtx.provide?.('qqChannel', {
                         manager: this,
@@ -779,7 +812,10 @@ export class SessionManager {
                 await this.forkCurrentSession(key, active, route, true);
                 if ((this.sessionGenerations.get(key) ?? 0) !== generation)
                     throw new Error('session changed during creation');
+                this.modelResolver.setSessionCfg(key, { cwd: wantCwd });
                 active.replyTarget = replyTarget;
+                if (String(senderId ?? '').trim())
+                    active.senderId = String(senderId).trim();
                 active.lastActivity = Date.now();
                 return active;
             }
@@ -790,6 +826,8 @@ export class SessionManager {
         const existing = this.sessions.get(key);
         if (existing) {
             existing.replyTarget = replyTarget;
+            if (String(senderId ?? '').trim())
+                existing.senderId = String(senderId).trim();
             existing.lastActivity = Date.now();
             // 会话已存在且配置一致 → 指纹刷新为当前值(防止误判)
             try {
@@ -845,6 +883,7 @@ export class SessionManager {
         let agent;
         let handle;
         let agentPreset;
+        let setupCtx;
         const live = this.agents.get(sessionId);
         if (live) {
             agent = live;
@@ -859,7 +898,7 @@ export class SessionManager {
         }
         else {
             // preset 只解析一次：resume/create 共用同一组合(会话覆盖 > config), 避免重复 resolve/mount 目录
-            const composed = await this.composePreset(this.effectivePreset(key));
+            const composed = await this.composePreset(this.effectivePreset(key), (ctx0) => { setupCtx = ctx0; });
             agentPreset = composed.agentPreset;
             try {
                 const resumeRoute = this.modelResolver.getResumeRoute(key, sessionId);
@@ -965,11 +1004,10 @@ export class SessionManager {
             senderId,
             lastActivity: Date.now(),
             agentPreset,
-            // 自愈用：setup 若正常跑到 channelSetup，此处拿到 agent ctx 且标记已装载
-            agentCtx: this.lastSetupCtx,
-            channelToolsReady: this.lastSetupCtx?.[CTX_TOOLS_READY] === true,
+            // 自愈用：setup 若正常跑到 channelSetup，此处拿到本次创建专属的 agent ctx。
+            agentCtx: setupCtx,
+            channelToolsReady: setupCtx?.[CTX_TOOLS_READY] === true,
         };
-        this.lastSetupCtx = undefined;
         this.sessions.set(key, record);
         // 修复侧边栏归属(上游 PR #21 移植): 创建/恢复会话后挂到 cwd 对应工作区分组,
         // 防刷新后落 Ungrouped。幂等 + fail-soft(内部全吞), fire-and-forget 不阻塞主链。
@@ -2452,6 +2490,7 @@ export class SessionManager {
         const key = this.sessionKey(scope, peerId);
         this.bumpSessionGeneration(key);
         this.creating.delete(key);
+        this.forking.delete(key);
         const record = this.sessions.get(key);
         const previousSessionId = String(record?.sessionId ?? this.currentSessionId(key) ?? '');
         const nextSessionId = SessionId(randomUUID());
@@ -2474,7 +2513,9 @@ export class SessionManager {
         const key = this.sessionKey(scope, peerId);
         this.bumpSessionGeneration(key);
         this.creating.delete(key);
+        this.forking.delete(key);
         const record = this.sessions.get(key);
+        clearAggImages(`${scope}:${peerId}`);
         if (!record) {
             this.modelResolver.clearSessionId(key);
             return;
@@ -2491,10 +2532,13 @@ export class SessionManager {
     async disposeAll() {
         this.evictor.dispose();
         const records = [...this.sessions.values()];
-        const keys = new Set([...this.sessions.keys(), ...this.creating.keys()]);
-        for (const key of keys)
+        const keys = new Set([...this.sessions.keys(), ...this.creating.keys(), ...this.forking.keys()]);
+        for (const key of keys) {
             this.bumpSessionGeneration(key);
+            clearAggImages(key);
+        }
         this.creating.clear();
+        this.forking.clear();
         this.sessions.clear();
         this.lastHostModel.clear();
         for (const record of records) {

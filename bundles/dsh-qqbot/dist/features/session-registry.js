@@ -137,7 +137,7 @@ export function listManagerNs() {
 export function managersOf() {
     return [...managers.values()];
 }
-/** 按 scope+peer 找目标实例的 manager(先活跃表; 再按群注册表/c2c台账归属匹配; 最后回退任意一个已注册) */
+/** 按 scope+peer 精确找目标实例的 manager(活跃表优先; 其次群注册表/c2c台账; 未知 peer 不猜测归属) */
 export function findManagerByPeer(scope, peerId) {
     // ① 活跃会话表精确命中
     for (const m of managers.values()) {
@@ -186,8 +186,8 @@ export function findManagerByPeer(scope, peerId) {
             catch { /* 无台账/读失败则跳过 */ }
         }
     }
-    // ③ 回退第一个已注册
-    return managers.values().next().value;
+    // ③ 未知 peer：不能猜到第一个实例，否则会串号/发到错误 bot。
+    return undefined;
 }
 /** 按 sessionId 找目标实例的 manager(活跃表精确命中) */
 export function findManagerBySessionId(sessionId) {

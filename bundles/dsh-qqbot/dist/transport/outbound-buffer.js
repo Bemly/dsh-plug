@@ -3,6 +3,19 @@ import { StreamingWriter } from './streaming-writer.js';
 import { containsRecall, containsMedia, collectRecallIndices, extractRefTag, parseOutbound, stripDirectives, resolveSource, } from './rich-media.js';
 import { stickerPerTurnCtx } from '../features/sticker-gate.js';
 import { rememberBotReply } from '../features/bot-reply-memo.js';
+/**
+ * Web/桌面端回合的正文是否应静默。send() 与 OutboundBuffer 共用这一判据，
+ * 保证缓冲/流式路径不会绕过 webTurnSilent；媒体标记仍按原规则整块放行。
+ */
+export function shouldSkipWebTurnText(config, record, text) {
+    if (config?.webTurnSilent !== true)
+        return false;
+    const qqActiveThisTurn = record?.turnOrigin === 'qq'
+        || record?.interjectLifted === true
+        || (typeof record?.turnStartAt === 'number'
+            && (record?.lastInboundAt ?? 0) > record.turnStartAt);
+    return !qqActiveThisTurn && !containsMedia(normalizeMediaMarkers(String(text ?? '')));
+}
 /** 流式输出节流间隔(ms)：连续 chunk 累积后停顿该间隔才推送 */
 const STREAM_THROTTLE_MS = 200;
 /** 同一发送器按目标串行发送 */
@@ -117,19 +130,38 @@ async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, reso
                     return Math.min(30000, Math.round(raw));
                 return 8000;
             })();
+            const extController = new AbortController();
+            const abortExt = () => extController.abort();
+            signal?.addEventListener('abort', abortExt, { once: true });
+            if (signal?.aborted)
+                extController.abort();
             const chain = runOutboundChain(text, {
                 ...(extHook ?? {}),
                 target,
                 sender: bot,
                 logger: (extHook?.logger ?? undefined),
+                signal: extController.signal,
             });
-            const r = await Promise.race([
-                chain,
-                new Promise((resolve) => setTimeout(() => resolve({ text, killed: false, reason: 'ext-hook-timeout', ran: 0 }), EXT_HOOK_TIMEOUT_MS)),
-            ]);
+            let timeoutTimer;
+            const timeout = new Promise((resolve) => {
+                timeoutTimer = setTimeout(() => {
+                    // 超时链标记 stale，并让 ctx.rewrite/next 的迟到结果失效。
+                    extController.abort();
+                    resolve({ text, killed: false, reason: 'ext-hook-timeout', stale: true, ran: 0 });
+                }, EXT_HOOK_TIMEOUT_MS);
+                timeoutTimer.unref?.();
+            });
+            let r;
+            try {
+                r = await Promise.race([chain, timeout]);
+            }
+            finally {
+                clearTimeout(timeoutTimer);
+                signal?.removeEventListener('abort', abortExt);
+            }
             if (signal?.aborted)
                 return;
-            if (r.reason === 'ext-hook-timeout') {
+            if (r.reason === 'ext-hook-timeout' || r.stale) {
                 logError?.(`im-qqbot: 出站扩展链超时(${EXT_HOOK_TIMEOUT_MS}ms)，已放弃改写/配图、按原文发出`);
             }
             if (r.killed) {
@@ -245,7 +277,11 @@ async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, reso
                     logError?.(`im-qqbot: 表情包闸门: 本轮已达每轮上限 ${perTurn.perTurnMax} 张, 已忽略后续表情包`);
                     continue;
                 }
-                const src = resolveSource(seg.source, cwd);
+                const src = resolveSource(seg.source, cwd, this.allowedRoots);
+                if (!src) {
+                    logError?.(`im-qqbot: 本地媒体路径不在允许目录内，已拒绝: ${String(seg.source ?? '').slice(0, 160)}`);
+                    continue;
+                }
                 const sourceOpt = src.kind === 'url' ? { url: src.url } : { localPath: src.path };
                 sentStat.total += 1;
                 try {
@@ -334,10 +370,14 @@ export class OutboundBuffer {
     refLookup;
     stripFn;
     extCaps;
+    shouldSkipText;
+    allowedRoots;
     buffer = '';
     /** 缓冲过大只告警一次（见 append 的注释） */
     warnedBig = false;
     flushing = false;
+    /** 当前 flush 的实际任务；重复 flush 必须等待同一任务，不能提前返回 */
+    flushTask = null;
     writer;
     abortController = new AbortController();
     onSettled;
@@ -366,7 +406,16 @@ export class OutboundBuffer {
      *   （appendWake / appendSilent / apiCall）—— 否则流式降级后扩展 `annihilate()` 掉正文，
      *   依然没法通知模型，跟 send() 路径行为不一致。
      */
-    extCaps) {
+    extCaps,
+    /** Web 静默判据；在实际 update/静态发送前统一求值 */
+    shouldSkipText,
+    /** 本地媒体允许根；未提供时保持旧行为（供非 QQ 调用方兼容） */
+    allowedRoots) {
+        // 兼容旧调用：历史上 extCaps 是最后一个参数，测试/第三方可能多传一个 undefined。
+        if (extCaps === undefined && shouldSkipText && typeof shouldSkipText === 'object') {
+            extCaps = shouldSkipText;
+            shouldSkipText = undefined;
+        }
         this.record = record;
         this.bot = bot;
         this.limit = limit;
@@ -378,6 +427,8 @@ export class OutboundBuffer {
         this.refLookup = refLookup;
         this.stripFn = stripFn;
         this.extCaps = extCaps;
+        this.shouldSkipText = shouldSkipText;
+        this.allowedRoots = allowedRoots;
         this.writer = streamingEnabled
             ? new StreamingWriter({
                 bot,
@@ -387,6 +438,7 @@ export class OutboundBuffer {
                 ...(resolveTarget ? { resolveTarget } : {}),
                 logger,
                 throttleMs: STREAM_THROTTLE_MS,
+                ...(shouldSkipText ? { canSend: (text) => !shouldSkipText(text) } : {}),
             })
             : null;
     }
@@ -400,8 +452,13 @@ export class OutboundBuffer {
      * 真正的背压应该在 AI 侧（流式输出本身就受限于上一个 flush），不在传输层做丢弃。
      */
     append(text) {
-        this.buffer += text;
-        this.writer?.append(text);
+        const delta = String(text ?? '');
+        if (!delta)
+            return;
+        this.buffer += delta;
+        // 静默期间只保留文本，不提前打开/更新流；若发送前解除静默，flush 会补齐 writer 后缀。
+        if (this.shouldSkipText?.(this.buffer) !== true)
+            this.writer?.append(delta);
         if (this.buffer.length > OUTBOUND_BUFFER_WARN_BYTES && !this.warnedBig) {
             this.warnedBig = true;
             try {
@@ -422,9 +479,14 @@ export class OutboundBuffer {
     }
     /** 发送所有累积文本：流式优先，降级静态 */
     async flush() {
-        if (this.flushing)
+        if (this.flushing) {
+            // onMessage/turnEnd 可能在上一轮 flush 期间再次调用；等待同一个任务，
+            // 不能返回后让上层误以为 buffer 已清空并删除它。
+            await this.flushTask;
             return;
-        if (!this.buffer.trim()) {
+        }
+        if (this.abortController.signal.aborted || !this.buffer.trim()) {
+            this.writer?.abort();
             this.settle();
             return;
         }
@@ -433,33 +495,56 @@ export class OutboundBuffer {
             if (this.buffer.startsWith(sent))
                 this.buffer = this.buffer.slice(sent.length);
         };
-        try {
-            while (this.buffer.trim() && !this.abortController.signal.aborted) {
-                const pending = this.buffer;
-                if (this.writer && !this.writer.finished) {
-                    await this.writer.finish();
-                    if (!this.writer.shouldFallback) {
+        this.flushTask = (async () => {
+            try {
+                while (this.buffer.trim() && !this.abortController.signal.aborted) {
+                    const pending = this.buffer;
+                    // 与 send() 完全相同的 Web 静默语义；媒体标记仍整块放行。
+                    if (this.shouldSkipText?.(pending) === true) {
                         consume(pending);
                         continue;
                     }
-                }
-                // 降级：静态发送（writer 不存在 or 流式失败）→ 富媒体感知发送
-                // ★ 2026-11-19 issue #72：这条路径**不经** OutboundRouter.send()，必须自己洗一遍。
-                const outText = this.stripFn ? this.stripFn(pending) : pending;
-                if (!outText.trim()) {
+                    if (this.writer && !this.writer.finished) {
+                        // append 时可能处于 Web 静默期，发送前解除静默则补齐未送入 writer 的后缀。
+                        const streamed = this.writer.text;
+                        if (!this.writer.finished && streamed.length < pending.length && pending.startsWith(streamed))
+                            this.writer.append(pending.slice(streamed.length));
+                        await this.writer.finish();
+                        if (!this.writer.shouldFallback) {
+                            consume(pending);
+                            continue;
+                        }
+                    }
+                    // 降级：writer 不存在/开流失败时发全量；中途成功但最终 update 失败时只发缺失尾部。
+                    // 新一轮 append 发生于 finish 之后，pending 已不再是 writer.text，后续静态块仍发全量。
+                    const staticText = this.writer?.shouldFallback && pending === this.writer.text
+                        ? this.writer.fallbackText
+                        : pending;
+                    if (!staticText.trim()) {
+                        consume(pending);
+                        continue;
+                    }
+                    // ★ 2026-11-19 issue #72：这条路径不经 OutboundRouter.send()，必须自己洗一遍。
+                    const outText = this.stripFn ? this.stripFn(staticText) : staticText;
+                    if (!outText.trim()) {
+                        consume(pending);
+                        continue;
+                    }
+                    await sendRichOutbound(this.bot, this.record.replyTarget, outText, this.limit, this.cwd, (m) => this.logger.error(m), this.resolveTarget, this.chunkTarget, this.onBlockSent, this.refLookup, undefined, { source: 'assistant/message', ...(this.extCaps ?? {}) }, this.abortController.signal);
                     consume(pending);
-                    continue;
                 }
-                await sendRichOutbound(this.bot, this.record.replyTarget, outText, this.limit, this.cwd, (m) => this.logger.error(m), this.resolveTarget, this.chunkTarget, this.onBlockSent, this.refLookup, undefined, { source: 'assistant/message', ...(this.extCaps ?? {}) }, this.abortController.signal);
-                consume(pending);
             }
-        }
-        catch (err) {
-            this.logger.error(`im-qqbot: flush failed: ${err instanceof Error ? err.message : String(err)}`);
-            this.buffer = '';
+            catch (err) {
+                // 不清空 buffer：失败文本必须保留给后续 flush/取消，不能静默丢失。
+                this.logger.error(`im-qqbot: flush failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        })();
+        try {
+            await this.flushTask;
         }
         finally {
             this.flushing = false;
+            this.flushTask = null;
             if (!this.buffer.trim())
                 this.settle();
         }

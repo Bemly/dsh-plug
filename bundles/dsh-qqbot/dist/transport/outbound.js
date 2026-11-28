@@ -1,5 +1,5 @@
 import { resolve as resolvePath } from 'node:path';
-import { OutboundBuffer, sendRichOutbound } from './outbound-buffer.js';
+import { OutboundBuffer, sendRichOutbound, shouldSkipWebTurnText } from './outbound-buffer.js';
 import { containsMedia, normalizeMediaMarkers, parseOutbound, collectRecallIndices, resolveSource } from './rich-media.js';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { resolveMsgIndex } from './msg-index.js';
@@ -213,8 +213,8 @@ export class OutboundRouter {
      *   那些 "aborted" 是**有意行为**，一律不展示（否则聊天里刷一串假报错）。
      */
     gateSilenced = new Set();
-    /** 已因拒答关键词轮换掉的旧会话记录，避免同一旧会话后续事件继续出站。 */
-    refusalRotated = new WeakSet();
+    /** 已因拒答轮换的 record → 被封锁的 sessionId；新会话/失败轮换后自动失效。 */
+    refusalRotated = new WeakMap();
     /**
      * 回合级累积 —— 好感度**按回合结算**（2026-09-14 修）。
      *
@@ -248,10 +248,10 @@ export class OutboundRouter {
     async rotateSessionOnRefusal(record, text) {
         if (!isRefusalText(text))
             return false;
-        if (this.refusalRotated.has(record))
+        const sessionId = String(record.sessionId ?? record.sessionKey ?? '');
+        if (this.refusalRotated.get(record) === sessionId)
             return true;
-        this.refusalRotated.add(record);
-        const sessionId = record.sessionId ?? record.sessionKey;
+        this.refusalRotated.set(record, sessionId);
         const buffer = this.buffers.get(sessionId);
         if (buffer !== undefined) {
             buffer.cancel();
@@ -265,10 +265,13 @@ export class OutboundRouter {
         try {
             const result = await this.manager.startNewSession(scope, peerId, false, preset || undefined, { replyTarget: record.replyTarget });
             if (result === 'failed') {
+                this.refusalRotated.delete(record);
                 this.logger.error(`im-qqbot: 拒答关键词轮换新会话失败 session=${sessionId}: ${this.manager.lastCreateError || 'unknown error'}`);
             }
             else {
                 this.logger.info(`im-qqbot: 拒答关键词轮换新会话完成 session=${sessionId} result=${result} preset=${preset || '(默认)'}`);
+                // 成功 fork 会换 record.sessionId；旧 session 的事件已无法由 findBySessionId 命中。
+                this.refusalRotated.delete(record);
             }
         }
         catch (err) {
@@ -463,7 +466,7 @@ export class OutboundRouter {
         const record = this.manager.findBySessionId(session.header.id);
         if (record === undefined)
             return;
-        if (this.refusalRotated.has(record))
+        if (this.refusalRotated.get(record) === String(record.sessionId ?? ''))
             return;
         // ── 内部状态留档(观察期, 2026-09-13) ──
         // 与发送行为**完全无关**: 只写本地数据文件, 不进群、不进面板、不参与任何判定(设计稿 §9/§11 红线)。
@@ -667,7 +670,9 @@ export class OutboundRouter {
             (t) => this.processOutboundText(t),
             // ★ CodeRabbit #87：回退路径也要带出站扩展能力（appendWake/appendSilent/apiCall），
             //   否则流式降级后扩展 annihilate() 掉正文依然没法通知模型
-            { ...outboundExtCaps(record, this.manager) });
+            { ...outboundExtCaps(record, this.manager) },
+            (t) => shouldSkipWebTurnText(this.config, record, t),
+            this.allowedMediaRoots());
             const cancelOutbound = () => buffer.cancel();
             record.outboundCancels ??= new Set();
             record.outboundCancels.add(cancelOutbound);
@@ -680,6 +685,21 @@ export class OutboundRouter {
             return;
         }
         buffer.append(event.text);
+    }
+    /** 模型/扩展可发送的本地媒体根：工作区、数据根及工作区上传目录。 */
+    allowedMediaRoots() {
+        const roots = [];
+        const cwd = String(this.config.cwd || '').trim();
+        if (cwd) {
+            roots.push(resolvePath(cwd), resolvePath(cwd, '.qqbot'));
+        }
+        try {
+            const dr = dataRootOf(this.config);
+            if (dr)
+                roots.push(resolvePath(dr), resolvePath(dr, '.qqbot'));
+        }
+        catch { /* dataRoot 不可得时至少保留 cwd */ }
+        return [...new Set(roots)];
     }
     /** 是否启用流式：配置开启 + c2c + 有 msgId（群聊不支持流式） */
     shouldStream(record) {
@@ -1109,7 +1129,9 @@ export class OutboundRouter {
                         }
                         await flushPending(); // 先把它前面攒的普通段发掉，保住顺序
                         try {
-                            const src = resolveSource(String(seg.source ?? ''), this.config.cwd);
+                            const src = resolveSource(String(seg.source ?? ''), this.config.cwd, this.allowedMediaRoots());
+                            if (!src)
+                                throw new Error('本地媒体路径不在允许目录内');
                             const sourceOpt = src.kind === 'url' ? { url: src.url } : { localPath: src.path };
                             await this.bot.sendMedia((this.resolveTarget(_record) ?? this.activeTarget(_record)), String(seg.kind ?? 'image'), sourceOpt);
                         }

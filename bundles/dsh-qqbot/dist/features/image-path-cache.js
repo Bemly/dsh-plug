@@ -22,15 +22,19 @@ function stableKey(u) {
     return undefined;
 }
 /** 记一条 URL → 本地路径(下载成功时调用) */
-export function rememberImagePath(url, localPath) {
+function scopedKey(scope, key) {
+    return scope ? `${scope}\u0000${key}` : key;
+}
+export function rememberImagePath(url, localPath, scope = '') {
     if (!url || !localPath)
         return;
     const e = { p: localPath, t: Date.now() };
-    cache.set(url, e);
+    const full = scopedKey(scope, url);
+    cache.set(full, e);
     // 同时按稳定键存一份：URL 变了(新 rkey)也能命中
     const k = stableKey(url);
     if (k)
-        cache.set(k, e);
+        cache.set(scopedKey(scope, k), e);
     if (cache.size > MAX_ENTRIES) {
         // Map 保留插入顺序 → 最旧的就是第一个
         const over = cache.size - MAX_ENTRIES;
@@ -43,16 +47,20 @@ export function rememberImagePath(url, localPath) {
     }
 }
 /** 查本地路径(没有/过期 → undefined, 调用方回退原始 URL) */
-export function lookupImagePath(url, logger) {
+export function lookupImagePath(url, logger, scope = '') {
     if (!url)
         return undefined;
     // 先按完整 URL 查，miss 再按稳定键(fileid 前缀)查 —— 后者能跨 rkey/fileid 尾部变化命中
     const k = stableKey(url);
-    const e = cache.get(url) ?? (k ? cache.get(k) : undefined);
+    const full = scopedKey(scope, url);
+    const stable = k ? scopedKey(scope, k) : '';
+    const e = cache.get(full) ?? (stable ? cache.get(stable) : undefined);
     if (!e)
         return undefined;
     if (Date.now() - e.t > TTL_MS) {
-        cache.delete(url);
+        cache.delete(full);
+        if (stable)
+            cache.delete(stable);
         logger?.debug(`[img-path] 缓存过期, 回退 URL: ${url.slice(0, 60)}…`);
         return undefined;
     }
@@ -60,9 +68,9 @@ export function lookupImagePath(url, logger) {
     //   quote-images 的定期回收会删掉超过 KEEP_DAYS 的文件，而缓存时间没到，
     //   这里就会把一个已删除的路径返回给上层（AI 读图直接失败，还查不出原因）。
     if (!existsSync(e.p)) {
-        cache.delete(url);
-        if (k)
-            cache.delete(k);
+        cache.delete(full);
+        if (stable)
+            cache.delete(stable);
         logger?.debug(`[img-path] 缓存指向的文件已不存在, 回退 URL: ${String(e.p).slice(0, 80)}`);
         return undefined;
     }

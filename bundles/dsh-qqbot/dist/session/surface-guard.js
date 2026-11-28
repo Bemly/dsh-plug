@@ -1,52 +1,56 @@
-/** surface 类型事件（与 dsh 的 SURFACE_TYPES 一致） */
-const SURFACE_TYPES = new Set([
-    'system/message',
+/** dsh-session rc.6 中可加入模型可见 surface 的事件类型。 */
+const APPENDABLE_SURFACE_TYPES = new Set([
     'user/message',
-    'developer/message',
     'assistant/message',
     'tool/result',
 ]);
 /**
  * 这条会话现在允许「静默 append」吗？
  *
- * 两条判据，**任一成立即放行**（都拿不到 ⇒ fail-closed 返回 false）：
- *  ① `session.surface.nodes`（最权威，dsh-session 的 SurfaceManager）——首节点类型
- *  ② 回落：扫 `session.log`，取**第一个 surface 类型事件**，看它是不是 `system/message`
+ * 优先读 `session.surface.nodes`（dsh-session rc.6 的 SurfaceManager）：
+ * nodes 保存的是**绝对事件序号**，用 `log[seq - surface.baseSeq]` 取首节点。
+ * 首节点必须是 user/message、assistant/message 或 tool/result。
+ *
+ * 仅当宿主没有提供 surface.nodes 时，才回落扫描 log 的第一个 surface 事件。
+ * surface 为空、首节点无法解析或没有日志都 fail-closed。
  *
  * @param session - 宿主 agent 的 `session` 对象（拿不到就返回 false）
- * @returns true = 人设已落盘（surface 首节点就是 system/message），可以安全追加
+ * @returns true = surface 已建立且首节点可安全追加
  */
 export function canSilentlyAppend(session) {
     try {
         if (!session || typeof session !== 'object')
             return false;
         const s = session;
-        // ① 首选：surface.nodes
         const nodes = s.surface?.nodes;
         if (Array.isArray(nodes)) {
             if (nodes.length === 0)
                 return false; // 空 surface ⇒ 绝不追加
             const log = s.log;
-            if (Array.isArray(log)) {
-                const base = typeof s.surface?.baseSeq === 'number' ? s.surface.baseSeq : 0;
-                const head = log[Number(nodes[0]) - base];
-                if (head && typeof head === 'object')
-                    return head.type === 'system/message';
-            }
+            if (!Array.isArray(log))
+                return false;
+            const rawBase = s.surface?.baseSeq;
+            const base = typeof rawBase === 'number' && Number.isSafeInteger(rawBase) && rawBase >= 0
+                ? rawBase
+                : 0;
+            const headSeq = nodes[0];
+            if (!Number.isSafeInteger(headSeq) || headSeq < base)
+                return false;
+            const head = log[headSeq - base];
+            if (!head || typeof head !== 'object')
+                return false;
+            return APPENDABLE_SURFACE_TYPES.has(head.type);
         }
-        // ② 回落：直接扫事件日志，找第一个 surface 类型事件
+        // 兼容没有暴露 SurfaceManager 的宿主：扫描第一个 surface 事件。
         if (Array.isArray(s.log)) {
             for (const ev of s.log) {
                 if (!ev || typeof ev !== 'object')
                     continue;
-                const type = ev.type;
-                if (typeof type !== 'string' || !SURFACE_TYPES.has(type))
-                    continue;
-                return type === 'system/message'; // 第一个 surface 事件就是答案
+                if (APPENDABLE_SURFACE_TYPES.has(ev.type))
+                    return true;
             }
-            return false; // 日志里还没有任何 surface 事件
         }
-        return false; // 两条路都走不通 ⇒ fail-closed
+        return false;
     }
     catch {
         return false; // fail-closed
@@ -93,7 +97,7 @@ export function skipSilentAppend(agent, logger, tag) {
             logger?.info?.('[surface-guard] 首次拦截静默 append（该会话人设尚未落盘）。形状探针: ' +
                 `session=${typeof session} surface=${typeof s?.surface} nodes=${nodesShape} log=${logShape} baseSeq=${String(typeof s?.surface?.baseSeq)}`);
         }
-        logger?.debug?.(`[${tag}] 跳过静默 append：该会话人设尚未落盘（surface 首节点不是 system/message），硬写会报废会话日志`);
+        logger?.debug?.(`[${tag}] 跳过静默 append：surface 尚未建立可安全追加的首节点，硬写会报废会话日志`);
     }
     catch { /* 日志失败忽略 */ }
     return true;

@@ -16,7 +16,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { diagWrite } from '../shared/diag.js';
 import { join, dirname } from 'node:path';
-const DEFAULT_SETTING = { enabled: false, window: 5, smart: false };
+const DEFAULT_SETTING = { enabled: false, window: 5 };
 let storePath = '';
 let loaded = false;
 const table = new Map();

@@ -60,6 +60,50 @@ export function groupTimeHead(cache, scope, peerId, now = new Date()) {
         cache.delete(cache.keys().next().value);
     return `[${stamp}]`;
 }
+async function appendOrQueueAtIdle(agent, message, logger, tag) {
+    const session = agent?.session;
+    if (!session || typeof session.append !== 'function')
+        return { stored: false, appended: false };
+    if (skipSilentAppend(agent, logger, tag))
+        return { stored: false, appended: false };
+    if (typeof agent?.whenIdle === 'function') {
+        let idle = false;
+        let timer;
+        try {
+            await Promise.race([
+                agent.whenIdle().then(() => { idle = true; }),
+                new Promise((resolve) => { timer = setTimeout(resolve, 60_000); }),
+            ]);
+        }
+        catch { /* 仍按未空闲处理 */ }
+        finally {
+            if (timer)
+                clearTimeout(timer);
+        }
+        if (!idle) {
+            if (typeof agent.inject === 'function') {
+                try {
+                    agent.inject(message);
+                    return { stored: true, appended: false };
+                }
+                catch (err) {
+                    logger.warn(`[${tag}] 回合忙且 inject 排队失败: ${err instanceof Error ? err.message : String(err)}`);
+                    return { stored: false, appended: false };
+                }
+            }
+            logger.warn(`[${tag}] 等待回合空闲超时，放弃 append，保留到下一次安全派发`);
+            return { stored: false, appended: false };
+        }
+    }
+    try {
+        const event = session.append('user/message', message, { surfaceOp: 'append' });
+        return { stored: true, appended: true, event };
+    }
+    catch (err) {
+        logger.warn(`[${tag}] append 失败: ${err instanceof Error ? err.message : String(err)}`);
+        return { stored: false, appended: false };
+    }
+}
 // ── 主处理函数 ──
 /**
  * 处理 QQ 入站消息（已经过 SDK 中间件链）
@@ -162,8 +206,9 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                 _imgUrls.push(_u);
         }
         const _first = _imgUrls[0];
-        if (_first && !lookupImagePath(_first, logger)) {
-            const _store = getStickerStore(stickerDirOf(config));
+        const _imgScope = stickerDirOf(config);
+        if (_first && !lookupImagePath(_first, logger, _imgScope)) {
+            const _store = getStickerStore(_imgScope);
             let _buf = await fetchImageBuffer(_first);
             if (_buf && _buf.length > 0) {
                 const _id = createHash('sha1').update(_buf).digest('hex').slice(0, 12);
@@ -171,7 +216,7 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                 if (_hit?.id) {
                     const _p = _store.pathOf(_hit.id);
                     if (_p) {
-                        rememberImagePath(_first, _p);
+                        rememberImagePath(_first, _p, _imgScope);
                         logger.info(`[img-path] 预检命中，本条消息将带本地路径: ${_p}`);
                     }
                 }
@@ -655,7 +700,7 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                     try {
                         const store = getStickerStore(stickerDirOf(config));
                         // 收藏中间件已经把图落盘了 → 直接读盘算哈希, 省掉重复下载(2026-09-13)
-                        const localP = lookupImagePath(firstImg, logger);
+                        const localP = lookupImagePath(firstImg, logger, stickerDirOf(config));
                         let buf;
                         if (localP) {
                             try {
@@ -685,7 +730,7 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                             if (hit?.id) {
                                 const p = store.pathOf(hit.id);
                                 if (p)
-                                    rememberImagePath(firstImg, p);
+                                    rememberImagePath(firstImg, p, stickerDirOf(config));
                                 // 台账兜底: 只有 sha1 精确命中才刷新「id → QQ 链接」——
                                 //   dHash 命中的是"看着像"的另一张, 拿它的链接会张冠李戴(保留旧链接更安全)
                                 if (hit.id === exactId)
@@ -1010,31 +1055,16 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                     if (gate === 'block' && !mentioned && !aggMentioned && !forced && !worth) {
                         const ag = record.agent;
                         const sess = ag?.session;
-                        let appended = false;
-                        // ★ 2026-10-06: 人设未落盘的新会话【绝不能】静默 append（会把会话日志写废，
-                        //   见 session/surface-guard.ts）。跳过即可：内容不丢，下次唤醒由 [历史] 段带入。
-                        if (sess && typeof sess.append === 'function' && !skipSilentAppend(ag, logger, '价值评分')) {
-                            if (typeof ag?.whenIdle === 'function') {
-                                try {
-                                    await Promise.race([ag.whenIdle(), new Promise((r) => setTimeout(r, 60_000))]);
-                                }
-                                catch { /* 超时继续追加 */ }
-                            }
+                        const saved = await appendOrQueueAtIdle(ag, message, logger, '价值评分');
+                        const appended = saved.stored;
+                        if (saved.appended && saved.event) {
                             try {
-                                const _evA = sess.append('user/message', message, { surfaceOp: 'append' });
-                                try {
-                                    noteSegmentScore(sess, _evA?.seq, inboundScore);
-                                }
-                                catch { /* ignore */ }
-                                appended = true;
+                                noteSegmentScore(sess, saved.event.seq, inboundScore);
                             }
-                            catch (err) {
-                                logger.warn(`[价值评分] 低分 append 失败(仍然不唤醒): ${err instanceof Error ? err.message : String(err)}`);
-                            }
+                            catch { /* ignore */ }
                         }
-                        else {
-                            logger.warn('[价值评分] 低分但会话无 append 能力 —— 仍然不唤醒(这条可能不进上下文)');
-                        }
+                        if (!saved.stored)
+                            logger.warn('[价值评分] 低分但未能安全入队或 append —— 仍然不唤醒(群历史仍保留)');
                         record.lastInboundAt = Date.now();
                         logger.debug(`[价值评分] 不唤醒 ${sc ? sc.score.toFixed(2) : `无分`}<${minScore} (gate=block, appended=${appended}): key=${scope}:${peerId} "${plain.slice(0, 30)}"`);
                         // ⚠️ 2026-09-13(主人要求"没产生回复就别消耗回复冷却"): 上游派发时戳了一枚群冷却,
@@ -1086,37 +1116,21 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
         const a = record.agent;
         const sess = a?.session;
         if (sess && typeof sess.append === 'function') {
-            // ★ 2026-10-06: 人设未落盘 ⇒ 绝不能静默 append（会把会话日志写废，见 surface-guard.ts）。
-            //   nothink 的语义是「不唤醒」，所以这里保持不唤醒并直接返回：消息不丢 ——
-            //   它还在群历史里，下次真人消息唤醒时由 [历史] 段带入正文。
-            if (skipSilentAppend(a, logger, 'nothink')) {
+            const saved = await appendOrQueueAtIdle(a, message, logger, 'nothink');
+            if (saved.stored) {
                 record.lastInboundAt = Date.now();
-                return;
-            }
-            try {
-                // 🔒 等 LLM 回合结束再 append(主人硬约束 2026-09-09): 回合活跃时严禁 append(拆散 tool_calls 坏记录)
-                if (typeof a.whenIdle === 'function') {
+                if (saved.appended && saved.event) {
                     try {
-                        await Promise.race([a.whenIdle(), new Promise((r) => setTimeout(r, 60_000))]);
+                        noteSegmentScore(sess, saved.event.seq, inboundScore);
                     }
-                    catch { /* 超时/异常放弃写回 */ }
+                    catch { /* ignore */ }
                 }
-                record.lastInboundAt = Date.now();
-                const _evB = sess.append('user/message', message, { surfaceOp: 'append' });
-                try {
-                    noteSegmentScore(sess, _evB?.seq, inboundScore);
-                }
-                catch { /* ignore */ }
-                logger.debug(`[nothink] 已 append(不唤醒): key=${scope}:${peerId}`);
-                // append 后同样清群历史缓存: 避免下次真人触发时把这段再打包一遍(上下文不重复)
-                if (scope === 'group') {
+                logger.debug(`[nothink] 已安全入队或 append(不唤醒): key=${scope}:${peerId}`);
+                if (scope === 'group')
                     clearGroupHistory(config.appId, msg.groupOpenid ?? msg.senderId);
-                }
                 return;
             }
-            catch (err) {
-                logger.warn(`[nothink] append 失败, 退回正常 followup: ${err instanceof Error ? err.message : String(err)}`);
-            }
+            logger.warn(`[nothink] 未能安全入队或 append, 退回正常 followup: key=${scope}:${peerId}`);
         }
         else {
             logger.warn(`[nothink] 会话无 append 能力, 退回正常 followup: key=${scope}:${peerId}`);
@@ -1280,7 +1294,7 @@ ownerOpenid) {
         ownerNickOf = (isGroup && cached?.nicks) ? (cached.nicks.get(String(msg.groupOpenid ?? '')) ?? '') : '';
     }
     const userMessage = buildUserMessage(userContent, quotePart, msg.senderId, msg.senderName, isGroup, wasMentioned, msgRef, memberNickOf(msg), ownerOpenid, ownerNameOf, ownerNickOf);
-    const dynamicCtx = buildDynamicCtx(msg, downloaded);
+    const dynamicCtx = buildDynamicCtx(msg, downloaded, stickerDirOf(config));
     const base = dynamicCtx ? `${dynamicCtx}${userMessage}` : userMessage;
     // ⚠️ 2026-09-10 去重(主人: "图片链接重复两次"): 聚合/冷却重新派发时, 同一条消息会**既被
     //   mediaHistoryBuffer 记进历史、又作为当前消息出现** → 同一条消息(含媒体 URL)在上下文里出现
@@ -1639,7 +1653,7 @@ const QUOTE_KEEP = 60;
  *   解析链: image-path-cache(URL→路径) → 台账反查 id → 图库当前真实路径(搬层也对)。
  */
 function resolveImageLocalPath(url, stickerDir) {
-    const cached = lookupImagePath(url);
+    const cached = lookupImagePath(url, undefined, stickerDir);
     if (cached)
         return cached;
     try {
@@ -2031,7 +2045,7 @@ ownerName, ownerNick) {
 /**
  * Layer 4: 媒体元数据上下文
  */
-function buildDynamicCtx(msg, downloaded) {
+function buildDynamicCtx(msg, downloaded, imgScope = '') {
     const lines = [];
     if (!msg.attachments || msg.attachments.length === 0)
         return '';
@@ -2067,7 +2081,7 @@ function buildDynamicCtx(msg, downloaded) {
         //   ① AI 要看图直接读盘, 不用再下载(QQ 的临时 URL 又长又会过期);
         //   ② URL 那串 fileid/rkey 很长, 换成本地路径 token 也短。
         //   没落盘(采集关闭 / 下载失败 / 超预算还没回来) → 老老实实回退原始 URL。
-        const localImg = kind === 'image' ? lookupImagePath(att.url) : undefined;
+        const localImg = kind === 'image' ? lookupImagePath(att.url, undefined, imgScope) : undefined;
         lines.push(`- ${mediaKindLabel(kind)}: ${head}→ ${localImg ?? att.url}`);
     }
     if (lines.length === 0)

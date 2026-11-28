@@ -1338,6 +1338,52 @@ export async function apply(ctx, opts) {
             return undefined;
         }
     }
+    /**
+     * 群管写操作的主人校验（2026-11-28 审计 P0）。
+     *
+     * 判定口径：
+     *  - 只有**QQ 入站的那个 agent 实例**发起的调用才需要校验发送者；
+     *    web/桌面回合用的是宿主自建 agent（同 sessionId、不同对象，见 findSessionRec 注释），
+     *    操作者就是终端前的主人，直接放行。
+     *  - 白名单取 `groupAdmin.owners`（回退顶层 `owners`）。配置为空 = 不校验，
+     *    与 `owners` 配置项文档一致，但会留一条诊断日志提示去配置。
+     *  - 拿不到发送者身份 / 解析异常 → 拒绝，绝不"当主人放行"。
+     */
+    let ownerGateWarned = false;
+    /** 主人白名单：`groupAdmin.owners` 优先，顶层 `owners` 兜底（两处口径必须一致）。 */
+    function ownerIdsOf(mgr) {
+        const ga = mgr?.config?.groupAdmin?.owners;
+        const top = mgr?.config?.owners;
+        const list = Array.isArray(ga) && ga.length ? ga : (Array.isArray(top) ? top : []);
+        return list.map((v) => String(v ?? '').trim()).filter(Boolean);
+    }
+    function groupAdminGate(exec) {
+        try {
+            const s = findSessionRec(channelOf(exec), exec);
+            if (!s)
+                return { ok: true }; // 纯 web 会话：没有 QQ record，操作者即控制台主人
+            if (s.rec?.agent && exec.agent && s.rec.agent !== exec.agent)
+                return { ok: true }; // 同 sessionId 不同 agent ⇒ web/桌面回合
+            const mgr = s.ch?.manager;
+            const owners = ownerIdsOf(mgr);
+            if (!owners.length) {
+                if (!ownerGateWarned) {
+                    ownerGateWarned = true;
+                    diag('groupAdmin.owners 为空：群管写操作不做主人校验（建议在设置页配置）');
+                }
+                return { ok: true };
+            }
+            const sender = String(s.rec?.senderId ?? '').trim();
+            if (!sender)
+                return { ok: false, msg: '拿不到发送者身份，已拒绝该群管理操作' };
+            if (!owners.includes(sender))
+                return { ok: false, msg: '仅主人可执行群管理写操作（当前发送者不在 groupAdmin.owners 白名单）' };
+            return { ok: true };
+        }
+        catch (err) {
+            return { ok: false, msg: '身份校验失败，已拒绝该群管理操作: ' + (err instanceof Error ? err.message : String(err)) };
+        }
+    }
     const listJoinRequestsTool = defineTool({
         name: 'group_join_requests',
         // 2026-11-13：只读工具标记为并发安全 —— 宿主 (tools/batch) 会把同一 step 内的多个 safe 调用并行跑
@@ -1423,6 +1469,9 @@ export async function apply(ctx, opts) {
             const gid = args.gid || ga.gid;
             if (!gid)
                 return { ok: false, msg: '当前不是群会话且未指定 gid' };
+            const gate = groupAdminGate(exec);
+            if (!gate.ok)
+                return { ok: false, msg: gate.msg };
             const targets = Array.isArray(args.member_openids) && args.member_openids.length
                 ? args.member_openids
                 : (args.member_openid ? [args.member_openid] : []);
@@ -2486,6 +2535,9 @@ export async function apply(ctx, opts) {
                 const gid = String(args.gid ?? '').trim() || ga.gid || latestGroupId();
                 if (!gid)
                     return { ok: false, msg: '当前不是群会话且未指定 gid' };
+                const gate = groupAdminGate(exec);
+                if (!gate.ok)
+                    return { ok: false, msg: gate.msg };
                 const ids = (Array.isArray(args.member_openids) ? args.member_openids : [])
                     .map((x) => String(x).trim())
                     .filter(Boolean)
@@ -2631,6 +2683,9 @@ export async function apply(ctx, opts) {
             const gid = String(args.gid ?? '').trim() || ga.gid || latestGroupId();
             if (!gid)
                 return { ok: false, msg: '当前不是群会话且未指定 gid' };
+            const gate = groupAdminGate(exec);
+            if (!gate.ok)
+                return { ok: false, msg: gate.msg };
             const brief = (m) => `${m.me ? '🤖' : '👤'}${m.n || m.s} [${m.k ?? 'text'}] ${(m.x ?? '').slice(0, 24)}`;
             let ids = (Array.isArray(args.msg_ids) ? args.msg_ids : []).map((v) => String(v).trim()).filter(Boolean);
             let picked = [];
@@ -2714,6 +2769,9 @@ export async function apply(ctx, opts) {
             const gid = String(args.gid ?? '').trim() || ga.gid || latestGroupId();
             if (!gid)
                 return { ok: false, msg: '当前不是群会话且未指定 gid, 无法确定目标群' };
+            const gate = groupAdminGate(exec);
+            if (!gate.ok)
+                return { ok: false, msg: gate.msg };
             const secs = Math.max(1, Math.min(30 * 86400, Math.round(Number(args.seconds ?? 600))));
             const pad = (n) => String(n).padStart(2, '0');
             const expire = args.action === 'mute' ? new Date(Date.now() + secs * 1000) : null;
@@ -3394,9 +3452,9 @@ export async function apply(ctx, opts) {
                                 //   扩展直接 `if (!env.isOwner) return` 即可，不必自己比对 owners 数组。
                                 // 2026-10-25：扩展可能从 env.config.appId/appSecret 自取凭证换 token
                                 config: { appId: mgr?.config?.appId, appSecret: mgr?.config?.appSecret },
-                                isOwner: (Array.isArray(mgr?.config?.owners)
-                                    && !!recAny?.senderId
-                                    && mgr.config.owners.map(String).includes(String(recAny.senderId))),
+                                // 2026-11-28 审计：白名单实际在 groupAdmin.owners，顶层 owners 是空的 →
+                                //   原来这里恒为 false，扩展的 isOwner 永远误报。
+                                isOwner: ownerIdsOf(mgr).includes(String(recAny?.senderId ?? '')),
                                 senderOpenid: recAny?.senderId,
                                 userOpenid: recAny?.senderId,
                                 openid: recAny?.senderId,
@@ -3430,9 +3488,7 @@ export async function apply(ctx, opts) {
                                     name: ((sess?.ch.sender && typeof sess.ch.sender === 'object')
                                         ? sess.ch.sender.name
                                         : undefined),
-                                    isOwner: (Array.isArray(mgr?.config?.owners)
-                                        && !!recAny?.senderId
-                                        && mgr.config.owners.map(String).includes(String(recAny.senderId))),
+                                    isOwner: ownerIdsOf(mgr).includes(String(recAny?.senderId ?? '')),
                                 },
                                 peer: {
                                     scope: recAny?.scope,
@@ -3947,6 +4003,9 @@ var qunAdminTool = defineTool({
                 if (a.confirmed !== true) {
                     return { ok: false, msg: `还没确认：准备踢 ${list.join('、')}。请先跟主人核对「群 + 人」，主人明确同意后再带 confirmed=true 调用。` };
                 }
+                const gate = groupAdminGate(exec);
+                if (!gate.ok)
+                    return { ok: false, msg: gate.msg };
                 const res = await qunResolveGc(dataRoot, String(a.group || ''));
                 if (!res.ok)
                     return { ok: false, msg: res.msg };

@@ -19,7 +19,8 @@
  *
  * ⚠️ 本地手改功能（fork 新增）：维护清单见工作区根《插件改动维护注意事项.md》。
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { dataRootOf } from '../gateway/data-root.js';
 import { handleInbound } from '../transport/inbound.js';
@@ -52,10 +53,13 @@ export function startScheduler(manager, config, logger) {
     }
     const inFlight = new Set();
     function persist() {
+        const tmp = `${stateFile}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
         try {
-            writeFileSync(stateFile, JSON.stringify(state, null, 1), 'utf8');
+            writeFileSync(tmp, JSON.stringify(state, null, 1), 'utf8');
+            renameSync(tmp, stateFile);
         }
         catch (err) {
+            try { unlinkSync(tmp); } catch { /* ignore */ }
             logger.warn?.(`[scheduler] state 落盘失败: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
@@ -144,17 +148,18 @@ export function startScheduler(manager, config, logger) {
                 if ((task.time ?? '') !== hhmm)
                     continue;
             }
-            if (state.lastRun[task.id] === today)
+            const runKey = `${String(target.id)}:${String(task.id)}`;
+            if (state.lastRun[runKey] === today)
                 continue; // 今天已触发
-            if (isOnce && state.lastRun[task.id] === 'DONE')
+            if (isOnce && state.lastRun[runKey] === 'DONE')
                 continue; // 一次性已用掉
-            if (inFlight.has(task.id))
+            if (inFlight.has(runKey))
                 continue; // 同分钟并发防重
-            inFlight.add(task.id);
+            inFlight.add(runKey);
             // 触发瞬间即记账(乐观) —— 宁可漏发也不重复打扰
-            state.lastRun[task.id] = isOnce ? 'DONE' : today;
+            state.lastRun[runKey] = isOnce ? 'DONE' : today;
             persist();
-            void fireTask(target, task).finally(() => inFlight.delete(task.id));
+            void fireTask(target, task).finally(() => inFlight.delete(runKey));
         }
     }
     const timer = setInterval(tick, TICK_MS);

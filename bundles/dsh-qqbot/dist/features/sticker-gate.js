@@ -23,7 +23,8 @@
  *   log/sendlog.jsonl(发送流水,append-only)
  * 单例必须在启动早期按 config.cwd 解析的 dataDir 预初始化(防 C 盘幽灵库同款坑)。
  */
-import { readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, appendFileSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join, resolve, sep } from 'node:path';
 /** 活性 RingBuffer 单群保留上限(超限裁剪, 防群轰炸撑爆内存) */
 const ACTIVITY_RING_MAX = 2000;
@@ -187,23 +188,35 @@ class StickerGate {
     /** 立即落盘(退出兜底) */
     flush() {
         if (!this.dirty)
-            return;
-        this.dirty = false;
-        try {
-            writeFileSync(this.usedPath(), JSON.stringify(Object.fromEntries(this.used), null, 1), 'utf8');
+            return true;
+        const atomic = (file, body) => {
+            const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+            try {
+                writeFileSync(tmp, body, 'utf8');
+                renameSync(tmp, file);
+                return true;
+            }
+            catch (err) {
+                try { unlinkSync(tmp); } catch { /* ignore */ }
+                this.logger?.warn?.(`[sticker-gate] ${file} 写盘失败: ${err instanceof Error ? err.message : String(err)}`);
+                return false;
+            }
+        };
+        const budgetObj = {};
+        for (const [g, days] of this.budget)
+            budgetObj[g] = Object.fromEntries(days);
+        const okUsed = atomic(this.usedPath(), JSON.stringify(Object.fromEntries(this.used), null, 1));
+        const okBudget = atomic(this.budgetPath(), JSON.stringify(budgetObj, null, 1));
+        this.dirty = !(okUsed && okBudget);
+        if (okUsed) {
+            const log = this.sendlogPath();
+            try {
+                if (statSync(log).size > 5 * 1024 * 1024)
+                    renameSync(log, `${log}.1`);
+            }
+            catch { /* 无日志或轮转失败 */ }
         }
-        catch (err) {
-            this.logger?.warn?.(`[sticker-gate] used.json 写盘失败: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        try {
-            const obj = {};
-            for (const [g, days] of this.budget)
-                obj[g] = Object.fromEntries(days);
-            writeFileSync(this.budgetPath(), JSON.stringify(obj, null, 1), 'utf8');
-        }
-        catch (err) {
-            this.logger?.warn?.(`[sticker-gate] budget.json 写盘失败: ${err instanceof Error ? err.message : String(err)}`);
-        }
+        return okUsed && okBudget;
     }
     // ── 活性(入站群消息计数; 中间件在 mentionGate 之前喂) ──
     recordActivity(groupId, ts = Date.now()) {

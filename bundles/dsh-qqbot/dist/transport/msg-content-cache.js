@@ -13,8 +13,14 @@
  */
 import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-/** 单个 peer 保留的台账行数上限（超出只留尾部，防文件无限膨胀） */
-const MAX_LINES = 2000;
+/** 全库与单 peer 双重上限，避免繁忙会话挤掉所有其它会话。 */
+const MAX_LINES = 4000;
+const MAX_LINES_PER_PEER = 500;
+/**
+ * 单 peer 超额到该值才触发重写：重写是整文件覆盖，若每来一条就触发，
+ * 繁忙群会把磁盘打成写放大。留 20% 余量，重写一次管 100 条。
+ */
+const TRIM_AT_PER_PEER = MAX_LINES_PER_PEER + Math.ceil(MAX_LINES_PER_PEER * 0.2);
 const NL = String.fromCharCode(10);
 /** 文件路径 → { mtimeKey, index, lines } */
 const cache = new Map();
@@ -23,6 +29,14 @@ function fileOf(dataRoot) {
 }
 function indexKey(peerKey, msgIdx) {
     return peerKey + '\u0000' + msgIdx;
+}
+/** 该 peer 在内存台账里占了多少行（list 最多 MAX_LINES 条，全扫一遍可忽略）。 */
+function peerLineCount(list, peerKey) {
+    let n = 0;
+    for (let i = list.length - 1; i >= 0; i--)
+        if (list[i].p === peerKey)
+            n++;
+    return n;
 }
 function entryOf(r) {
     return {
@@ -44,8 +58,11 @@ function load(dataRoot) {
     }
     catch { /* 还没有台账文件 */ }
     const hit = cache.get(file);
-    // 'dirty' = 本进程刚写过，内存比文件新 → 直接用内存，别重读整个文件
-    if (hit && (hit.key === key || hit.key === 'dirty'))
+    // 'dirty' = 本进程刚写过，内存通常比文件新；但外部工具改了文件（mtime 更新）仍要重读。
+    if (hit && (hit.key === key
+        || (hit.key === 'dirty' && (() => {
+            try { return statSync(file).mtimeMs <= Number(hit.dirtyAt || 0); } catch { return false; }
+        })())))
         return { index: hit.index, lines: hit.lines, list: hit.list };
     const index = new Map();
     const list = [];
@@ -93,18 +110,30 @@ export function rememberMsgContent(dataRoot, peerKey, msgIdx, rec) {
         //   于是：①进程启动后写入的消息扫不到；②台账满时最新那条被 slice 掉、**物理删除**。
         list.push(row);
         const nextLines = lines + 1;
-        if (nextLines > MAX_LINES) {
-            // 超上限 → 重写成尾部 MAX_LINES 条（内存里已有的直接重建）
+        // 两个上限都要执行：只守全库会让单个繁忙 peer 占满 4000 行，把其它会话的历史全挤掉，
+        // 引用回查随之失效（这就是"上限作用于整个 dataRoot"的老问题）。
+        if (nextLines > MAX_LINES || peerLineCount(list, peerKey) > TRIM_AT_PER_PEER) {
+            // 超上限 → 重写成尾部 MAX_LINES 条、且每 peer 最多 MAX_LINES_PER_PEER 条（内存里已有的直接重建）
             // 用 list 重写(保留每行 at 与顺序); 旧实现按 index 重建会把 at 丢成 0, 按时间窗扫描会全判过期。
-            const keep = list.slice(-MAX_LINES);
+            const perPeer = new Map();
+            const keepReversed = [];
+            for (let i = list.length - 1; i >= 0 && keepReversed.length < MAX_LINES; i--) {
+                const row = list[i];
+                const n = perPeer.get(row.p) ?? 0;
+                if (n >= MAX_LINES_PER_PEER)
+                    continue;
+                perPeer.set(row.p, n + 1);
+                keepReversed.push(row);
+            }
+            const keep = keepReversed.reverse();
             const nextIndex = new Map();
             for (const row of keep)
                 nextIndex.set(indexKey(row.p, row.i), entryOf(row));
             writeFileSync(file, keep.map((r) => JSON.stringify(r)).join(NL) + NL, 'utf8');
-            cache.set(file, { key: 'dirty', index: nextIndex, lines: keep.length, list: keep });
+            cache.set(file, { key: 'dirty', dirtyAt: Date.now(), index: nextIndex, lines: keep.length, list: keep });
             return;
         }
-        cache.set(file, { key: 'dirty', index, lines: nextLines, list });
+        cache.set(file, { key: 'dirty', dirtyAt: Date.now(), index, lines: nextLines, list });
     }
     catch { /* 落盘失败不影响主链（内存索引已经更新） */ }
 }

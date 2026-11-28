@@ -17,7 +17,7 @@ import { applyExtToolVisibility } from './channel-tools.js';
 import { describeNsConflict, nsPathsOf, scanNsOwners } from './features/ns-guard.js';
 void getProfileDir;
 import { runQrSetup, persistCredentialsToProfile } from './setup.js';
-import { diagWrite } from './shared/diag.js';
+import { configureDiag, diagWrite } from './shared/diag.js';
 import { mirrorLogger } from './shared/log-mirror.js';
 // 2026-09-24 关闭"启动自动扫码"后，这些符号保留给设置页路径使用；此处显式引用避免 TS 未使用报错。
 void runQrSetup;
@@ -289,16 +289,6 @@ export async function apply(ctx, config) {
     //   新用户路径：装插件 → 打开 dsh → 设置页「QQ 机器人」→ 填 AppID/Secret 或点「扫码绑定」
     //   → 凭据写入 → 热更新 → 本次 apply 有凭据 → 自动连上。
     //   仍然**不自动弹二维码**（保持 2026-09-24 的死循环修复：扫码只在用户主动点击时发生）。
-    const hasCred = !!appId && !!appSecret;
-    if (!hasCred) {
-        // ⚠️ 2026-09-24 主人要求：**启动时不再自动弹二维码**。
-        //    原因：自动扫码会 persistCredentialsToProfile() 写 profile patch → 触发 dsh 热更新
-        //    → 插件重新 apply → 凭据仍缺失 → 再扫码，形成死循环（实测把宿主启动刷死）。
-        //    现在一律只提示；需要扫码时去 Web「账号与预设」点「扫码绑定」（那条路径是交互式的，不会自转）。
-        logger.warn(`实例 ${ns}: 尚未配置 appId/appSecret —— 机器人暂不连接 QQ，但设置面板已就绪。`);
-        logger.warn('  · 请在 dsh 设置页「QQ 机器人」里填写 AppID/AppSecret，或点「扫码绑定」；');
-        logger.warn('  · 凭据保存后会热生效，本实例自动连接（无需重启）。');
-    }
     const resolvedConfig = {
         ...config,
         appId,
@@ -365,6 +355,22 @@ export async function apply(ctx, config) {
         Object.assign(resolvedConfig, mergeDeep(resolvedConfig, ownSettings));
         logger.info(`已加载插件自有设置(${Object.keys(ownSettings).length} 项): ${ownSettingsFile}`);
     }
+    appId = String(resolvedConfig.appId ?? '');
+    appSecret = String(resolvedConfig.appSecret ?? '');
+    const hasCred = !!appId && !!appSecret;
+    setRagOvmsTarget(resolvedConfig.localModel);
+    setStickerVisionLlm(
+        () => ctx.llm ?? ctx.root?.llm,
+        resolvedConfig.sticker?.visionProvider || 'https://ai.bemly.moe',
+        resolvedConfig.sticker?.visionModel || 'Qwen/Qwen3.6-27B-FP8',
+        resolvedConfig.sticker?.visionApiKeyEnv || 'KFC_API_KEY',
+    );
+    configureDiag({ enabled: resolvedConfig.diagLog === true });
+    if (!hasCred) {
+        logger.warn(`实例 ${ns}: 尚未配置 appId/appSecret —— 机器人暂不连接 QQ，但设置面板已就绪。`);
+        logger.warn('  · 请在 dsh 设置页「QQ 机器人」里填写 AppID/AppSecret，或点「扫码绑定」；');
+        logger.warn('  · 凭据保存后会热生效，本实例自动连接（无需重启）。');
+    }
     // ── 2026-10-25：把「这次实例到底用了哪套凭据」落盘 ────────────────────────
     //   起因：白天反复出现"设置页保存成功后机器人仍连不上 / 密码像是被换回 cordis.patch.yml 旧值"，
     //   而现有日志只有"连不上"，看不出是①读错了 profile 的设置文件、②宿主没重启还拿着旧值、
@@ -429,6 +435,8 @@ export async function apply(ctx, config) {
     let gatewayStarted = false;
     /** 拆卸当前网关（由 bootstrapGateway 经 hooks 交回；**幂等**，与 cordis 生命周期共用同一个函数） */
     let gatewayDispose;
+    let gatewayStarting = null;
+    let settingsChangeTail = Promise.resolve();
     /**
      * **与连接相关的字段** —— 其中任何一个变了都必须「先拆后建」，光热更新配置是不会重连的。
      *
@@ -445,13 +453,16 @@ export async function apply(ctx, config) {
     const tryStartGateway = async () => {
         if (gatewayStarted)
             return;
+        if (gatewayStarting)
+            return gatewayStarting;
         const cur = resolvedConfig;
         const id = String(cur.appId ?? '');
         const sec = String(cur.appSecret ?? '');
         if (!id || !sec)
             return;
         gatewayStarted = true;
-        try {
+        const run = (async () => {
+            try {
             logger.info(`实例 ${ns}: 检测到凭据已就绪，开始启动网关…`);
             await bootstrapGateway(ctx, agents, resolvedConfig, logger, {
                 // 拿到"拆卸本次网关"的函数 —— 保存了连接相关设置后要靠它先拆后建（否则永不重连）
@@ -513,21 +524,41 @@ export async function apply(ctx, config) {
                 }
             })();
         }
-        catch (err) {
-            gatewayStarted = false; // 失败则允许下次重试
-            logger.warn?.(`实例 ${ns}: 凭据热更新后启动网关失败: ${err instanceof Error ? err.message : String(err)}`);
+            catch (err) {
+                gatewayStarted = false; // 失败则允许下次重试
+                logger.warn?.(`实例 ${ns}: 凭据热更新后启动网关失败: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        })();
+        gatewayStarting = run;
+        try {
+            await run;
+        }
+        finally {
+            if (gatewayStarting === run)
+                gatewayStarting = null;
         }
     };
     try {
         ctx.on('qqbot/settings-changed', (changedNs) => {
             if (changedNs && changedNs !== ns)
                 return;
-            void (async () => {
+            const task = (async () => {
                 const before = connSnapshot();
                 const next = readOwnSettings();
                 Object.assign(resolvedConfig, mergeDeep(resolvedConfig, next));
+                appId = String(resolvedConfig.appId ?? '');
+                appSecret = String(resolvedConfig.appSecret ?? '');
                 logger.info(`设置已热更新(${ns}): ${Object.keys(next).length} 项`);
-                setRagOvmsTarget(resolvedConfig.localModel); // OVMS 端点/模型改完即生效(无需重启)
+                setRagOvmsTarget(resolvedConfig.localModel);
+                setStickerVisionLlm(
+                    () => ctx.llm ?? ctx.root?.llm,
+                    resolvedConfig.sticker?.visionProvider || 'https://ai.bemly.moe',
+                    resolvedConfig.sticker?.visionModel || 'Qwen/Qwen3.6-27B-FP8',
+                    resolvedConfig.sticker?.visionApiKeyEnv || 'KFC_API_KEY',
+                );
+                configureDiag({ enabled: resolvedConfig.diagLog === true });
+                if (gatewayStarting)
+                    await gatewayStarting.catch(() => undefined);
                 // ★ 2026-10-12：**连接相关字段变了就拆旧建新**。
                 //   不加这步的话，下面的 tryStartGateway() 会被 `gatewayStarted` 守卫直接挡回
                 //   ⇒ 表现成"改了 appSecret/preset 却永远不重连，非得重启宿主"（主人 2026-10-12 实测反馈：
@@ -545,6 +576,7 @@ export async function apply(ctx, config) {
                 }
                 await tryStartGateway(); // ← 若刚从"无凭据"变成"有凭据"，自动把网关拉起来
             })();
+            settingsChangeTail = settingsChangeTail.then(task, task);
         });
     }
     catch { /* 事件系统不可用 → 退化为重启生效 */ }

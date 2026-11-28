@@ -400,8 +400,17 @@ pluginCtx) {
             if (m && ar?.enabled === true && m.messageId && m.groupOpenid) {
                 const kws = (ar.keywords ?? []).map((k) => String(k).trim()).filter(Boolean);
                 const lower = String(m.content ?? "").toLowerCase();
-                const hit = kws.some((k) => lower.includes(k.toLowerCase()));
-                if (hit) {
+                const hitKw = kws.some((k) => lower.includes(k.toLowerCase()));
+                const atts = Array.isArray(m.attachments) ? m.attachments : [];
+                const ct = (a) => String(a?.content_type ?? a?.type ?? '');
+                const kind = atts.length === 0
+                    ? 'text'
+                    : atts.some((a) => /image/i.test(ct(a))) ? 'image'
+                        : atts.some((a) => /audio|voice|silk/i.test(ct(a))) ? 'voice'
+                            : atts.some((a) => /video/i.test(ct(a))) ? 'video'
+                                : 'file';
+                const hitKind = (ar.kinds ?? []).map(String).includes(kind);
+                if (hitKw || hitKind) {
                     const ga = manager.groupAdmin;
                     if (ar.dryRun !== true && ga) {
                         void ga.recallMessage(String(m.groupOpenid), String(m.messageId), "group").catch(() => undefined);
@@ -413,6 +422,11 @@ pluginCtx) {
                             void ga.setMemberMute(String(m.groupOpenid), sid, rfc).catch(() => undefined);
                         }
                     }
+                    try {
+                        ctx.state ??= {};
+                        ctx.state.__autoRecallHandled = true;
+                    }
+                    catch { /* 只影响去重，不影响主链 */ }
                     logger.info("auto-recall(mw) hit: " + String(m.content ?? "").slice(0, 20) + " drop=" + String(ar.mode === "drop"));
                     // ★ 2026-11-14（CodeRabbit）：bootstrap 那条我修了 dryRun，这条**漏了** —— 同一个语义必须两处一致：
                     //   演练模式只记日志，不许把消息挡在 agent 外。
