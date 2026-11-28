@@ -4,15 +4,13 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { Jimp, loadFont } from 'jimp';
+import { SANS_16_WHITE, SANS_32_WHITE } from 'jimp/fonts';
 
 let font16Promise = null;
 let font32Promise = null;
 
-async function getFonts() {
-    const [{ loadFont }, { SANS_16_WHITE, SANS_32_WHITE }] = await Promise.all([
-        import('jimp'),
-        import('jimp/fonts'),
-    ]);
+function getFonts() {
     if (!font16Promise) font16Promise = loadFont(SANS_16_WHITE);
     if (!font32Promise) font32Promise = loadFont(SANS_32_WHITE);
     return Promise.all([font16Promise, font32Promise]);
@@ -29,7 +27,6 @@ export async function renderCompositeBuffer(
     result,
     { quality = 90, bg = 0xffffffff, label = true } = {}
 ) {
-    const { Jimp } = await import('jimp');
     const { canvas: c, placements } = result;
     const canvas = new Jimp({ width: c.W, height: c.H, color: bg });
     const [font16, font32] = label ? await getFonts() : [null, null];
