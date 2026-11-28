@@ -72,6 +72,12 @@ export interface StickerConfig {
     autoTagEnabled: boolean;
     /** 视觉CLI命令模板(含{img}占位); 空=自动探测本机视觉CLI(modlens等); 探测不到则不自动打标 */
     visionCli: string;
+    /** 视觉模型服务地址（与 visionCli 二选一；有 apiKey 时优先走 HTTP） */
+    visionProvider: string;
+    /** 视觉模型名 */
+    visionModel: string;
+    /** 视觉模型 key 所在的环境变量名（不落盘明文） */
+    visionApiKeyEnv: string;
 }
 /** 条件注入规则 */
 export interface InjectRuleConfig {
@@ -197,6 +203,11 @@ export interface GroupAdminConfig {
      * 需要机器人为该群管理员才会推送; 若官方未授权该 intent, 连接可能被拒(4914/4915)。
      */
     watchJoinRequests: boolean;
+    /**
+     * 纯 web 会话（未绑定任何 QQ 会话）也注入主人小传（默认 false）。
+     * 小传是 QQ 群里的记忆，默认不漫到无关会话；SessionManager 读的就是 groupAdmin 下的这个字段。
+     */
+    peopleMemoInWeb: boolean;
     /** 收到新入群申请事件时是否在该群内发一条 bot 提醒消息(默认开; 需机器人=该群管理员) */
     notifyInGroup: boolean;
     /**

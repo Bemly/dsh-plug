@@ -1921,7 +1921,9 @@ export class SessionManager {
                         return false;
                     }
                 })();
-                const allowWebMemo = this.config.peopleMemoInWeb === true;
+                // ★ 2026-11-28 修：开关在 schema 里属于 groupAdmin，不是顶层 —— 原来读顶层恒 undefined，
+                //   这个设置项从上线起就没生效过（审计 P2）。
+                const allowWebMemo = this.config.groupAdmin?.peopleMemoInWeb === true;
                 if (!memoPick && (!isQqBoundSession && !allowWebMemo)) {
                     // 纯 web 会话 + 没开开关 → 不注入，直接跳过
                 }

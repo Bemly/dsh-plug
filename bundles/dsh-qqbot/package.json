@@ -23,7 +23,10 @@
       "import": "./dist/features/schedule-store.js"
     },
     "./client": "./client/qqbot-settings.js",
-    "./session-registry": "./dist/features/session-registry.js"
+    "./session-registry": {
+      "types": "./dist/features/session-registry.d.ts",
+      "import": "./dist/features/session-registry.js"
+    }
   },
   "scripts": {
     "build": "node --check dist/index.js",

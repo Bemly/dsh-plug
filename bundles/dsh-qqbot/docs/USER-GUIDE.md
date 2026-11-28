@@ -738,8 +738,7 @@ QQ 群里只会出现**重写后的克制版本**（原来那段被平台吃掉�
 | `cwd` | string | `process.cwd()` | Agent 工作目录(**不是**数据目录) |
 | `dataRoot` | string | `{cwd}/dshqqbot` | 插件数据根(表情包 / `.qqbot` / `.qqbot-extensions`)。**默认就在 `{cwd}/dshqqbot`** —— 工作目录保持干净; 想放别处显式配置; 老数据首次启动自动迁入 |
 | `requireMention` | boolean | `true` | 群聊是否需要 @bot 才触发 |
-| `groupPrompt` | string | - | 群聊额外 system prompt |
-| `directPrompt` | string | - | 私聊额外 system prompt |
+| `directPrompt` | string | - | 私聊额外 system prompt（群聊侧已于 2.6.0 移除 `groupPrompt`，统一用 `injectRules`） |
 | `textChunkLimit` | number | `4500` | 单条消息最大字符数 |
 | `sessionIdleTimeout` | number | `1800000` | 会话闲置超时(ms)，默认 30 分钟 |
 | `debug` | boolean | `false` | 调试模式 |
@@ -1456,11 +1455,11 @@ disabling profile plugin row …
 
 **找回步骤**：
 1. 打开 `~/.dsh/settings.yaml.imported`（同目录通常还有 `.bak`）
-2. 找到你实例的 section（如 `im-qqbot-2:`），再找对应字段（`groupPrompt:` / `injectRules:` / `botplayEvents:` …）
+2. 找到你实例的 section（如 `im-qqbot-2:`），再找对应字段（`injectRules:` / `botplayEvents:` / `directPrompt:` …）
 3. 复制内容，回 Web 设置页粘回去保存
    （1.5.9 起配置存在插件自有存储，不会再被默认值覆盖）
 
-> ⚠️ 群守则里常含私人信息（主人 openid、进群暗号等），**发布/分享/截图时记得剔除**。
+> ⚠️ 注入规则里常含私人信息（主人 openid、进群暗号等），**发布/分享/截图时记得剔除**。
 
 ### Q: 设置页保存后，为什么 patch 里看不到我的改动？
 
