@@ -27,6 +27,7 @@ export declare class PrefsStore {
     private readonly deleted;
     /** 损坏文件只备份一次（避免每次写入都产出新备份） */
     private corruptedBackedUp;
+    private lockOwned;
     /**
      * @param debugLog 调试日志回调
      * @param baseDir  存放目录。**强烈建议传 `{dataRoot}/.qqbot`** ——
@@ -110,6 +111,8 @@ export declare class PrefsStore {
      * 墓碑里的 key 一律不写回（防止删除被复活）。
      */
     private mergeDisk;
+    private acquireLock;
+    private releaseLock;
     private write;
 }
 export {};

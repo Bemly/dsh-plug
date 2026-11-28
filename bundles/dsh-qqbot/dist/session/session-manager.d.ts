@@ -276,6 +276,8 @@ export declare class SessionManager {
     /** 按会话键找活跃会话(group/c2c); 无则 undefined(会话被回收/未建立) */
     findByPeer(scope: ChatScope, peerId: string): SessionRecord | undefined;
     isActiveRecord(record: SessionRecord): boolean;
+    private bumpSessionGeneration;
+    cancelRecordOutbound(record: SessionRecord): void;
     /**
      * 定时/主动注入: 向某会话塞一条新消息(像收到新消息, AI 带上下文处理并回复到 QQ)。
      * 会话当前不在(被回收/未建立)→ 返回 false, 由调用方决定(计数/跳过)。

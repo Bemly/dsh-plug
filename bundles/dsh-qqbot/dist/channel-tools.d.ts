@@ -18,6 +18,8 @@ export declare function readContextPending(dataRoot: string, sessionKey: string)
 } | undefined;
 export declare function clearContextPending(dataRoot: string, sessionKey: string): void;
 export declare function setChannelBridge(b: QQChannel | undefined): void;
+export declare function unsetChannelBridge(manager: unknown): void;
+export declare function forgetExtToolContext(ctx: unknown): void;
 /** 装载本插件时把 qqChannel 一并注入(由 dsh-qqbot setup 提供) */
 /**
  * @param opts.dataRoot 本实例的数据根（**显式传**，不要让函数自己去猜）。

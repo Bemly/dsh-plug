@@ -71,5 +71,6 @@ export interface SessionRecord {
     agentPreset?: string;
     lastActivity?: number;
     replyTarget?: ReplyTarget;
+    outboundCancels?: Set<() => void>;
     [key: string]: any;
 }

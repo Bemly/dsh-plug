@@ -10,8 +10,8 @@
  * ⚠️ 本地手改功能（fork 新增，SDK 无此能力）：维护清单见工作区根《插件改动维护注意事项.md》。
  * 运行时数据根默认 = {agent cwd}/表情包（config.sticker.dataDir 可覆盖）。
  */
-import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, rmSync, statSync, readdirSync, openSync, readSync, closeSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, rmSync, statSync, readdirSync, openSync, readSync, closeSync, unlinkSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
 import * as dns from 'node:dns';
 import { Jimp } from 'jimp';
@@ -37,31 +37,66 @@ export function extractQqFileId(input) {
  * 看的是**画面结构**而不是字节 → QQ 重压缩/改尺寸/转格式过的同一张图也能认出来。
  * 与聚合共用插件正式依赖 Jimp，不依赖宿主是否额外安装 sharp。
  */
+export function dhashOfImage(img) {
+    const sample = img.clone();
+    sample.resize({ w: 9, h: 8 });
+    const data = sample.bitmap.data;
+    const ch = 4;
+    if (!data || data.length < 9 * 8 * ch)
+        return undefined;
+    const gray = (i) => {
+        const o = i * ch;
+        return 0.299 * (data[o] ?? 0) + 0.587 * (data[o + 1] ?? 0) + 0.114 * (data[o + 2] ?? 0);
+    };
+    let bits = '';
+    for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+            bits += gray(y * 9 + x) > gray(y * 9 + x + 1) ? '1' : '0';
+        }
+    }
+    let hex = '';
+    for (let i = 0; i < 64; i += 4)
+        hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
+    return hex;
+}
+
+export function colorHashOfImage(img) {
+    const { width, height, data } = img.bitmap;
+    const stepX = Math.max(1, Math.floor(width / 64));
+    const stepY = Math.max(1, Math.floor(height / 64));
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let count = 0;
+    for (let y = 0; y < height; y += stepY) {
+        for (let x = 0; x < width; x += stepX) {
+            const o = (y * width + x) * 4;
+            r += data[o] ?? 0;
+            g += data[o + 1] ?? 0;
+            b += data[o + 2] ?? 0;
+            count++;
+        }
+    }
+    if (!count)
+        return undefined;
+    const q = (value) => Math.min(255, Math.max(0, Math.round(value / count)));
+    return ((q(r) << 16) | (q(g) << 8) | q(b)).toString(16).padStart(6, '0');
+}
+
+export function colorHashDistance(a, b) {
+    if (!a || !b || a.length !== 6 || b.length !== 6)
+        return 999;
+    const pa = [0, 2, 4].map((i) => parseInt(a.slice(i, i + 2), 16));
+    const pb = [0, 2, 4].map((i) => parseInt(b.slice(i, i + 2), 16));
+    return Math.max(...pa.map((value, i) => Math.abs(value - pb[i])));
+}
+
 export async function computeDHash(buf) {
     // 应急开关：设 DSH_QQBOT_NODHASH=1 即可彻底停用 dHash 计算。
     if (process.env.DSH_QQBOT_NODHASH === '1')
         return undefined;
     try {
-        const img = await Jimp.read(buf);
-        img.resize({ w: 9, h: 8 });
-        const data = img.bitmap.data;
-        const ch = 4;
-        if (!data || data.length < 9 * 8 * ch)
-            return undefined;
-        const gray = (i) => {
-            const o = i * ch;
-            return 0.299 * (data[o] ?? 0) + 0.587 * (data[o + 1] ?? 0) + 0.114 * (data[o + 2] ?? 0);
-        };
-        let bits = '';
-        for (let y = 0; y < 8; y++) {
-            for (let x = 0; x < 8; x++) {
-                bits += gray(y * 9 + x) > gray(y * 9 + x + 1) ? '1' : '0';
-            }
-        }
-        let hex = '';
-        for (let i = 0; i < 64; i += 4)
-            hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
-        return hex;
+        return dhashOfImage(await Jimp.read(buf));
     }
     catch {
         return undefined;
@@ -250,6 +285,25 @@ export class StickerStore {
             this.items = new Map(); // 无 index：全新开始
         }
     }
+    writeIndex() {
+        const file = this.indexPath();
+        const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+        try {
+            writeFileSync(tmp, JSON.stringify({ version: 1, items: [...this.items.values()] }, null, 2), 'utf8');
+            renameSync(tmp, file);
+            this.dirty = false;
+            return true;
+        }
+        catch (err) {
+            this.dirty = true;
+            try {
+                unlinkSync(tmp);
+            }
+            catch { /* ignore */ }
+            this.logger?.warn?.(`[sticker-store] index save failed: ${err instanceof Error ? err.message : String(err)}`);
+            return false;
+        }
+    }
     /** 防抖落盘 index.json（写操作先改内存） */
     save() {
         this.dirty = true;
@@ -257,16 +311,8 @@ export class StickerStore {
             return;
         this.saveTimer = setTimeout(() => {
             this.saveTimer = null;
-            if (!this.dirty)
-                return;
-            this.dirty = false;
-            try {
-                const payload = { version: 1, items: [...this.items.values()] };
-                writeFileSync(this.indexPath(), JSON.stringify(payload, null, 2), 'utf8');
-            }
-            catch (err) {
-                this.logger?.warn?.(`[sticker-store] index save failed: ${err instanceof Error ? err.message : String(err)}`);
-            }
+            if (this.dirty)
+                this.writeIndex();
         }, 500);
     }
     /** 关闭时立即落盘（进程退出兜底） */
@@ -275,13 +321,8 @@ export class StickerStore {
             clearTimeout(this.saveTimer);
             this.saveTimer = null;
         }
-        if (!this.dirty)
-            return;
-        this.dirty = false;
-        try {
-            writeFileSync(this.indexPath(), JSON.stringify({ version: 1, items: [...this.items.values()] }, null, 2), 'utf8');
-        }
-        catch { /* ignore */ }
+        if (this.dirty)
+            this.writeIndex();
     }
     /**
      * 老库自愈（2026-11-13，issue #47）：扩展名与真实字节不符的图按魔数改名，并回写 index 的 `ext`。

@@ -54,7 +54,10 @@ export function groupTimeHead(cache, scope, peerId, now = new Date()) {
     const key = `${scope}:${peerId}`;
     if (cache.get(key) === stamp)
         return null;
+    cache.delete(key);
     cache.set(key, stamp);
+    while (cache.size > 4096)
+        cache.delete(cache.keys().next().value);
     return `[${stamp}]`;
 }
 // ── 主处理函数 ──
@@ -323,9 +326,9 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                     if (!_u || _map.has(_u))
                         continue;
                     const _lp = resolveImageLocalPath(_u, _stickerDir);
-                    const _pos = _lp ? _pending.findIndex((x) => x.path === _lp) : -1;
+                    const _pos = _lp ? _pending.findIndex((x) => x.path === _lp || x.sourcePath === _lp) : -1;
                     if (_pos >= 0)
-                        _map.set(_u, _pos + 1);   // 1-based，与角标 p.idx+1 完全一致
+                        _map.set(_u, _pending[_pos].seq ?? _pos + 1);
                 }
                 // 本条消息 attachments 的 URL 同样入表
                 for (const _a of (Array.isArray(msg.attachments) ? msg.attachments : [])) {
@@ -333,9 +336,9 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                     if (!_u || _map.has(_u))
                         continue;
                     const _lp = resolveImageLocalPath(_u, _stickerDir);
-                    const _pos = _lp ? _pending.findIndex((x) => x.path === _lp) : -1;
+                    const _pos = _lp ? _pending.findIndex((x) => x.path === _lp || x.sourcePath === _lp) : -1;
                     if (_pos >= 0)
-                        _map.set(_u, _pos + 1);
+                        _map.set(_u, _pending[_pos].seq ?? _pos + 1);
                 }
                 if (_map.size > 0) {
                     state.aggUrlIndex = Object.assign(state.aggUrlIndex || {}, Object.fromEntries(_map));
@@ -1746,6 +1749,7 @@ function memberNickOf(msg) {
  * 否则主人一发言缓存就变形，之后"账号名叫 Alice"的普通成员就匹配不上、拿不到 id。
  * 群昵称单独存一份，比较时两个都比。
  */
+const MAX_OWNER_NAME_CACHE = 1024;
 const ownerNameCache = new Map();
 /**
  * 正在进行的解析（2026-11-17 CodeRabbit：修并发竞态）。
@@ -1798,7 +1802,10 @@ async function resolveOwnerDisplayName(manager, ownerOpenid, groupOpenid) {
         ownerNameInflight.set(oid, inflight);
         // 落缓存（成功失败都缓存 —— 失败就该"一次就够"，不该每轮重试）
         void inflight.then((r) => {
+            ownerNameCache.delete(oid);
             ownerNameCache.set(oid, { name: r.name, nicks: r.nicks });
+            while (ownerNameCache.size > MAX_OWNER_NAME_CACHE)
+                ownerNameCache.delete(ownerNameCache.keys().next().value);
             ownerNameInflight.delete(oid);
         }).catch(() => { ownerNameInflight.delete(oid); });
     }

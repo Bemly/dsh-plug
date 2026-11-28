@@ -58,6 +58,12 @@ test('reset 轮换 sessionId 且命令等待重置完成', async () => {
     assert.ok(command.includes('await manager.reset(scope, peerId);'));
 });
 
+test('/new 无参和带 preset 都使用 fork 超时 abort', async () => {
+    const command = await readFile(new URL('./dist/commands/session.js', root), 'utf8');
+    assert.equal((command.match(/forkWithTimeout\(\(signal\) => manager\.startNewSession/g) ?? []).length, 3);
+    assert.ok(command.includes("if (r === 'timeout')"));
+});
+
 test('入站投递前校验会话仍活跃', async () => {
     const inbound = await readFile(new URL('./dist/transport/inbound.js', root), 'utf8');
     assert.ok(inbound.includes('if (!manager.isActiveRecord(record))'));
@@ -92,6 +98,7 @@ test('群历史图片在缓存未命中时走四轮下载', async () => {
     assert.ok(inbound.includes('const _historyUrls = [];'));
     assert.ok(inbound.includes('prepareImagesForDispatch(_historyFake, msg, config, logger)'));
     assert.ok(inbound.includes('_historyPaths.get(ref.raw)'));
+    assert.ok(inbound.includes('x.path === _lp || x.sourcePath === _lp'));
 });
 
 test('包检查器能发现普通相对类型导出缺失', async () => {

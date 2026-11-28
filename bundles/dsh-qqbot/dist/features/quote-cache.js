@@ -9,10 +9,11 @@
  *   `{ seq: 自增编号, map: { "group:<gid>" | "c2c:<openid>": [{id,text,sender,at}, …] } }`
  * 编号全局自增（人也能在文件里直接看/对号), 每个会话各自留最近 10 条。
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 /** 每个会话保留的条数（主人定: 最多 10 条） */
 export const QUOTE_CACHE_MAX = 10;
+const MAX_CACHED_PEERS = 256;
 const cache = new Map();
 function fileOf(dataRoot) {
     return join(dataRoot, '.qqbot', 'quote-cache.json');
@@ -36,7 +37,9 @@ function save(dataRoot, data) {
     try {
         const p = fileOf(dataRoot);
         mkdirSync(dirname(p), { recursive: true });
-        writeFileSync(p, JSON.stringify(data), 'utf8');
+        const tmp = `${p}.${process.pid}.tmp`;
+        writeFileSync(tmp, JSON.stringify(data), 'utf8');
+        renameSync(tmp, p);
     }
     catch { /* 缓存写失败不影响主链 */ }
 }
@@ -62,7 +65,11 @@ export function pushQuote(dataRoot, key, text, sender) {
     const entry = { id: nextId(data), text: String(text || ''), sender, at: Date.now() };
     const list = Array.isArray(data.map[key]) ? data.map[key] : [];
     list.push(entry);
-    data.map[key] = list.slice(-QUOTE_CACHE_MAX);
+    const next = list.slice(-QUOTE_CACHE_MAX);
+    delete data.map[key];
+    data.map[key] = next;
+    while (Object.keys(data.map).length > MAX_CACHED_PEERS)
+        delete data.map[Object.keys(data.map)[0]];
     save(dataRoot, data);
     return entry;
 }

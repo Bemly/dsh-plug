@@ -25,14 +25,15 @@ function getFonts() {
 export async function renderCompositeBuffer(
     jimpImgs,
     result,
-    { quality = 90, bg = 0xffffffff, label = true } = {}
+    { quality = 90, bg = 0xffffffff, label = true, labels = null } = {}
 ) {
     const { canvas: c, placements } = result;
     const canvas = new Jimp({ width: c.W, height: c.H, color: bg });
     const [font16, font32] = label ? await getFonts() : [null, null];
 
     for (const p of placements) {
-        const src = jimpImgs[p.idx];
+        const source = jimpImgs[p.idx];
+        const src = typeof source === 'string' ? await Jimp.read(source) : source;
         const im = src.clone();
         const scale = Math.min(p.w / im.bitmap.width, p.h / im.bitmap.height);
         const w = Math.max(1, Math.min(p.w, Math.round(im.bitmap.width * scale)));
@@ -42,7 +43,7 @@ export async function renderCompositeBuffer(
         canvas.composite(im, p.x + Math.floor((p.w - w) / 2), p.y + Math.floor((p.h - h) / 2));
 
         if (label) {
-            const text = String(p.idx + 1);
+            const text = String(labels?.[p.idx] ?? p.idx + 1);
             const useLarge = Math.min(p.w, p.h) >= 400;
             const font = useLarge ? font32 : font16;
             const padX = useLarge ? 10 : 6;

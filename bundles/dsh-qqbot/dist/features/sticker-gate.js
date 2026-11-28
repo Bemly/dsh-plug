@@ -139,6 +139,39 @@ class StickerGate {
         catch {
             this.budget = new Map();
         }
+        this.sweep();
+    }
+    sweep(now = Date.now()) {
+        const dupTtlHours = Math.max(0, Number(liveGates().dupTTLHours) || 0);
+        const usedCutoff = now - Math.max(7 * 24, dupTtlHours) * 3600 * 1000;
+        for (const [path, ts] of this.used)
+            if (Number(ts) < usedCutoff)
+                this.used.delete(path);
+        const days = new Set([0, 1, 2, 3, 4, 5, 6].map((offset) => {
+            const d = new Date(now - offset * 24 * 3600 * 1000);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }));
+        for (const [gid, entries] of this.budget) {
+            for (const day of entries.keys())
+                if (!days.has(day))
+                    entries.delete(day);
+            if (!entries.size)
+                this.budget.delete(gid);
+        }
+        const activityCutoff = now - 2 * 3600 * 1000;
+        for (const [gid, arr] of this.activity) {
+            while (arr.length && arr[0] < activityCutoff)
+                arr.shift();
+            if (!arr.length)
+                this.activity.delete(gid);
+        }
+        const sentCutoff = now - 24 * 3600 * 1000;
+        for (const [gid, arr] of this.sentTimes) {
+            while (arr.length && arr[0] < sentCutoff)
+                arr.shift();
+            if (!arr.length)
+                this.sentTimes.delete(gid);
+        }
     }
     /** 防抖落盘(发送低频, 1s 合并足够); 进程退出兜底走 flush() */
     save() {
@@ -217,6 +250,7 @@ class StickerGate {
      * 放行后发送成功再调 noteSent 记录(发送失败不占预算)。
      */
     checkMedia(ctx) {
+        this.sweep();
         const gates = liveGates();
         const isSticker = ctx.kind === 'image'
             && !!ctx.localPath

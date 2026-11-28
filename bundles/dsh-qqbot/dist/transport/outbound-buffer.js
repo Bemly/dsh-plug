@@ -61,7 +61,8 @@ onSendError,
  * 缺省（不传）也**照跑链** —— 扩展可能只想按文本/会话判断；`enabled:false` 才是显式关闭
  * （给内部回环调用用，避免"自己发的又被自己拦"）。
  */
-extHook) {
+extHook,
+signal) {
     let peers = outboundSends.get(bot);
     if (!peers) {
         peers = new Map();
@@ -72,12 +73,16 @@ extHook) {
     let release;
     const queued = new Promise((resolve) => { release = resolve; });
     peers.set(key, queued);
-    await previous;
     try {
+        await previous;
+        if (signal?.aborted)
+            return;
         // 连续两批消息之间沿用发送间隔
         if (previous)
             await new Promise((resolve) => setTimeout(resolve, 500));
-        await sendRichOutboundNow(bot, target, text, limit, cwd, logError, resolveTarget, chunkTarget, onBlockSent, refLookup, onSendError, extHook);
+        if (signal?.aborted)
+            return;
+        await sendRichOutboundNow(bot, target, text, limit, cwd, logError, resolveTarget, chunkTarget, onBlockSent, refLookup, onSendError, extHook, signal);
     }
     finally {
         release();
@@ -85,7 +90,7 @@ extHook) {
             peers.delete(key);
     }
 }
-async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, resolveTarget, chunkTarget, onBlockSent, refLookup, onSendError, extHook) {
+async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, resolveTarget, chunkTarget, onBlockSent, refLookup, onSendError, extHook, signal) {
     const groupId = globalThis.crypto?.randomUUID?.() ?? `send-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let outboundTexts;
     // ★★ 出站扩展链（2026-10-16）：先让扩展改 / 杀这条出站，再走原有发送逻辑 ★★
@@ -122,6 +127,8 @@ async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, reso
                 chain,
                 new Promise((resolve) => setTimeout(() => resolve({ text, killed: false, reason: 'ext-hook-timeout', ran: 0 }), EXT_HOOK_TIMEOUT_MS)),
             ]);
+            if (signal?.aborted)
+                return;
             if (r.reason === 'ext-hook-timeout') {
                 logError?.(`im-qqbot: 出站扩展链超时(${EXT_HOOK_TIMEOUT_MS}ms)，已放弃改写/配图、按原文发出`);
             }
@@ -172,6 +179,8 @@ async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, reso
     const perTurn = stickerPerTurnCtx(cwd);
     let turnStickerSent = 0;
     for (let index = 0; index < messages.length; index++) {
+        if (signal?.aborted)
+            return;
         const message = messages[index];
         const { segments } = message;
         if (index > 0)
@@ -227,6 +236,8 @@ async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, reso
             continue;
         }
         for (const seg of segments) {
+            if (signal?.aborted)
+                return;
             if (seg.type === 'media') {
                 const isStickerSeg = perTurn.isSticker(seg.kind, seg.source);
                 if (isStickerSeg && perTurn.perTurnMax > 0 && turnStickerSent >= perTurn.perTurnMax) {
@@ -258,6 +269,8 @@ async function sendRichOutboundNow(bot, target, text, limit, cwd, logError, reso
                 const chunks = seg.chunks;
                 sentStat.total += chunks.length;
                 for (let ci = 0; ci < chunks.length; ci++) {
+                    if (signal?.aborted)
+                        return;
                     const chunk = chunks[ci];
                     // 变换结果按整批计算块序号；未变换的消息沿用原有分段计数
                     const tgt = chunkTarget
@@ -326,6 +339,9 @@ export class OutboundBuffer {
     warnedBig = false;
     flushing = false;
     writer;
+    abortController = new AbortController();
+    onSettled;
+    settled = false;
     constructor(record, bot, limit, logger, streamingEnabled, cwd = undefined, resolveTarget,
     /** 逐文本块目标(2026-09-10 passive 收尾; 正文块>5 第6块起转主动) */
     chunkTarget,
@@ -398,17 +414,27 @@ export class OutboundBuffer {
     get text() {
         return this.buffer;
     }
+    settle() {
+        if (this.settled)
+            return;
+        this.settled = true;
+        this.onSettled?.();
+    }
     /** 发送所有累积文本：流式优先，降级静态 */
     async flush() {
-        if (this.flushing || !this.buffer.trim())
+        if (this.flushing)
             return;
+        if (!this.buffer.trim()) {
+            this.settle();
+            return;
+        }
         this.flushing = true;
         const consume = (sent) => {
             if (this.buffer.startsWith(sent))
                 this.buffer = this.buffer.slice(sent.length);
         };
         try {
-            while (this.buffer.trim()) {
+            while (this.buffer.trim() && !this.abortController.signal.aborted) {
                 const pending = this.buffer;
                 if (this.writer && !this.writer.finished) {
                     await this.writer.finish();
@@ -424,21 +450,26 @@ export class OutboundBuffer {
                     consume(pending);
                     continue;
                 }
-                await sendRichOutbound(this.bot, this.record.replyTarget, outText, this.limit, this.cwd, (m) => this.logger.error(m), this.resolveTarget, this.chunkTarget, this.onBlockSent, this.refLookup, undefined, { source: 'assistant/message', ...(this.extCaps ?? {}) });
+                await sendRichOutbound(this.bot, this.record.replyTarget, outText, this.limit, this.cwd, (m) => this.logger.error(m), this.resolveTarget, this.chunkTarget, this.onBlockSent, this.refLookup, undefined, { source: 'assistant/message', ...(this.extCaps ?? {}) }, this.abortController.signal);
                 consume(pending);
             }
         }
         catch (err) {
             this.logger.error(`im-qqbot: flush failed: ${err instanceof Error ? err.message : String(err)}`);
+            this.buffer = '';
         }
         finally {
             this.flushing = false;
+            if (!this.buffer.trim())
+                this.settle();
         }
     }
     /** 取消（异常/丢弃），中止流式并清空缓冲 */
     cancel() {
+        this.abortController.abort();
         this.writer?.abort();
         this.buffer = '';
+        this.settle();
     }
 }
 //# sourceMappingURL=outbound-buffer.js.map

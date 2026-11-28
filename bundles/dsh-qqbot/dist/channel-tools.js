@@ -456,6 +456,19 @@ export function setChannelBridge(b) {
     else
         channelBridges.push(b);
 }
+export function unsetChannelBridge(manager) {
+    const i = channelBridges.findIndex((item) => item.manager === manager);
+    if (i >= 0)
+        channelBridges.splice(i, 1);
+}
+export function forgetExtToolContext(ctx) {
+    if (!ctx)
+        return;
+    extSeenCtx.delete(ctx);
+    extGrantSet.delete(ctx);
+    extRestrictState2.delete(ctx);
+    extUserOff.delete(ctx);
+}
 function channelOf(exec) {
     try {
         const agent = exec.agent;

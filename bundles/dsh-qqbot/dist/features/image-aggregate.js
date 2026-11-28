@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Jimp } from 'jimp';
-import { computeDHash, dhashDistance, extractQqFileId } from './sticker-store.js';
+import { colorHashDistance, colorHashOfImage, dhashDistance, dhashOfImage, extractQqFileId } from './sticker-store.js';
 import { pack } from './uvpack/packer.mjs';
 import { renderCompositeBuffer } from './uvpack/render.mjs';
 
@@ -13,16 +14,87 @@ const MAX_PACK_ASPECT = 128;
 const SENT_KEEP = 4096;
 const MAX_BUFFER_SESSIONS = 64;
 const MAX_SENT_SESSIONS = 512;
+const MAX_SENT_TOTAL = 131072;
 
 const buffers = new Map();
 const building = new Map();
 const sentFingerprints = new Map();
+const sequenceByKey = new Map();
+let cacheDir = '';
+let fallbackCacheDir = '';
 let sentIndexFile = '';
 const OUR_ATTACH = new Set();
 let ourAttachFile = '';
 const OUR_ATTACH_KEEP = 2000;
 let probeImageInput;
 let saveImage;
+
+function ensureCacheDir() {
+    if (!cacheDir) {
+        if (!fallbackCacheDir)
+            fallbackCacheDir = mkdtempSync(join(tmpdir(), 'dsh-botqq-aggregate-'));
+        return fallbackCacheDir;
+    }
+    mkdirSync(cacheDir, { recursive: true });
+    return cacheDir;
+}
+
+function atomicWrite(file, data) {
+    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    try {
+        writeFileSync(tmp, data, 'utf8');
+        renameSync(tmp, file);
+    }
+    catch (err) {
+        try {
+            unlinkSync(tmp);
+        }
+        catch { /* ignore */ }
+        throw err;
+    }
+}
+
+function pendingFileOf(key) {
+    const id = createHash('sha256').update(key).digest('hex').slice(0, 32);
+    return join(ensureCacheDir(), `pending-${id}.json`);
+}
+
+function persistBuffer(key, items) {
+    if (!items?.length) {
+        try {
+            unlinkSync(pendingFileOf(key));
+        }
+        catch { /* ignore */ }
+        return;
+    }
+    atomicWrite(pendingFileOf(key), JSON.stringify(items));
+}
+
+function cleanupItem(item) {
+    if (!item?.ownedCache || !item.path)
+        return;
+    try {
+        unlinkSync(item.path);
+    }
+    catch { /* ignore */ }
+}
+
+function cleanupItems(items) {
+    for (const item of items ?? [])
+        cleanupItem(item);
+}
+
+function clearBuffer(key) {
+    const items = loadBuffer(key);
+    if (items)
+        cleanupItems(items);
+    buffers.delete(key);
+    sequenceByKey.delete(key);
+    try {
+        unlinkSync(pendingFileOf(key));
+    }
+    catch { /* ignore */ }
+}
 
 function touchMap(map, key, value, limit) {
     map.delete(key);
@@ -33,14 +105,49 @@ function touchMap(map, key, value, limit) {
     }
 }
 
+function touchBuffers(key, items) {
+    buffers.delete(key);
+    buffers.set(key, items);
+    while (buffers.size > MAX_BUFFER_SESSIONS) {
+        const oldest = buffers.keys().next().value;
+        const spilled = buffers.get(oldest);
+        try {
+            persistBuffer(oldest, spilled);
+        }
+        catch {
+            break;
+        }
+        buffers.delete(oldest);
+        sequenceByKey.delete(oldest);
+    }
+}
+
+function loadBuffer(key) {
+    const cached = buffers.get(key);
+    if (cached)
+        return cached;
+    try {
+        const raw = JSON.parse(readFileSync(pendingFileOf(key), 'utf8'));
+        if (Array.isArray(raw)) {
+            const items = raw.filter((item) => item && typeof item.path === 'string');
+            buffers.set(key, items);
+            for (const item of items)
+                sequenceByKey.set(key, Math.max(sequenceByKey.get(key) ?? 0, Number(item.seq) || 0));
+            return items;
+        }
+    }
+    catch { /* 没有落盘 pending */ }
+    return undefined;
+}
+
 function bufferOf(key) {
-    const current = buffers.get(key);
+    const current = loadBuffer(key);
     if (current) {
-        touchMap(buffers, key, current, MAX_BUFFER_SESSIONS);
+        touchBuffers(key, current);
         return current;
     }
     const arr = [];
-    touchMap(buffers, key, arr, MAX_BUFFER_SESSIONS);
+    touchBuffers(key, arr);
     return arr;
 }
 
@@ -55,6 +162,18 @@ function sentSetOf(key) {
     return set;
 }
 
+function trimSentTotal() {
+    let total = 0;
+    for (const set of sentFingerprints.values())
+        total += set.size;
+    while (total > MAX_SENT_TOTAL && sentFingerprints.size) {
+        const oldest = sentFingerprints.keys().next().value;
+        const removed = sentFingerprints.get(oldest)?.size ?? 0;
+        sentFingerprints.delete(oldest);
+        total -= removed;
+    }
+}
+
 function mediaTypeOf(buf, path) {
     if (buf.length >= 12) {
         if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
@@ -63,7 +182,7 @@ function mediaTypeOf(buf, path) {
             return 'image/jpeg';
         if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38)
             return 'image/gif';
-        if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+        if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x52
             && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50)
             return 'image/webp';
     }
@@ -77,12 +196,18 @@ function mediaTypeOf(buf, path) {
     return 'image/jpeg';
 }
 
+function sameDHash(a, b) {
+    if (!a?.dhash || !b?.dhash || dhashDistance(a.dhash, b.dhash) > 5)
+        return false;
+    return !a.color || !b.color || colorHashDistance(a.color, b.color) <= 8;
+}
+
 function keysOf(item) {
     const keys = [item.fp];
     if (item.fileid)
         keys.push(`q:${item.fileid}`);
     if (item.dhash)
-        keys.push(`d:${item.dhash}`);
+        keys.push(`d:${item.dhash}${item.color ? `:${item.color}` : ''}`);
     return keys;
 }
 
@@ -91,8 +216,11 @@ function matchesStored(item, stored) {
         return true;
     if (item.fileid && stored === `q:${item.fileid}`)
         return true;
-    return !!(item.dhash && stored.startsWith('d:')
-        && dhashDistance(item.dhash, stored.slice(2)) <= 5);
+    if (!item.dhash || !stored.startsWith('d:'))
+        return false;
+    const [hash, color] = stored.slice(2).split(':');
+    return dhashDistance(item.dhash, hash) <= 5
+        && (!color || !item.color || colorHashDistance(item.color, color) <= 8);
 }
 
 function duplicateInSet(set, item) {
@@ -104,8 +232,7 @@ function duplicateInSet(set, item) {
 }
 
 function duplicateInArray(arr, item) {
-    return arr.some((other) => keysOf(other).some((key) => keysOf(item).includes(key))
-        || (item.dhash && other.dhash && dhashDistance(item.dhash, other.dhash) <= 5));
+    return arr.some((other) => keysOf(other).some((key) => keysOf(item).includes(key)) || sameDHash(other, item));
 }
 
 function hasImageSignature(buf) {
@@ -114,25 +241,51 @@ function hasImageSignature(buf) {
     return (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
         || (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)
         || (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38)
-        || (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+        || (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x52
             && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50);
+}
+
+function normalizeForPack(img, w, h) {
+    let out = img;
+    if (Math.max(w, h) > MAX_EXTREME_EDGE) {
+        out = out.clone();
+        if (w >= h)
+            out.resize({ w: MAX_EXTREME_EDGE });
+        else
+            out.resize({ h: MAX_EXTREME_EDGE });
+        w = out.bitmap.width;
+        h = out.bitmap.height;
+    }
+    const ratio = w / h;
+    if (ratio <= MAX_PACK_ASPECT && ratio >= 1 / MAX_PACK_ASPECT)
+        return { img: out, w, h, changed: out !== img };
+    if (w >= h) {
+        const ph = Math.ceil(w / MAX_PACK_ASPECT);
+        const padded = new Jimp({ width: w, height: ph, color: 0xffffffff });
+        padded.composite(out, 0, Math.floor((ph - h) / 2));
+        return { img: padded, w, h: ph, changed: true };
+    }
+    const pw = Math.ceil(h / MAX_PACK_ASPECT);
+    const padded = new Jimp({ width: pw, height: h, color: 0xffffffff });
+    padded.composite(out, Math.floor((pw - w) / 2), 0);
+    return { img: padded, w: pw, h, changed: true };
 }
 
 export async function prepareAggregateImages(items, logger) {
     const prepared = [];
-    const candidates = (Array.isArray(items) ? items : []).slice(0, MAX_AGGREGATE_IMAGES);
+    const candidates = Array.isArray(items) ? items : [];
     for (const item of candidates) {
         try {
             if (!item?.path || !existsSync(item.path))
                 continue;
             const buf = readFileSync(item.path);
             const fp = createHash('sha256').update(buf).digest('hex');
-            const dhash = await computeDHash(buf);
             const fileid = extractQqFileId(item.url ?? '');
             const mediaType = mediaTypeOf(buf, item.path);
             let img = null;
             let w = 0;
             let h = 0;
+            let color;
             try {
                 img = await Jimp.read(buf);
                 w = img.bitmap.width;
@@ -149,22 +302,62 @@ export async function prepareAggregateImages(items, logger) {
                     continue;
                 }
             }
-            prepared.push({
-                key: item.key ?? '',
-                path: item.path,
-                url: item.url ?? '',
-                sender: item.sender || '某人',
-                at: Date.now(),
-                sent: false,
-                img,
-                w,
-                h,
-                buf,
-                mediaType,
-                fp,
-                dhash,
-                fileid,
-            });
+            let path = item.path;
+            let ownedCache = false;
+            let outputMediaType = mediaType;
+            if (img) {
+                const dhashValue = dhashOfImage(img);
+                const colorValue = colorHashOfImage(img);
+                const normalized = normalizeForPack(img, w, h);
+                w = normalized.w;
+                h = normalized.h;
+                if (normalized.changed) {
+                    path = join(ensureCacheDir(), `${fp}-${randomBytes(6).toString('hex')}.png`);
+                    const png = await normalized.img.getBuffer('image/png');
+                    writeFileSync(path, png);
+                    ownedCache = true;
+                    outputMediaType = 'image/png';
+                }
+                prepared.push({
+                    key: item.key ?? '',
+                    path,
+                    sourcePath: item.path,
+                    url: item.url ?? '',
+                    sender: item.sender || '某人',
+                    at: Date.now(),
+                    sent: false,
+                    decoded: true,
+                    w,
+                    h,
+                    mediaType: outputMediaType,
+                    fp,
+                    dhash: dhashValue,
+                    color: colorValue,
+                    fileid,
+                    ownedCache,
+                    seq: null,
+                });
+            }
+            else {
+                prepared.push({
+                    key: item.key ?? '',
+                    path,
+                    sourcePath: item.path,
+                    url: item.url ?? '',
+                    sender: item.sender || '某人',
+                    at: Date.now(),
+                    sent: false,
+                    decoded: false,
+                    w: 0,
+                    h: 0,
+                    mediaType,
+                    fp,
+                    color,
+                    fileid,
+                    ownedCache,
+                    seq: null,
+                });
+            }
         }
         catch (err) {
             logger?.warn?.(`[图片聚合] 预处理失败，不入聚合: ${item?.path ?? ''} ${err instanceof Error ? err.message : String(err)}`);
@@ -176,12 +369,19 @@ export async function prepareAggregateImages(items, logger) {
 export function pushPreparedAggImage(key, item) {
     if (!item)
         return 0;
-    if (duplicateInSet(sentSetOf(key), item))
+    if (duplicateInSet(sentSetOf(key), item)) {
+        cleanupItem(item);
         return buffers.get(key)?.length ?? 0;
+    }
     const arr = bufferOf(key);
-    if (duplicateInArray(arr, item))
+    if (duplicateInArray(arr, item)) {
+        cleanupItem(item);
         return arr.length;
-    arr.push({ ...item, key });
+    }
+    const seq = (sequenceByKey.get(key) ?? 0) + 1;
+    sequenceByKey.set(key, seq);
+    arr.push({ ...item, key, seq });
+    persistBuffer(key, arr);
     return arr.length;
 }
 
@@ -191,10 +391,10 @@ export async function pushAggImage(key, path, sender, url = '') {
 }
 
 export function pendingAggImages(key) {
-    const arr = buffers.get(key);
+    const arr = loadBuffer(key);
     if (!arr)
         return [];
-    touchMap(buffers, key, arr, MAX_BUFFER_SESSIONS);
+    touchBuffers(key, arr);
     return arr.filter((item) => !item.sent);
 }
 
@@ -208,14 +408,23 @@ export function markAggSent(items) {
         byKey.get(item.key).add(item);
     }
     for (const [key, sent] of byKey) {
-        const arr = buffers.get(key);
+        const arr = loadBuffer(key);
         if (!arr)
             continue;
         const kept = arr.filter((item) => !sent.has(item));
-        if (kept.length)
-            touchMap(buffers, key, kept, MAX_BUFFER_SESSIONS);
-        else
+        cleanupItems([...sent]);
+        if (kept.length) {
+            touchBuffers(key, kept);
+            persistBuffer(key, kept);
+        }
+        else {
             buffers.delete(key);
+            sequenceByKey.delete(key);
+            try {
+                unlinkSync(pendingFileOf(key));
+            }
+            catch { /* ignore */ }
+        }
     }
 }
 
@@ -235,6 +444,7 @@ export function rememberAggSentPaths(key, items) {
         const first = set.values().next().value;
         set.delete(first);
     }
+    trimSentTotal();
     persistSentIndex();
 }
 
@@ -245,7 +455,7 @@ function persistSentIndex() {
         const out = {};
         for (const [key, set] of sentFingerprints)
             out[key] = [...set];
-        writeFileSync(sentIndexFile, JSON.stringify(out), 'utf8');
+        atomicWrite(sentIndexFile, JSON.stringify(out));
     }
     catch { /* 去重表写入失败不影响消息 */ }
 }
@@ -259,58 +469,31 @@ function loadSentIndex() {
             if (Array.isArray(arr))
                 touchMap(sentFingerprints, key, new Set(arr.filter((x) => typeof x === 'string')), MAX_SENT_SESSIONS);
         }
+        trimSentTotal();
     }
     catch { /* 坏表当空 */ }
 }
 
 export function clearAggImages(key) {
-    buffers.delete(key);
+    clearBuffer(key);
 }
 
 export function resetAggImages(key) {
-    buffers.delete(key);
+    clearBuffer(key);
     sentFingerprints.delete(key);
     persistSentIndex();
 }
 
-function packImageOf(item) {
-    let src = item.img;
-    let w = item.w;
-    let h = item.h;
-    if (Math.max(w, h) > MAX_EXTREME_EDGE) {
-        src = src.clone();
-        if (w >= h)
-            src.resize({ w: MAX_EXTREME_EDGE });
-        else
-            src.resize({ h: MAX_EXTREME_EDGE });
-        w = src.bitmap.width;
-        h = src.bitmap.height;
-    }
-    const ratio = w / h;
-    if (ratio <= MAX_PACK_ASPECT && ratio >= 1 / MAX_PACK_ASPECT)
-        return { img: src, w, h };
-    // 极端长宽比先补白，避免格子短边被钳到 1 像素后拉伸原图。
-    if (w >= h) {
-        const ph = Math.ceil(w / MAX_PACK_ASPECT);
-        const img = new Jimp({ width: w, height: ph, color: 0xffffffff });
-        img.composite(src, 0, Math.floor((ph - h) / 2));
-        return { img, w, h: ph };
-    }
-    const pw = Math.ceil(h / MAX_PACK_ASPECT);
-    const img = new Jimp({ width: pw, height: h, color: 0xffffffff });
-    img.composite(src, Math.floor((pw - w) / 2), 0);
-    return { img, w: pw, h };
-}
-
 export async function stitchAggImages(items) {
-    if (items.length < 2 || items.some((item) => !item.img))
+    if (items.length < 2 || items.some((item) => !item.decoded && !item.img))
         return undefined;
-    const packImages = items.map(packImageOf);
     const result = pack(
-        packImages.map((item) => ({ w: item.w, h: item.h })),
+        items.map((item) => ({ w: item.w, h: item.h })),
         { mode: 'auto', preset: 'standard' },
     );
-    const buf = await renderCompositeBuffer(packImages.map((item) => item.img), result, { quality: 90 });
+    const sources = items.map((item) => item.path && existsSync(item.path) ? item.path : item.img);
+    const labels = items.map((item) => item.seq ?? null);
+    const buf = await renderCompositeBuffer(sources, result, { quality: 90, labels });
     const c = result.canvas;
     return {
         data: new Uint8Array(buf),
@@ -322,10 +505,10 @@ export async function stitchAggImages(items) {
 }
 
 async function saveSingleAggImage(item) {
-    let buf = item.buf;
+    let buf = item.buf ? item.buf : readFileSync(item.path);
     let mediaType = item.mediaType;
     if (Math.max(item.w, item.h) > MAX_EDGE) {
-        const img = item.img.clone();
+        const img = item.img ? item.img.clone() : await Jimp.read(item.path);
         const scale = MAX_EDGE / Math.max(item.w, item.h);
         img.resize({
             w: Math.max(1, Math.round(item.w * scale)),
@@ -351,8 +534,7 @@ export function buildAggregateBlocks(key, agent, logger) {
 }
 
 async function buildAggregateBlocksLocked(key, agent, logger) {
-    const items = pendingAggImages(key).slice(0, MAX_AGGREGATE_IMAGES);
-    if (items.length === 0)
+    if (!pendingAggImages(key).length)
         return [];
     if (!probeImageInput || !saveImage) {
         logger?.debug?.('[图片聚合] 宿主钩子未注入，跳过');
@@ -371,67 +553,73 @@ async function buildAggregateBlocksLocked(key, agent, logger) {
         return [];
     }
 
-    if (items.length === 1) {
-        const one = items[0];
-        try {
-            const blocks = await saveSingleAggImage(one);
-            if (!blocks)
-                return [];
-            rememberAggSentPaths(key, [one]);
-            markAggSent([one]);
-            logger?.debug?.(`[图片聚合] 单图直给: ${one.path}`);
-            return blocks;
-        }
-        catch (err) {
-            logger?.warn?.(`[图片聚合] 单图注入失败: ${err instanceof Error ? err.message : String(err)}`);
-            return [];
-        }
-    }
-
-    if (items.some((item) => !item.img)) {
-        const blocks = [];
-        const savedItems = [];
-        for (const item of items) {
-            try {
-                const saved = await saveSingleAggImage(item);
-                if (saved) {
-                    blocks.push(...saved);
-                    savedItems.push(item);
+    const blocks = [];
+    while (true) {
+        const items = pendingAggImages(key).slice(0, MAX_AGGREGATE_IMAGES);
+        if (items.length === 0)
+            break;
+        if (items.some((item) => !item.decoded && !item.img)) {
+            const savedItems = [];
+            for (const item of items) {
+                try {
+                    const saved = await saveSingleAggImage(item);
+                    if (saved) {
+                        blocks.push(...saved);
+                        savedItems.push(item);
+                    }
+                }
+                catch (err) {
+                    logger?.warn?.(`[图片聚合] 单图注入失败: ${item.path} ${err instanceof Error ? err.message : String(err)}`);
                 }
             }
-            catch (err) {
-                logger?.warn?.(`[图片聚合] 单图注入失败: ${item.path} ${err instanceof Error ? err.message : String(err)}`);
-            }
-        }
-        if (savedItems.length) {
+            if (!savedItems.length)
+                break;
             rememberAggSentPaths(key, savedItems);
             markAggSent(savedItems);
+            continue;
         }
-        return blocks;
+        if (items.length === 1) {
+            try {
+                const saved = await saveSingleAggImage(items[0]);
+                if (!saved)
+                    break;
+                blocks.push(...saved);
+                rememberAggSentPaths(key, items);
+                markAggSent(items);
+                logger?.debug?.(`[图片聚合] 单图直给: ${items[0].path}`);
+                continue;
+            }
+            catch (err) {
+                logger?.warn?.(`[图片聚合] 单图注入失败: ${err instanceof Error ? err.message : String(err)}`);
+                break;
+            }
+        }
+        const stitched = await stitchAggImages(items);
+        if (!stitched)
+            break;
+        try {
+            const saved = await saveImage(stitched.data, 'image/jpeg');
+            if (!saved?.attachment)
+                break;
+            blocks.push({ type: 'image', attachment: saved.attachment });
+            rememberAggSentPaths(key, stitched.used);
+            markAggSent(stitched.used);
+            logger?.debug?.(`[图片聚合] 合成 ${stitched.used.length} 张 → ${stitched.width}x${stitched.height} (${stitched.layout})`);
+        }
+        catch (err) {
+            logger?.warn?.(`[图片聚合] 存图失败: ${err instanceof Error ? err.message : String(err)}`);
+            break;
+        }
     }
-
-    const stitched = await stitchAggImages(items);
-    if (!stitched)
-        return [];
-    try {
-        const saved = await saveImage(stitched.data, 'image/jpeg');
-        if (!saved?.attachment)
-            return [];
-        rememberAggSentPaths(key, stitched.used);
-        markAggSent(stitched.used);
-        logger?.debug?.(`[图片聚合] 合成 ${stitched.used.length} 张 → ${stitched.width}x${stitched.height} (${stitched.layout})`);
-        return [{ type: 'image', attachment: saved.attachment }];
-    }
-    catch (err) {
-        logger?.warn?.(`[图片聚合] 存图失败: ${err instanceof Error ? err.message : String(err)}`);
-        return [];
-    }
+    return blocks;
 }
 
 export function initAggregateRegistry(dataRoot) {
     try {
         if (!dataRoot)
             return;
+        cacheDir = join(dataRoot, '.qqbot', 'aggregate-cache');
+        mkdirSync(cacheDir, { recursive: true });
         sentIndexFile = join(dataRoot, '.qqbot', 'aggregate-sent-index.json');
         loadSentIndex();
         ourAttachFile = join(dataRoot, '.qqbot', 'aggregate-ids.json');
@@ -459,13 +647,26 @@ export function noteOurAttachment(id) {
             OUR_ATTACH.delete(first);
         }
         if (ourAttachFile)
-            writeFileSync(ourAttachFile, JSON.stringify([...OUR_ATTACH]), 'utf8');
+            atomicWrite(ourAttachFile, JSON.stringify([...OUR_ATTACH]));
     }
     catch { /* ignore */ }
 }
 
 export function isOurAttachment(id) {
     return !!String(id ?? '') && OUR_ATTACH.has(String(id));
+}
+
+export function aggregateMemoryStats() {
+    let sentTotal = 0;
+    for (const set of sentFingerprints.values())
+        sentTotal += set.size;
+    return {
+        bufferSessions: buffers.size,
+        sequenceSessions: sequenceByKey.size,
+        sentSessions: sentFingerprints.size,
+        sentTotal,
+        pendingDiskDir: cacheDir || fallbackCacheDir || '',
+    };
 }
 
 export function setImageAggregateHooks(hooks) {

@@ -13,6 +13,9 @@ export declare function extractQqFileId(input: string): string;
  * 看的是**画面结构**而不是字节 → QQ 重压缩/改尺寸/转格式过的同一张图也能认出来。
  * 与聚合共用插件正式依赖 Jimp，不依赖宿主额外安装 sharp。
  */
+export declare function dhashOfImage(img: unknown): string | undefined;
+export declare function colorHashOfImage(img: unknown): string | undefined;
+export declare function colorHashDistance(a?: string, b?: string): number;
 export declare function computeDHash(buf: Buffer): Promise<string | undefined>;
 /** 两个 dHash 的汉明距离(0~64); 任一为空或长度不等 → 999(视为完全不同) */
 export declare function dhashDistance(a?: string, b?: string): number;
@@ -87,6 +90,7 @@ export declare class StickerStore {
     constructor(dataDir: string, logger?: Logger | undefined);
     private indexPath;
     private loadIndex;
+    private writeIndex;
     /** 防抖落盘 index.json（写操作先改内存） */
     private save;
     /** 关闭时立即落盘（进程退出兜底） */

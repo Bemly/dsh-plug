@@ -141,6 +141,73 @@ test('插话预解码期间到达的新消息不会被旧窗口吞掉', async ()
     assert.match(calls.steer[1], /第二条/);
 });
 
+test('群聚合当前消息无引用时不会继承上一条引用', async () => {
+    const dispatched = deferred();
+    let captured;
+    const { debounceLayer } = loadDebounce({
+        handleInbound: async (_msg, _manager, _config, _logger, state) => {
+            captured = state;
+            dispatched.resolve();
+        },
+    });
+    const cfg = config('queue');
+    cfg.behavior.debounce.maxMsgs = 2;
+    cfg.behavior.debounce.silenceSec = 60;
+    const rec = { sessionId: 's-quote', turnActive: false, agent: { status: 'idle' } };
+    const layer = debounceLayer(cfg, { findByPeer: () => rec }, console, new Map());
+    const groupMessage = (id, content) => ({
+        kind: 'group', groupOpenid: 'group-1', senderId: 'user', senderName: '用户',
+        content, messageId: id, timestamp: new Date().toISOString(),
+    });
+    await layer({ message: groupMessage('a', '第一条'), state: { quote: { content: 'A的引用' } } }, async () => {});
+    await layer({ message: groupMessage('b', '第二条'), state: {} }, async () => {});
+    await dispatched.promise;
+    assert.equal(captured.quote, undefined);
+});
+
+test('插话预解码期间 reset 不注入旧会话，消息回落新派发', async () => {
+    const entered = deferred();
+    const release = deferred();
+    const dispatched = deferred();
+    const inbound = [];
+    let active = true;
+    let oldSteers = 0;
+    const rec = {
+        sessionId: 's-reset',
+        turnActive: true,
+        interjectSeq: 0,
+        agent: {
+            status: 'running',
+            steer() { oldSteers++; },
+        },
+    };
+    const { debounceLayer } = loadDebounce({
+        prepareImagesForDispatch: async () => {
+            entered.resolve();
+            await release.promise;
+        },
+        handleInbound: async (msg) => {
+            inbound.push(msg.content);
+            dispatched.resolve();
+        },
+    });
+    const layer = debounceLayer(
+        config(),
+        { findByPeer: () => rec, isActiveRecord: () => active },
+        console,
+        new Map(),
+    );
+    await layer({ message: message('1', 'reset 后保留'), state: {} }, async () => {});
+    await entered.promise;
+    active = false;
+    rec.turnActive = false;
+    rec.agent.status = 'idle';
+    release.resolve();
+    await dispatched.promise;
+    assert.equal(oldSteers, 0);
+    assert.deepEqual(inbound, ['reset 后保留']);
+});
+
 test('插话注入抛错后回落排队，回合结束仍能派发', async () => {
     const dispatched = deferred();
     const inbound = [];

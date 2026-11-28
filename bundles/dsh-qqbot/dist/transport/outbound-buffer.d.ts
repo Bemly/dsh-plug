@@ -110,7 +110,7 @@ extHook?: {
     logger?: unknown;
     appendWake?: (text: string) => unknown;
     appendSilent?: (text: string) => unknown;
-}): Promise<void>;
+}, signal?: AbortSignal): Promise<void>;
 export declare class OutboundBuffer {
     private readonly record;
     private readonly bot;
@@ -147,6 +147,9 @@ export declare class OutboundBuffer {
     private warnedBig;
     private flushing;
     private readonly writer;
+    private readonly abortController;
+    onSettled?: () => void;
+    private settled;
     constructor(record: SessionRecord, bot: QQBotSender, limit: number, logger: Logger, streamingEnabled: boolean, cwd?: string | undefined, resolveTarget?: (() => ReplyTarget) | undefined,
     /** 逐文本块目标(2026-09-10 passive 收尾; 正文块>5 第6块起转主动) */
     chunkTarget?: ((i: number, total: number) => ReplyTarget) | undefined,
@@ -184,6 +187,7 @@ export declare class OutboundBuffer {
     append(text: string): void;
     /** 获取当前累积文本 */
     get text(): string;
+    settle(): void;
     /** 发送所有累积文本：流式优先，降级静态 */
     flush(): Promise<void>;
     /** 取消（异常/丢弃），中止流式并清空缓冲 */

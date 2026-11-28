@@ -24,7 +24,7 @@ import { configureScheduleStore, getScheduleStore } from '../features/schedule-s
 import { initContextlessStore, traceContextless, describeStorePath } from '../features/contextless-store.js';
 import { rememberInbound, rememberSelf } from '../features/msg-recent.js';
 import { initMsgHistory, appendMsgHistory } from '../features/msg-history.js';
-import { setChannelBridge } from '../channel-tools.js';
+import { setChannelBridge, unsetChannelBridge } from '../channel-tools.js';
 import { QqApprovalController, setApprovalDispatch, makeApprovalListener, registerApprovalController } from '../features/qq-approval.js';
 import { QqUserQuestionsController, registerQuestionController } from '../features/qq-user-questions.js';
 import { handleGroupJoinRequestEvent } from '../features/group-join-request.js';
@@ -1359,6 +1359,7 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
             catch (err) {
                 logger.warn?.(`[ext-inbound] 清理入站扩展异常(已忽略): ${err instanceof Error ? err.message : String(err)}`);
             }
+            unsetChannelBridge(manager);
             await manager.disposeAll();
             bot.stop();
         };

@@ -103,7 +103,9 @@ test('图片先预解码再入缓冲，单图只注入一次', async () => {
         await makePng(imagePath);
         const prepared = await prepareAggregateImages([{ path: imagePath, sender: 'tester' }]);
         assert.equal(prepared.length, 1);
-        assert.ok(prepared[0].img);
+        assert.equal(prepared[0].decoded, true);
+        assert.equal(prepared[0].img, undefined);
+        assert.equal(prepared[0].buf, undefined);
         assert.equal(pushPreparedAggImage(key, prepared[0]), 1);
         assert.equal(pushPreparedAggImage(key, prepared[0]), 1);
         assert.equal(pendingAggImages(key).length, 1);
@@ -147,7 +149,8 @@ test('Jimp 不支持解码的单图保留原字节直给', async () => {
         ]));
         const prepared = await prepareAggregateImages([{ path: imagePath, sender: 'tester' }]);
         assert.equal(prepared.length, 1);
-        assert.equal(prepared[0].img, null);
+        assert.equal(prepared[0].decoded, false);
+        assert.equal(prepared[0].img, undefined);
         pushPreparedAggImage(key, prepared[0]);
         const blocks = await buildAggregateBlocks(key, {}, console);
         assert.equal(blocks.length, 1);
@@ -159,7 +162,7 @@ test('Jimp 不支持解码的单图保留原字节直给', async () => {
     }
 });
 
-test('多图聚合保持预解码顺序且不再读盘', async () => {
+test('多图聚合保持预解码顺序并从盘逐张渲染', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'dsh-botqq-aggregate-multi-'));
     const first = join(dir, 'first.png');
     const second = join(dir, 'second.png');

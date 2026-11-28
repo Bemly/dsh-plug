@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { Jimp } from 'jimp';
 import {
+    aggregateMemoryStats,
     buildAggregateBlocks,
     clearAggImages,
     markAggSent,
@@ -60,6 +62,95 @@ test('reset 清空图片发送指纹，允许新会话再次接收同一图', ()
     assert.equal(pushPreparedAggImage(key, item), 1);
     clearAggImages(key);
     resetAggImages(key);
+});
+
+test('不同纯色图不会因 dHash 相同被误去重', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-solid-colors-'));
+    const key = `test:${dir}`;
+    try {
+        const colors = [0xff0000ff, 0xe00000ff, 0x00ff00ff, 0x0000ffff];
+        for (let i = 0; i < colors.length; i++) {
+            const path = join(dir, `${i}.png`);
+            await writeFile(path, await pngBuffer(32, 32, colors[i]));
+            const prepared = await prepareAggregateImages([{ path, sender: 'a' }]);
+            pushPreparedAggImage(key, prepared[0]);
+        }
+        assert.equal(pendingAggImages(key).length, 4);
+    }
+    finally {
+        clearAggImages(key);
+        resetAggImages(key);
+        await rm(dir, { recursive: true, force: true });
+    }
+});
+
+test('重复极端图清理不会删除先前 pending 的归一化文件', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-extreme-dup-'));
+    const path = join(dir, 'extreme.png');
+    const key = `test:${dir}`;
+    try {
+        const img = new Jimp({ width: 5000, height: 2, color: 0xff0000ff });
+        await writeFile(path, await img.getBuffer('image/png'));
+        const first = await prepareAggregateImages([{ path, sender: 'a' }]);
+        const second = await prepareAggregateImages([{ path, sender: 'a' }]);
+        pushPreparedAggImage(key, first[0]);
+        pushPreparedAggImage(key, second[0]);
+        assert.equal(pendingAggImages(key).length, 1);
+        assert.equal(existsSync(pendingAggImages(key)[0].path), true);
+    }
+    finally {
+        clearAggImages(key);
+        resetAggImages(key);
+        await rm(dir, { recursive: true, force: true });
+    }
+});
+
+test('超过64个会话的 pending 落盘且可恢复', () => {
+    const keys = Array.from({ length: 65 }, (_, i) => `test:spill-${i}`);
+    try {
+        for (let i = 0; i < keys.length; i++) {
+            pushPreparedAggImage(keys[i], {
+                path: `/tmp/spill-${i}.png`, sourcePath: `/tmp/spill-${i}.png`, sender: 'a', at: Date.now(), sent: false,
+                decoded: false, w: 0, h: 0, mediaType: 'image/png', fp: `spill-${i}`, fileid: '', ownedCache: false,
+            });
+        }
+        assert.equal(pendingAggImages(keys[0]).length, 1);
+        assert.ok(aggregateMemoryStats().sequenceSessions <= 64);
+    }
+    finally {
+        for (const key of keys)
+            clearAggImages(key);
+    }
+});
+
+test('超过100张时一次唤醒按批次全部消费并保持序号', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-over-100-'));
+    const path = join(dir, 'pixel.png');
+    const key = `test:${dir}`;
+    try {
+        await writeFile(path, await pngBuffer(8, 8, 0xffffffff));
+        for (let i = 0; i < 101; i++) {
+            pushPreparedAggImage(key, {
+                path, sourcePath: path, sender: 'a', at: Date.now(), sent: false, decoded: false,
+                w: 0, h: 0, mediaType: 'image/png', fp: `over-${i}`, fileid: '', ownedCache: false,
+            });
+        }
+        const pending = pendingAggImages(key);
+        assert.equal(pending.length, 101);
+        assert.equal(pending[100].seq, 101);
+        setImageAggregateHooks({
+            probeImageInput: async () => true,
+            saveImage: async (data, mediaType) => ({ attachment: { attachmentId: 'x', mediaType, name: 'aggregate.jpg', bytes: data.length } }),
+        });
+        const blocks = await buildAggregateBlocks(key, {}, console);
+        assert.equal(blocks.length, 101);
+        assert.equal(pendingAggImages(key).length, 0);
+    }
+    finally {
+        clearAggImages(key);
+        resetAggImages(key);
+        await rm(dir, { recursive: true, force: true });
+    }
 });
 
 test('dHash 使用随包 Jimp，不依赖宿主 sharp', async () => {

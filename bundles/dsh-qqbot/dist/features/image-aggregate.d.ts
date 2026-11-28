@@ -16,19 +16,31 @@ export interface AggImage {
     sender: string;
     at: number;
     sent: boolean;
-    img: unknown | null;
+    sourcePath?: string;
+    decoded: boolean;
+    img?: unknown | null;
     w: number;
     h: number;
-    buf: Uint8Array;
+    buf?: Uint8Array;
     mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
     fp: string;
     dhash?: string;
+    color?: string;
     fileid?: string;
+    ownedCache?: boolean;
+    seq?: number | null;
 }
 
 export declare function initAggregateRegistry(dataRoot: string): void;
 export declare function noteOurAttachment(id: string): void;
 export declare function isOurAttachment(id: unknown): boolean;
+export declare function aggregateMemoryStats(): {
+    bufferSessions: number;
+    sequenceSessions: number;
+    sentSessions: number;
+    sentTotal: number;
+    pendingDiskDir: string;
+};
 
 type ImageProbe = (agent: unknown) => Promise<boolean | undefined>;
 type ImageSaver = (data: Uint8Array, mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif') => Promise<{

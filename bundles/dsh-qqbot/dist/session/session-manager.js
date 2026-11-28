@@ -34,7 +34,7 @@ import { ModelResolver } from '../model/model-resolver.js';
 import { IdleEvictor } from './idle-evictor.js';
 import { markTurnAborted } from '../gateway/debounce.js';
 import { resetAggImages } from '../features/image-aggregate.js';
-import { apply as mountChannelTools, readContextPending, clearContextPending, syncChannelScopedTools, ensureExtToolsGlobal, applyExtToolVisibility, instanceTagOfManager, setCtxEnv } from '../channel-tools.js';
+import { apply as mountChannelTools, readContextPending, clearContextPending, syncChannelScopedTools, ensureExtToolsGlobal, applyExtToolVisibility, instanceTagOfManager, setCtxEnv, forgetExtToolContext } from '../channel-tools.js';
 import { createGroupAdmin } from '../api/group-admin.js';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { appendFileSync, statSync } from 'node:fs';
@@ -178,6 +178,10 @@ export class SessionManager {
         this.evictor = new IdleEvictor(this.sessions, config.sessionIdleTimeout, (key, record) => {
             this.logger.info(`evicting idle session: key=${key}`);
             this.sessions.delete(key);
+            this.sessionGenerations.delete(key);
+            this.lastHostModel.delete(key);
+            this.cancelRecordOutbound(record);
+            forgetExtToolContext(record.agentCtx);
             record.agent.cancel({ kind: 'user' });
             void record.handle.dispose().catch(() => { });
         });
@@ -494,8 +498,9 @@ export class SessionManager {
         }
         const childId = SessionId(randomUUID());
         let created;
+        let composed;
         try {
-            const composed = await this.composePreset(this.effectivePreset(key));
+            composed = await this.composePreset(this.effectivePreset(key));
             if (signal?.aborted)
                 return false;
             created = await this.agents.create({
@@ -532,6 +537,8 @@ export class SessionManager {
         record.handle = created;
         record.agentPreset = composed.agentPreset;
         record.lastActivity = Date.now();
+        this.cancelRecordOutbound(record);
+        forgetExtToolContext(record.agentCtx);
         void oldHandle.dispose().catch(() => { });
         void attachSessionToWorkspaceWithRetry(this.ctx, this.config.cwd, childId, this.logger, {
             // 这个 childId 已经被下一次 fork/new 取代的话，别再挂、更别反归档（会撤销别人的自动归档）
@@ -2386,6 +2393,28 @@ export class SessionManager {
     isActiveRecord(record) {
         return !!record?.sessionKey && this.sessions.get(record.sessionKey) === record;
     }
+    bumpSessionGeneration(key) {
+        this.sessionGenerations.set(key, (this.sessionGenerations.get(key) ?? 0) + 1);
+        if (this.sessionGenerations.size <= 4096)
+            return;
+        for (const candidate of this.sessionGenerations.keys()) {
+            if (!this.sessions.has(candidate) && !this.creating.has(candidate))
+                this.sessionGenerations.delete(candidate);
+        }
+        while (this.sessionGenerations.size > 4096)
+            this.sessionGenerations.delete(this.sessionGenerations.keys().next().value);
+    }
+    cancelRecordOutbound(record) {
+        if (!record?.outboundCancels)
+            return;
+        for (const cancel of [...record.outboundCancels]) {
+            try {
+                cancel();
+            }
+            catch { /* ignore */ }
+        }
+        record.outboundCancels.clear();
+    }
     /**
      * 定时/主动注入: 向某会话塞一条新消息(像收到新消息, AI 带上下文处理并回复到 QQ)。
      * 会话当前不在(被回收/未建立)→ 返回 false, 由调用方决定(计数/跳过)。
@@ -2421,7 +2450,7 @@ export class SessionManager {
     }
     async reset(scope, peerId) {
         const key = this.sessionKey(scope, peerId);
-        this.sessionGenerations.set(key, (this.sessionGenerations.get(key) ?? 0) + 1);
+        this.bumpSessionGeneration(key);
         this.creating.delete(key);
         const record = this.sessions.get(key);
         const previousSessionId = String(record?.sessionId ?? this.currentSessionId(key) ?? '');
@@ -2429,8 +2458,11 @@ export class SessionManager {
         this.modelResolver.setSessionId(key, nextSessionId);
         this.modelResolver.setSessionCfg(key, { cwd: absCwdOf(this.config.cwd) || process.cwd() });
         this.sessions.delete(key);
+        this.lastHostModel.delete(key);
         resetAggImages(`${scope}:${peerId}`);
         if (record) {
+            this.cancelRecordOutbound(record);
+            forgetExtToolContext(record.agentCtx);
             record.agent.cancel({ kind: 'user' });
             await record.handle.dispose().catch(() => { });
         }
@@ -2440,7 +2472,7 @@ export class SessionManager {
     }
     async remove(scope, peerId) {
         const key = this.sessionKey(scope, peerId);
-        this.sessionGenerations.set(key, (this.sessionGenerations.get(key) ?? 0) + 1);
+        this.bumpSessionGeneration(key);
         this.creating.delete(key);
         const record = this.sessions.get(key);
         if (!record) {
@@ -2448,7 +2480,10 @@ export class SessionManager {
             return;
         }
         this.sessions.delete(key);
+        this.lastHostModel.delete(key);
         this.modelResolver.clearSessionId(key);
+        this.cancelRecordOutbound(record);
+        forgetExtToolContext(record.agentCtx);
         record.agent.cancel({ kind: 'user' });
         await record.handle.dispose().catch(() => { });
         this.logger.info(`session removed: key=${key}`);
@@ -2458,10 +2493,13 @@ export class SessionManager {
         const records = [...this.sessions.values()];
         const keys = new Set([...this.sessions.keys(), ...this.creating.keys()]);
         for (const key of keys)
-            this.sessionGenerations.set(key, (this.sessionGenerations.get(key) ?? 0) + 1);
+            this.bumpSessionGeneration(key);
         this.creating.clear();
         this.sessions.clear();
+        this.lastHostModel.clear();
         for (const record of records) {
+            this.cancelRecordOutbound(record);
+            forgetExtToolContext(record.agentCtx);
             record.agent.cancel({ kind: 'user' });
         }
         await Promise.allSettled(records.map((r) => r.handle.dispose()));

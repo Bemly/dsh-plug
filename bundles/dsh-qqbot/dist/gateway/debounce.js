@@ -124,12 +124,17 @@ const INTERJECT_NOTES = [
  *   （正常跑着的回合：照旧带前缀，行为不变。）
  */
 const ABORTED_TTL_MS = 5 * 60 * 1000;
+const MAX_ABORTED_SESSIONS = 1024;
 const abortedAt = new Map();
 export function markTurnAborted(sessionId) {
     try {
         const k = String(sessionId || '');
-        if (k)
-            abortedAt.set(k, Date.now());
+        if (!k)
+            return;
+        abortedAt.delete(k);
+        abortedAt.set(k, Date.now());
+        while (abortedAt.size > MAX_ABORTED_SESSIONS)
+            abortedAt.delete(abortedAt.keys().next().value);
     }
     catch { /* ignore */ }
 }
@@ -255,7 +260,7 @@ async function interjectBatch(rec, entries, config, logger, quoteByMsg, stickerD
  * ★ 2026-11-07 主人实测：**插话不走 handleInbound**，于是「自定义小提醒」不会触发。
  *   这里把配置传进来，在拼完插话文本后补跑一遍规则（与正常入站同一套）。
  */
-injectRules) {
+injectRules, isActive) {
     const a = rec.agent;
     if (!a) {
         rec.__interjectSkip = 'no-agent';
@@ -326,6 +331,10 @@ injectRules) {
         }
     }
     catch { /* 聚合缓冲失败不影响插话 */ }
+    if (isActive && !isActive()) {
+        rec.__interjectSkip = 'stale-session';
+        return false;
+    }
     try {
         const msg = createUserMessage({
             content: [{ type: 'text', text }],
@@ -365,6 +374,13 @@ export function injectSynthetic(scope, peerId, text, opts, owner) {
 export function debounceLayer(config, manager, logger, cooldownAt) {
     const windows = new Map();
     const dispatchChains = new Map();
+    const MAX_COOLDOWN_ENTRIES = 4096;
+    const rememberCooldown = (gid, at) => {
+        cooldownAt.delete(gid);
+        cooldownAt.set(gid, at);
+        while (cooldownAt.size > MAX_COOLDOWN_ENTRIES)
+            cooldownAt.delete(cooldownAt.keys().next().value);
+    };
     /**
      * 调试日志（排查"插话退化成排队"）：
      *  开关 = 设置项 `behavior.debounce.debug`（热更生效，改设置即开即用），
@@ -520,7 +536,7 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                         }, {
                             rules: config.injectRules,
                             imageHint: config.imageHint !== false,
-                        })) {
+                        }, typeof manager.isActiveRecord === 'function' ? () => manager.isActiveRecord(busyRec) : undefined)) {
                             clearTimer(w);
                             // 与正常派发同款: 清群历史缓存 —— 免得这批消息这轮插过、下轮又被当 [历史] 打包一遍
                             if (fKind === 'group') {
@@ -656,7 +672,7 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                 const curQuote = lastMid && w.quoteByMsg ? w.quoteByMsg.get(lastMid) : undefined;
                 if (curQuote)
                     state.quote = curQuote;
-                else if (w.quote)
+                else if (!lastMid && w.quote)
                     state.quote = w.quote;
                 if (cur.wasMentioned) {
                     // current 本身就是 @ 消息 → 走正常 mention, AI 见 (@you)
@@ -676,7 +692,7 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                 //    下游可能因价值评分低分而不唤醒(没回复) → 把回滚回调一并交下去, 让它还这枚冷却。
                 if (!hasMention) {
                     const prev = cooldownAt.get(gid);
-                    cooldownAt.set(gid, Date.now());
+                    rememberCooldown(gid, Date.now());
                     state.qqCooldownRollback = {
                         prev,
                         restore: () => { if (prev === undefined)

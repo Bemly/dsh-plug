@@ -16,6 +16,7 @@ export const IMAGE_DOWNLOAD_ATTEMPTS = Object.freeze([
 const MAX_PER_MSG = 100;
 const FAILURE_COOLDOWN_MS = 5 * 60_000;
 const GLOBAL_MAX_INFLIGHT = 32;
+const MAX_FAILURE_KEYS = 4096;
 const captureTasks = new Map();
 const captureFailures = new Map();
 let activeDownloads = 0;
@@ -44,6 +45,17 @@ function isCollectableImage(url) {
 
 function captureKey(url) {
     return extractQqFileId(url) || String(url);
+}
+
+function noteCaptureFailure(key, until) {
+    const now = Date.now();
+    for (const [candidate, expiry] of captureFailures)
+        if (expiry <= now)
+            captureFailures.delete(candidate);
+    captureFailures.delete(key);
+    captureFailures.set(key, until);
+    while (captureFailures.size > MAX_FAILURE_KEYS)
+        captureFailures.delete(captureFailures.keys().next().value);
 }
 
 export async function downloadWithRetry(url, download, logger, attempts = IMAGE_DOWNLOAD_ATTEMPTS) {
@@ -124,13 +136,13 @@ async function captureOne(url, contentType, msg, config, logger) {
             }
         }, logger);
         if (!buf) {
-            captureFailures.set(key, Date.now() + FAILURE_COOLDOWN_MS);
+            noteCaptureFailure(key, Date.now() + FAILURE_COOLDOWN_MS);
             logger?.warn?.(`[sticker] 图片下载四轮均失败 key=${key.slice(0, 16)}…`);
             return undefined;
         }
         const resolved = await store.captureBuffer(buf, input, contentType, url);
         if (!resolved.id) {
-            captureFailures.set(key, Date.now() + FAILURE_COOLDOWN_MS);
+            noteCaptureFailure(key, Date.now() + FAILURE_COOLDOWN_MS);
             logger?.warn?.(`[sticker] 图片写库失败 key=${key.slice(0, 16)}…: ${resolved.error || 'unknown error'}`);
             return undefined;
         }

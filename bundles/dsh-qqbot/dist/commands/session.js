@@ -117,7 +117,9 @@ export function newPresetCommand({ manager, config, logger }) {
             //   命令参数一律先剥掉 @ 标记再匹配。
             const args = stripMentions(String((cmdCtx.command?.raw ?? '').trim()));
             if (!args) {
-                const r = await manager.startNewSession(scope, peerId, false, undefined, { replyTarget: target, senderId: triggererId });
+                const r = await forkWithTimeout((signal) => manager.startNewSession(scope, peerId, false, undefined, { replyTarget: target, senderId: triggererId }, signal));
+                if (r === 'timeout')
+                    return '开新会话超时（宿主可能卡住），请稍后再试';
                 if (r === 'forked')
                     return '已开启新会话 ✓(使用当前默认人格)';
                 if (r === 'rotated')
@@ -142,7 +144,9 @@ export function newPresetCommand({ manager, config, logger }) {
                 }
                 return lines.join('\n');
             }
-            const r = await manager.startNewSession(scope, peerId, false, hit.id, { replyTarget: target, senderId: triggererId });
+            const r = await forkWithTimeout((signal) => manager.startNewSession(scope, peerId, false, hit.id, { replyTarget: target, senderId: triggererId }, signal));
+            if (r === 'timeout')
+                return '开新会话超时（宿主可能卡住），请稍后再试';
             if (r === 'forked')
                 return `✅ 已用人格「${hit.id}」开启新会话(旧会话存档可回看)`;
             if (r === 'rotated')

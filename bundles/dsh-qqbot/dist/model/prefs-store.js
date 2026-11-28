@@ -18,7 +18,7 @@
  *     避免写盘瞬间被 kill 留下半截 JSON);
  *   - load 解析失败不再静默吞掉: 损坏文件改名 .corrupt-<ts> 保留取证, 空偏好继续。
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, copyFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, copyFileSync, unlinkSync, rmdirSync, statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
@@ -48,6 +48,7 @@ export class PrefsStore {
     };
     /** 损坏文件只备份一次（避免每次写入都产出新备份） */
     corruptedBackedUp = false;
+    lockOwned = false;
     /**
      * @param debugLog 调试日志回调
      * @param baseDir  存放目录。**强烈建议传 `{dataRoot}/.qqbot`** ——
@@ -383,34 +384,123 @@ export class PrefsStore {
             ...(Object.keys(pre).length > 0 ? { sessionPresets: pre } : {}),
         };
     }
+    acquireLock() {
+        const dir = `${this.prefsPath}.lock`;
+        const owner = `${dir}/owner`;
+        const deadline = Date.now() + 5000;
+        const sleeper = new Int32Array(new SharedArrayBuffer(4));
+        while (true) {
+            try {
+                mkdirSync(dir);
+            }
+            catch (err) {
+                if (err.code !== 'EEXIST')
+                    throw err;
+                let remove = false;
+                let lockStat;
+                let ownerText;
+                try {
+                    lockStat = statSync(dir);
+                    ownerText = readFileSync(owner, 'utf8');
+                    const pid = Number(ownerText);
+                    if (pid) {
+                        try {
+                            process.kill(pid, 0);
+                        }
+                        catch (killErr) {
+                            remove = killErr.code === 'ESRCH';
+                        }
+                    }
+                    else {
+                        remove = Date.now() - lockStat.mtimeMs > 30_000;
+                    }
+                }
+                catch { /* 锁刚建或 owner 尚未写入 */ }
+                if (remove) {
+                    const tomb = `${dir}.stale.${process.pid}.${Date.now()}.${randomBytes(4).toString('hex')}`;
+                    try {
+                        const currentStat = statSync(dir);
+                        const currentOwner = readFileSync(owner, 'utf8');
+                        if (currentStat.ino !== lockStat.ino || currentStat.mtimeMs !== lockStat.mtimeMs || currentOwner !== ownerText)
+                            continue;
+                        renameSync(dir, tomb);
+                    }
+                    catch {
+                        continue;
+                    }
+                    try {
+                        unlinkSync(`${tomb}/owner`);
+                    }
+                    catch { /* ignore */ }
+                    try {
+                        rmdirSync(tomb);
+                    }
+                    catch { /* ignore */ }
+                    continue;
+                }
+                if (Date.now() >= deadline)
+                    return false;
+                Atomics.wait(sleeper, 0, 0, 20);
+                continue;
+            }
+            try {
+                writeFileSync(owner, String(process.pid), 'utf8');
+                this.lockOwned = true;
+                return true;
+            }
+            catch (err) {
+                try {
+                    rmdirSync(dir);
+                }
+                catch { /* ignore */ }
+                throw err;
+            }
+        }
+    }
+    releaseLock() {
+        if (!this.lockOwned)
+            return;
+        this.lockOwned = false;
+        const dir = `${this.prefsPath}.lock`;
+        try {
+            unlinkSync(`${dir}/owner`);
+        }
+        catch { /* ignore */ }
+        try {
+            rmdirSync(dir);
+        }
+        catch { /* ignore */ }
+    }
     write() {
+        let tmpPath;
         try {
             this.prune(); // 防无限膨胀
             mkdirSync(dirname(this.prefsPath), { recursive: true });
-            // ★ 2026-10-31（同步上游 e49dadf）：写前**重读磁盘并合并** —— 这个文件是多写者共享的
-            //   （同进程多实例 / 跨进程多 profile），旧逻辑拿内存全量覆盖 ⇒ 别人的映射被抹掉。
+            if (!this.acquireLock())
+                throw new Error('model-prefs lock timeout');
+            // 读盘合并必须发生在锁内，否则两个写者仍会用同一旧快照互相覆盖。
             const data = this.mergeDisk(this.readDiskState());
             // 原子写：同目录临时文件 + rename（同分区原子，崩溃不留半份文件）。
             // ⚠️ tmp 名**必须带 pid + 随机后缀**：固定名时两个进程会写同一个 tmp，
             //    A 的 rename 可能把 B 的内容落盘（上游踩过这个）。
-            const tmpPath = `${this.prefsPath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-            try {
-                writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
-                renameSync(tmpPath, this.prefsPath);
-            }
-            catch (err) {
+            tmpPath = `${this.prefsPath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+            writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+            renameSync(tmpPath, this.prefsPath);
+        }
+        catch (err) {
+            if (tmpPath) {
                 try {
                     unlinkSync(tmpPath);
                 }
                 catch { /* 可能不存在 */ }
-                throw err;
             }
-        }
-        catch (err) {
             const msg = `writePrefs failed: ${err instanceof Error ? err.message : String(err)}`;
             // 旧版只 debugLog（默认关）⇒ 写失败完全不可见。升级为可见告警。
             this.onError?.(msg);
             this.debugLog?.(msg);
+        }
+        finally {
+            this.releaseLock();
         }
     }
 }

@@ -19,12 +19,19 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 /** 群名缓存：gid → name */
+const MAX_NAME_CACHE = 4096;
 const groupNameCache = new Map();
 /** 缓存 key 必须带 **bot 身份(appId)** —— 同一进程里可能跑多个实例(im-qqbot-2/3)，
  * 只按 gid 存会串：A 拉到的名字被 B 读到，B 拉失败的空值又能污染 A。 */
 const botKey = (botId) => (String(botId || '').trim() || '_') + '|';
 /** 使用者昵称缓存：openid → name（来自入站 senderName 或 getUserInfo） */
 const userNameCache = new Map();
+function touchNameCache(map, key, value) {
+    map.delete(key);
+    map.set(key, value);
+    while (map.size > MAX_NAME_CACHE)
+        map.delete(map.keys().next().value);
+}
 /** 在途请求（避免同一目标并发打点） */
 const inflight = new Set();
 const injectedRegistries = new Map();
@@ -121,14 +128,14 @@ export function rememberUserName(botId, openid, name) {
     // 已有更好/同等的值就不覆盖；只有空或过期才更新
     if (old && old.name)
         return;
-    userNameCache.set(key, { name: nm, at: Date.now() });
+    touchNameCache(userNameCache, key, { name: nm, at: Date.now() });
 }
 /** 手动写入群名（别处已经拿到时用，例如群名接口的调用方） */
 export function rememberGroupName(botId, gid, name) {
     const id = String(gid || '').trim();
     if (!id)
         return;
-    groupNameCache.set(botKey(botId) + id, { name: String(name || '').trim(), at: Date.now() });
+    touchNameCache(groupNameCache, botKey(botId) + id, { name: String(name || '').trim(), at: Date.now() });
 }
 /**
  * 后台拉群名并缓存（**不阻塞**当前回合）。没有缓存时，这一轮注入只能写"群名未取到"，
@@ -159,7 +166,7 @@ export function prefetchGroupName(client, botId, gid) {
             // ★ CodeRabbit #80：请求期间若别处写入了更新的名字，别用（可能是空的）结果覆盖它
             const prev = groupNameCache.get(key);
             if (!(prev && prev.at > startedAt && prev.name)) {
-                groupNameCache.set(key, { name, at: Date.now() });
+                touchNameCache(groupNameCache, key, { name, at: Date.now() });
             }
             inflight.delete('g:' + key);
         }
@@ -189,7 +196,7 @@ export function prefetchUserName(client, botId, openid) {
             // ★ CodeRabbit #80：入站消息可能在请求期间写入了 senderName，旧请求失败不能拿空串盖掉它
             const prev = userNameCache.get(key);
             if (!(prev && prev.at > startedAt && prev.name)) {
-                userNameCache.set(key, { name, at: Date.now() });
+                touchNameCache(userNameCache, key, { name, at: Date.now() });
             }
             inflight.delete('u:' + key);
         }

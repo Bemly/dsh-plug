@@ -49,6 +49,7 @@ const lastSnap = new Map();
 const MAX_PENDING = 500;
 /** 快照保留条数（给扩展看的那份可以截断，hasOwner 等统计不受影响） */
 const MAX_SNAPSHOT_ITEMS = 200;
+const MAX_SESSIONS = 2048;
 /** 归一 key：群/私聊各一条台账 */
 function keyOf(sessionKey) {
     return String(sessionKey ?? '').trim();
@@ -67,7 +68,10 @@ export function noteSegmentItem(sessionKey, item, isOwner) {
     let seg = pending.get(k);
     if (!seg) {
         seg = { items: [], ownerCount: 0, total: 0, seen: new Set() };
+        pending.delete(k);
         pending.set(k, seg);
+        while (pending.size > MAX_SESSIONS)
+            pending.delete(pending.keys().next().value);
     }
     // 同一条重复入站（重试/聚合）只记一次
     if (seg.items.some((it) => it.id === item.id))
@@ -106,7 +110,10 @@ export function captureSegment(sessionKey, opts) {
     Object.freeze(snap.items); // 数组本身也冻上（元素已拷贝）
     Object.freeze(snap); // 「唤醒时定格，之后不变」—— 契约要真的成立
     if (k) {
+        lastSnap.delete(k);
         lastSnap.set(k, snap);
+        while (lastSnap.size > MAX_SESSIONS)
+            lastSnap.delete(lastSnap.keys().next().value);
         pending.delete(k); // ★ 唤醒即清空：下一段从零开始记
     }
     return snap;

@@ -113,6 +113,13 @@ pluginCtx) {
     //     ⚠️ 本地手改功能, 同步纪律同群冷却中间件。
     // ── 群普通消息"上次派发时刻"(冷却中间件与 debounce 融合层共享) ──
     const lastDispatchAt = new Map(); // groupOpenid -> 上次普通派发时间(ms)
+    const MAX_DISPATCH_ENTRIES = 4096;
+    const rememberDispatch = (gid, at) => {
+        lastDispatchAt.delete(gid);
+        lastDispatchAt.set(gid, at);
+        while (lastDispatchAt.size > MAX_DISPATCH_ENTRIES)
+            lastDispatchAt.delete(lastDispatchAt.keys().next().value);
+    };
     let inboundTail = Promise.resolve();
     bot.use(async (_ctx, next) => {
         const run = inboundTail.then(() => next());
@@ -313,7 +320,7 @@ pluginCtx) {
     //       记历史时把带 URL 的附件折叠进 content，冷却期群友发的图/媒体在历史里也带链接
     bot.use(mediaHistoryBuffer({
         limit: config.historyLimit,
-        store: getHistoryStore(config.appId),
+        store: getHistoryStore(config.appId, dataRootOf(config)),
         recordOnSkip: true,
         groupKey: (ctx) => {
             const gid = ctx.message.groupOpenid;
@@ -734,7 +741,7 @@ pluginCtx) {
         }
         // 冷却结束：派发当前消息。用独立的 batchDispatch 标记，让下游把累积的群历史一起打包
         //（不伪装成 @you，避免出现假 (@you) 标签误导 AI）
-        lastDispatchAt.set(gid, now);
+        rememberDispatch(gid, now);
         // ⚠️ 2026-09-13(主人要求): 冷却应当"**真产生回复**才算消耗" —— 派发只是试一下,
         //    下游可能因为价值评分低分而**不唤醒**(那就没有回复), 这种不该白吃一枚冷却。
         //    于是把"还回去"的回调挂到 state, 下游判定"本次没回复"时调一次即可。

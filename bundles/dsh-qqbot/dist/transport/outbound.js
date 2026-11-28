@@ -299,7 +299,10 @@ export class OutboundRouter {
         if (!st || st.msgId !== rt.msgId) {
             // 新入站消息(msg_id 变化)→ 重置被动配额
             st = { msgId: rt.msgId, passiveCount: 0 };
+            this.adaptiveState.delete(key);
             this.adaptiveState.set(key, st);
+            while (this.adaptiveState.size > 4096)
+                this.adaptiveState.delete(this.adaptiveState.keys().next().value);
         }
         if (st.passiveCount < ADAPTIVE_MAX_PASSIVE) {
             st.passiveCount += 1;
@@ -665,6 +668,10 @@ export class OutboundRouter {
             // ★ CodeRabbit #87：回退路径也要带出站扩展能力（appendWake/appendSilent/apiCall），
             //   否则流式降级后扩展 annihilate() 掉正文依然没法通知模型
             { ...outboundExtCaps(record, this.manager) });
+            const cancelOutbound = () => buffer.cancel();
+            record.outboundCancels ??= new Set();
+            record.outboundCancels.add(cancelOutbound);
+            buffer.onSettled = () => record.outboundCancels?.delete(cancelOutbound);
             this.buffers.set(sessionId, buffer);
         }
         const candidate = (buffer?.text ?? '') + String(event.text ?? '');
@@ -920,6 +927,10 @@ export class OutboundRouter {
     }
     /** 统一发送：逐条自适应目标(适配主动) + 富媒体感知分块；媒体指令([MEDIA:..]/[RECALL])被剔除，失败降级记录 */
     async send(_record, text, tag, source) {
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        _record.outboundCancels ??= new Set();
+        _record.outboundCancels.add(cancel);
         try {
             if (source === 'assistant/message' && isRefusalText(text)) {
                 await this.rotateSessionOnRefusal(_record, text);
@@ -1041,11 +1052,13 @@ export class OutboundRouter {
                 }
                 const _stripRecall = (s) => s.replace(/\[RECALL(?::\s*\d+)?\]/g, '');
                 const _mdSend = async (raw) => {
+                    if (controller.signal.aborted)
+                        return;
                     const t = _stripRecall(raw);
                     if (!t.trim())
                         return;
                     if (t.indexOf('qqbot-media://') < 0) {
-                        await sendRichOutbound(this.bot, _record.replyTarget, t, this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source, ...outboundExtCaps(_record, this.manager) });
+                        await sendRichOutbound(this.bot, _record.replyTarget, t, this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source, ...outboundExtCaps(_record, this.manager) }, controller.signal);
                         return;
                     }
                     try {
@@ -1055,12 +1068,12 @@ export class OutboundRouter {
                         this.logger.error('im-qqbot: markdown(含图) 失败，回落普通文本: ' + (err instanceof Error ? err.message : String(err)));
                         // 2026-10-30/31：回落时绝不把 qqbot-media 引用或原始 markdown 当文本发出去 ——
                         //   本地图 → [MEDIA:image|路径]；qqbot-media/http 图 → [图片：说明]。
-                        await sendRichOutbound(this.bot, _record.replyTarget, stripMarkdownImagesForPlainText(localMarkdownImagesToMediaMarkers(t)), this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source, ...outboundExtCaps(_record, this.manager) });
+                        await sendRichOutbound(this.bot, _record.replyTarget, stripMarkdownImagesForPlainText(localMarkdownImagesToMediaMarkers(t)), this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source, ...outboundExtCaps(_record, this.manager) }, controller.signal);
                     }
                 };
                 let _mediaBuf = [];
                 const _flushMedia = async () => {
-                    if (!_mediaBuf.length)
+                    if (controller.signal.aborted || !_mediaBuf.length)
                         return;
                     const buf = _mediaBuf;
                     _mediaBuf = [];
@@ -1085,9 +1098,11 @@ export class OutboundRouter {
                             .map((s) => `[MEDIA:${String(s.kind ?? 'image')}|${String(s.source ?? '')}]`)
                             .join('');
                         pending = [];
-                        await sendRichOutbound(this.bot, _record.replyTarget, mediaOnly, this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source, ...outboundExtCaps(_record, this.manager) });
+                        await sendRichOutbound(this.bot, _record.replyTarget, mediaOnly, this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source, ...outboundExtCaps(_record, this.manager) }, controller.signal);
                     };
                     for (const seg of buf) {
+                        if (controller.signal.aborted)
+                            return;
                         if (!isRaw(seg)) {
                             pending.push(seg); // 连续普通段合并成一次发送（闸门/上限仍在）
                             continue;
@@ -1105,6 +1120,8 @@ export class OutboundRouter {
                     await flushPending();
                 };
                 for (const seg of _segs) {
+                    if (controller.signal.aborted)
+                        return;
                     if (seg.type === 'media') {
                         _mediaBuf.push(seg);
                         continue;
@@ -1115,10 +1132,13 @@ export class OutboundRouter {
                 await _flushMedia();
                 return;
             }
-            await sendRichOutbound(this.bot, _record.replyTarget, outText, this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source, ...outboundExtCaps(_record, this.manager) });
+            await sendRichOutbound(this.bot, _record.replyTarget, outText, this.config.textChunkLimit, this.config.cwd, (m) => this.logger.error(m), () => this.resolveTarget(_record), this.chunkTargetFn(_record), undefined, this.refLookupFor(_record), this.onSendErrorFor(_record), { source, ...outboundExtCaps(_record, this.manager) }, controller.signal);
         }
         catch (err) {
             this.logger.error(`im-qqbot: ${tag} failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        finally {
+            _record.outboundCancels?.delete(cancel);
         }
     }
 }
