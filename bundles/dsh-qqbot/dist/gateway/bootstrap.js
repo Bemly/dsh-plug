@@ -122,10 +122,8 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
     }
     catch { /* ignore */ }
     logger.info(`[sticker] 图库目录: ${stickerDataDir}`);
-    // ⚠️ 2026-09-13 **撤下**「启动后台回填 dHash」: 它会在**启动路径上**调 sharp/libvips ——
-    //    实测宿主启动时刷 GLib-GObject-CRITICAL("...property 'space' of type 'VipsInterpretation'"),
-    //    并把 dsh 拖到启动不了。改为: dHash **只在真正需要判重时(图片消息预检)惰性计算**,
-    //    任何失败都只算"判不了", 绝不进入启动路径; 老库回填改由独立脚本按需跑。
+    // dHash 只在真正需要判重时(图片消息预检)惰性计算，绝不进入启动路径；
+    // 老库回填改由独立脚本按需跑。
     // ── 表情包发送闸门单例预初始化(P1): 与图库同 dataDir, 绑定 live config getter ──
     // 配置现读(getter 每次判定取 config.sticker.gates), Web 设置热更新即时生效。
     initStickerGate(stickerDataDir, logger, myNs);

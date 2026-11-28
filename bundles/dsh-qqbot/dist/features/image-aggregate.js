@@ -8,11 +8,14 @@ import { renderCompositeBuffer } from './uvpack/render.mjs';
 
 export const MAX_AGGREGATE_IMAGES = 100;
 const MAX_EDGE = 2560;
+const MAX_EXTREME_EDGE = 4096;
+const MAX_PACK_ASPECT = 128;
 const SENT_KEEP = 4096;
 const MAX_BUFFER_SESSIONS = 64;
 const MAX_SENT_SESSIONS = 512;
 
 const buffers = new Map();
+const building = new Map();
 const sentFingerprints = new Map();
 let sentIndexFile = '';
 const OUR_ATTACH = new Set();
@@ -264,14 +267,50 @@ export function clearAggImages(key) {
     buffers.delete(key);
 }
 
+export function resetAggImages(key) {
+    buffers.delete(key);
+    sentFingerprints.delete(key);
+    persistSentIndex();
+}
+
+function packImageOf(item) {
+    let src = item.img;
+    let w = item.w;
+    let h = item.h;
+    if (Math.max(w, h) > MAX_EXTREME_EDGE) {
+        src = src.clone();
+        if (w >= h)
+            src.resize({ w: MAX_EXTREME_EDGE });
+        else
+            src.resize({ h: MAX_EXTREME_EDGE });
+        w = src.bitmap.width;
+        h = src.bitmap.height;
+    }
+    const ratio = w / h;
+    if (ratio <= MAX_PACK_ASPECT && ratio >= 1 / MAX_PACK_ASPECT)
+        return { img: src, w, h };
+    // 极端长宽比先补白，避免格子短边被钳到 1 像素后拉伸原图。
+    if (w >= h) {
+        const ph = Math.ceil(w / MAX_PACK_ASPECT);
+        const img = new Jimp({ width: w, height: ph, color: 0xffffffff });
+        img.composite(src, 0, Math.floor((ph - h) / 2));
+        return { img, w, h: ph };
+    }
+    const pw = Math.ceil(h / MAX_PACK_ASPECT);
+    const img = new Jimp({ width: pw, height: h, color: 0xffffffff });
+    img.composite(src, Math.floor((pw - w) / 2), 0);
+    return { img, w: pw, h };
+}
+
 export async function stitchAggImages(items) {
     if (items.length < 2 || items.some((item) => !item.img))
         return undefined;
+    const packImages = items.map(packImageOf);
     const result = pack(
-        items.map((item) => ({ w: item.w, h: item.h })),
+        packImages.map((item) => ({ w: item.w, h: item.h })),
         { mode: 'auto', preset: 'standard' },
     );
-    const buf = await renderCompositeBuffer(items.map((item) => item.img), result, { quality: 90 });
+    const buf = await renderCompositeBuffer(packImages.map((item) => item.img), result, { quality: 90 });
     const c = result.canvas;
     return {
         data: new Uint8Array(buf),
@@ -282,7 +321,36 @@ export async function stitchAggImages(items) {
     };
 }
 
-export async function buildAggregateBlocks(key, agent, logger) {
+async function saveSingleAggImage(item) {
+    let buf = item.buf;
+    let mediaType = item.mediaType;
+    if (Math.max(item.w, item.h) > MAX_EDGE) {
+        const img = item.img.clone();
+        const scale = MAX_EDGE / Math.max(item.w, item.h);
+        img.resize({
+            w: Math.max(1, Math.round(item.w * scale)),
+            h: Math.max(1, Math.round(item.h * scale)),
+        });
+        buf = await img.getBuffer('image/jpeg', { quality: 88 });
+        mediaType = 'image/jpeg';
+    }
+    const saved = await saveImage(new Uint8Array(buf), mediaType);
+    return saved?.attachment ? [{ type: 'image', attachment: saved.attachment }] : undefined;
+}
+
+export function buildAggregateBlocks(key, agent, logger) {
+    const previous = building.get(key) ?? Promise.resolve();
+    const run = previous.catch(() => { }).then(() => buildAggregateBlocksLocked(key, agent, logger));
+    building.set(key, run);
+    const done = () => {
+        if (building.get(key) === run)
+            building.delete(key);
+    };
+    void run.then(done, done);
+    return run;
+}
+
+async function buildAggregateBlocksLocked(key, agent, logger) {
     const items = pendingAggImages(key).slice(0, MAX_AGGREGATE_IMAGES);
     if (items.length === 0)
         return [];
@@ -306,30 +374,40 @@ export async function buildAggregateBlocks(key, agent, logger) {
     if (items.length === 1) {
         const one = items[0];
         try {
-            let buf = one.buf;
-            let mediaType = one.mediaType;
-            if (Math.max(one.w, one.h) > MAX_EDGE) {
-                const img = one.img.clone();
-                const scale = MAX_EDGE / Math.max(one.w, one.h);
-                img.resize({
-                    w: Math.max(1, Math.round(one.w * scale)),
-                    h: Math.max(1, Math.round(one.h * scale)),
-                });
-                buf = await img.getBuffer('image/jpeg', { quality: 88 });
-                mediaType = 'image/jpeg';
-            }
-            const saved = await saveImage(new Uint8Array(buf), mediaType);
-            if (!saved?.attachment)
+            const blocks = await saveSingleAggImage(one);
+            if (!blocks)
                 return [];
             rememberAggSentPaths(key, [one]);
             markAggSent([one]);
             logger?.debug?.(`[图片聚合] 单图直给: ${one.path}`);
-            return [{ type: 'image', attachment: saved.attachment }];
+            return blocks;
         }
         catch (err) {
             logger?.warn?.(`[图片聚合] 单图注入失败: ${err instanceof Error ? err.message : String(err)}`);
             return [];
         }
+    }
+
+    if (items.some((item) => !item.img)) {
+        const blocks = [];
+        const savedItems = [];
+        for (const item of items) {
+            try {
+                const saved = await saveSingleAggImage(item);
+                if (saved) {
+                    blocks.push(...saved);
+                    savedItems.push(item);
+                }
+            }
+            catch (err) {
+                logger?.warn?.(`[图片聚合] 单图注入失败: ${item.path} ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+        if (savedItems.length) {
+            rememberAggSentPaths(key, savedItems);
+            markAggSent(savedItems);
+        }
+        return blocks;
     }
 
     const stitched = await stitchAggImages(items);

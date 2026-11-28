@@ -33,6 +33,7 @@ import { dataRootOf, stickerDirOf } from '../gateway/data-root.js';
 import { ModelResolver } from '../model/model-resolver.js';
 import { IdleEvictor } from './idle-evictor.js';
 import { markTurnAborted } from '../gateway/debounce.js';
+import { resetAggImages } from '../features/image-aggregate.js';
 import { apply as mountChannelTools, readContextPending, clearContextPending, syncChannelScopedTools, ensureExtToolsGlobal, applyExtToolVisibility, instanceTagOfManager, setCtxEnv } from '../channel-tools.js';
 import { createGroupAdmin } from '../api/group-admin.js';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
@@ -82,6 +83,8 @@ export class SessionManager {
     config;
     logger;
     sessions = new Map();
+    creating = new Map();
+    sessionGenerations = new Map();
     evictor;
     modelResolver;
     /** QQ 通道发送能力(由 bootstrap 注入)；仅作为 qqChannel service 暴露给通道工具，不在此注册工具 */
@@ -293,7 +296,7 @@ export class SessionManager {
      * 无活跃记录(会话损坏/重启后没聊过)时不再失败: 轮换 sessionId 直接另起新档。
      * @returns 'forked'=从当前会话 fork 出新档 | 'rotated'=无活跃记录另起全新档 | 'failed'=创建失败
      */
-    async startNewSession(scope, peerId, inherit = false, presetId, fallback) {
+    async startNewSession(scope, peerId, inherit = false, presetId, fallback, signal) {
         const key = this.sessionKey(scope, peerId);
         const record = this.sessions.get(key);
         // 2026-09-11 主人反馈「炸了的会话在 QQ 上没法弃号重开」:
@@ -334,7 +337,7 @@ export class SessionManager {
         //   表现就是"所有会话都换成了某一个会话的模型"。改成优先读实际生效模型(getEffectiveModel)。
         const route = this.getEffectiveModel(scope, peerId)
             ?? this.modelResolver.getEffectiveRoute(key, record.sessionId);
-        const forked = await this.forkCurrentSession(key, record, route, inherit);
+        const forked = await this.forkCurrentSession(key, record, route, inherit, signal);
         if (!forked)
             return 'failed';
         // 顺手记进 override（绑到 fork 后的新 sessionId）—— 不然下次 fork / 重启还会掉回默认
@@ -471,12 +474,14 @@ export class SessionManager {
         }
     }
     /** fork 当前会话 → 新 childId; inherit=true 用旧历史做 seed(切模型), false 全新空档; 失败降级 dispose */
-    async forkCurrentSession(key, record, route, inherit) {
+    async forkCurrentSession(key, record, route, inherit, signal) {
         const sessionsService = this.getSessionsService();
         if (!sessionsService) {
             this.logger.warn(`fork unavailable, keep current session: key=${key}`);
             return false;
         }
+        if (signal?.aborted)
+            return false;
         let seed;
         if (inherit) {
             try {
@@ -488,19 +493,33 @@ export class SessionManager {
             }
         }
         const childId = SessionId(randomUUID());
-        const composed = await this.composePreset(this.effectivePreset(key));
-        const created = await this.agents.create({
-            sessionId: childId,
-            ...(seed ? { seed } : {}),
-            meta: {
-                cwd: absCwdOf(this.config.cwd) || process.cwd(),
-                parentSession: record.sessionId,
-                ...(seed ? { seedLength: seed.length } : {}),
-                ...(composed.agentPreset ? { agentPreset: composed.agentPreset } : {}),
-            },
-            ...(route ? { agentOptions: route } : {}),
-            ...(composed.setup ? { setup: composed.setup } : {}),
-        });
+        let created;
+        try {
+            const composed = await this.composePreset(this.effectivePreset(key));
+            if (signal?.aborted)
+                return false;
+            created = await this.agents.create({
+                sessionId: childId,
+                ...(seed ? { seed } : {}),
+                meta: {
+                    cwd: absCwdOf(this.config.cwd) || process.cwd(),
+                    parentSession: record.sessionId,
+                    ...(seed ? { seedLength: seed.length } : {}),
+                    ...(composed.agentPreset ? { agentPreset: composed.agentPreset } : {}),
+                },
+                ...(route ? { agentOptions: route } : {}),
+                ...(composed.setup ? { setup: composed.setup } : {}),
+            });
+        }
+        catch (err) {
+            this.logger.warn(`fork failed, keep current session: key=${key} err=${err instanceof Error ? err.message : String(err)}`);
+            return false;
+        }
+        if (signal?.aborted) {
+            await created.dispose().catch(() => { });
+            this.logger.warn(`fork aborted, keep current session: key=${key}`);
+            return false;
+        }
         this.modelResolver.setSessionId(key, childId);
         // ★ 2026-11-15（CodeRabbit）：**在 await 之后、替换记录之前**读旧 id。
         //   原来放在函数最开头 —— 但 `forkCurrentSession` 前面有 `agents.create` 这个 await，
@@ -703,6 +722,36 @@ export class SessionManager {
     /** 获取或恢复或创建会话（get → resume → create） */
     async getOrCreate(scope, peerId, senderId, replyTarget, opts) {
         const key = this.sessionKey(scope, peerId);
+        const pending = this.creating.get(key);
+        if (pending && !opts?.forceNew)
+            return pending;
+        const previous = pending ?? Promise.resolve();
+        const requestedGeneration = this.sessionGenerations.get(key) ?? 0;
+        const created = previous.catch(() => { }).then(async () => {
+            if ((this.sessionGenerations.get(key) ?? 0) !== requestedGeneration)
+                throw new Error('session changed during creation');
+            if (opts?.forceNew) {
+                const existing = this.sessions.get(key);
+                if (existing) {
+                    this.sessions.delete(key);
+                    existing.agent.cancel({ kind: 'user' });
+                    await existing.handle.dispose().catch(() => { });
+                }
+            }
+            return this.getOrCreateLocked(scope, peerId, senderId, replyTarget, opts);
+        });
+        this.creating.set(key, created);
+        try {
+            return await created;
+        }
+        finally {
+            if (this.creating.get(key) === created)
+                this.creating.delete(key);
+        }
+    }
+    async getOrCreateLocked(scope, peerId, senderId, replyTarget, opts) {
+        const key = this.sessionKey(scope, peerId);
+        const generation = this.sessionGenerations.get(key) ?? 0;
         const wantCwd = absCwdOf(this.config.cwd) || process.cwd();
         const prevCfg = this.modelResolver.getSessionCfg(key);
         // ── cwd 指纹校验(2026-09-08, 响应上游 issue #43: cwd 改了要能换会话) ──
@@ -721,6 +770,8 @@ export class SessionManager {
                 const route = this.getEffectiveModel(scope, peerId)
                     ?? this.modelResolver.getEffectiveRoute(key, active.sessionId);
                 await this.forkCurrentSession(key, active, route, true);
+                if ((this.sessionGenerations.get(key) ?? 0) !== generation)
+                    throw new Error('session changed during creation');
                 active.replyTarget = replyTarget;
                 active.lastActivity = Date.now();
                 return active;
@@ -756,6 +807,8 @@ export class SessionManager {
                 }
             }
             catch { /* 加载失败不影响复用会话 */ }
+            if ((this.sessionGenerations.get(key) ?? 0) !== generation)
+                throw new Error('session changed during creation');
             return existing;
         }
         // 2026-09-11 主人反馈「炸了的会话在 QQ 上没法弃号重开」: 磁盘会话损坏(历史加载失败)时
@@ -883,6 +936,10 @@ export class SessionManager {
                     catch { /* ignore */ }
                 }
             }
+        }
+        if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
+            await handle?.dispose().catch(() => { });
+            throw new Error('session changed during creation');
         }
         // ★ 2026-11-15（CodeRabbit）：**新档确实建成功了，这时才归档旧档**。
         //   放在 forceNew 分支里原来是"先归档再创建"——若 resume/create 全失败，
@@ -2188,15 +2245,16 @@ export class SessionManager {
                 if (this.config.sessionKindHint !== false && _kindParts) {
                     const KIND = 'qqbot:session-kind';
                     const sessionId = String(agent?.session?.id ?? '');
-                    if (sessionId && needsSessionKindInjection(sessionId)) {
-                        const info = describeSessionKind(dataRootOf(this.config), String(this.config.appId ?? ''), _kindParts.scope, _kindParts.peerId, recMemo ? recMemo.peerName : undefined);
+                    const kindDataRoot = dataRootOf(this.config);
+                    if (sessionId && needsSessionKindInjection(kindDataRoot, sessionId)) {
+                        const info = describeSessionKind(kindDataRoot, String(this.config.appId ?? ''), _kindParts.scope, _kindParts.peerId, recMemo ? recMemo.peerName : undefined);
                         extraAll.push({
                             role: 'user',
                             id: randomUUID(),
                             content: [{ type: 'text', text: `<system-reminder>` + String.fromCharCode(10) + buildSessionKindHint(info) + String.fromCharCode(10) + `</system-reminder>` }],
                             source: { kind: KIND, form: 'instructions', ns },
                         });
-                        markSessionKindInjected(sessionId);
+                        markSessionKindInjected(kindDataRoot, sessionId);
                         this.logger?.info?.(`[会话类型] 注入 kind=${info.kind}${info.name ? ` name=「${info.name}」` : ' name=(未取到)'} key=${_kindKey}`);
                     }
                 }
@@ -2325,6 +2383,9 @@ export class SessionManager {
     findByPeer(scope, peerId) {
         return this.sessions.get(this.sessionKey(scope, peerId));
     }
+    isActiveRecord(record) {
+        return !!record?.sessionKey && this.sessions.get(record.sessionKey) === record;
+    }
     /**
      * 定时/主动注入: 向某会话塞一条新消息(像收到新消息, AI 带上下文处理并回复到 QQ)。
      * 会话当前不在(被回收/未建立)→ 返回 false, 由调用方决定(计数/跳过)。
@@ -2358,11 +2419,34 @@ export class SessionManager {
             return false;
         }
     }
+    async reset(scope, peerId) {
+        const key = this.sessionKey(scope, peerId);
+        this.sessionGenerations.set(key, (this.sessionGenerations.get(key) ?? 0) + 1);
+        this.creating.delete(key);
+        const record = this.sessions.get(key);
+        const previousSessionId = String(record?.sessionId ?? this.currentSessionId(key) ?? '');
+        const nextSessionId = SessionId(randomUUID());
+        this.modelResolver.setSessionId(key, nextSessionId);
+        this.modelResolver.setSessionCfg(key, { cwd: absCwdOf(this.config.cwd) || process.cwd() });
+        this.sessions.delete(key);
+        resetAggImages(`${scope}:${peerId}`);
+        if (record) {
+            record.agent.cancel({ kind: 'user' });
+            await record.handle.dispose().catch(() => { });
+        }
+        if (previousSessionId && previousSessionId !== nextSessionId && this.config.archiveOnNewSession !== false)
+            void archiveSessionDurably(this.ctx, previousSessionId, this.logger);
+        this.logger.info(`session reset: key=${key} old=${previousSessionId} next=${nextSessionId}`);
+    }
     async remove(scope, peerId) {
         const key = this.sessionKey(scope, peerId);
+        this.sessionGenerations.set(key, (this.sessionGenerations.get(key) ?? 0) + 1);
+        this.creating.delete(key);
         const record = this.sessions.get(key);
-        if (!record)
+        if (!record) {
+            this.modelResolver.clearSessionId(key);
             return;
+        }
         this.sessions.delete(key);
         this.modelResolver.clearSessionId(key);
         record.agent.cancel({ kind: 'user' });
@@ -2372,6 +2456,10 @@ export class SessionManager {
     async disposeAll() {
         this.evictor.dispose();
         const records = [...this.sessions.values()];
+        const keys = new Set([...this.sessions.keys(), ...this.creating.keys()]);
+        for (const key of keys)
+            this.sessionGenerations.set(key, (this.sessionGenerations.get(key) ?? 0) + 1);
+        this.creating.clear();
         this.sessions.clear();
         for (const record of records) {
             record.agent.cancel({ kind: 'user' });

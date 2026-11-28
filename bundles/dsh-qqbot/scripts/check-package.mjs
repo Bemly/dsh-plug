@@ -34,11 +34,9 @@ function walk(dir) {
 
 for (const file of walk(join(root, 'dist'))) {
     const source = readFileSync(file, 'utf8');
-    const pattern = /(?:import|export)\s+type\s+(?:\{[^}]*\}|[^;]+?)\s+from\s+['"]([^'"]+)['"]/g;
+    const pattern = /['"](\.{1,2}\/[^'"]+)['"]/g;
     for (const match of source.matchAll(pattern)) {
         const spec = match[1];
-        if (!spec.startsWith('.'))
-            continue;
         const target = resolve(dirname(file), spec.replace(/\.js$/, '.d.ts'));
         if (!existsSync(target))
             throw new Error(`missing type target: ${relative(root, target)} referenced by ${relative(root, file)}`);

@@ -52,6 +52,7 @@ export declare function pendingAggImages(key: string): AggImage[];
 export declare function markAggSent(items: AggImage[]): void;
 export declare function rememberAggSentPaths(key: string, items: Array<AggImage | string>): void;
 export declare function clearAggImages(key: string): void;
+export declare function resetAggImages(key: string): void;
 
 export declare function stitchAggImages(items: AggImage[]): Promise<{
     data: Uint8Array;

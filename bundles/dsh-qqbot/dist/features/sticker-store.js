@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, rmSync, statSync, readdirSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
 import * as dns from 'node:dns';
+import { Jimp } from 'jimp';
 /**
  * 从 QQ 图片/文件 URL 里抠出**稳定的 fileid**(2026-09-13 主人定, 解决"老是重复收藏"):
  * QQ 多媒体 URL 形如
@@ -34,36 +35,22 @@ export function extractQqFileId(input) {
  * 感知哈希 dHash(2026-09-13 主人定"又快又准"的图片去重):
  *   图片 → 缩成 9×8 灰度 → 逐行比较相邻像素明暗 → 64 位指纹(16 位 hex)。
  * 看的是**画面结构**而不是字节 → QQ 重压缩/改尺寸/转格式过的同一张图也能认出来。
- * 复用**宿主已装的 sharp**(零新增依赖); sharp 不可用 → 返回 undefined(调用方退化为逐字节 sha1 判重)。
- *
- * ⚠️ 2026-09-13 修(主人报启动刷屏 GLib-GObject-CRITICAL "value 32 ... property 'space' of type
- *    VipsInterpretation"): 根因是调了 sharp 的 `.grayscale()` —— 它会让 libvips 去设
- *    image.space=b-w, 某些 libvips/shar​p 版本组合下这个赋值触发 GLib critical 警告(不影响结果, 但刷屏)。
- *    改为 `.raw()` 直接拿 RGB 原始像素, **自己按亮度公式算灰度**(Y=0.299R+0.587G+0.114B),
- *    既绕开那次色彩空间赋值, 也少一步内部转换。同时设 VIPS_WARNING=0 兜底抑制 libvips 的非致命告警。
+ * 与聚合共用插件正式依赖 Jimp，不依赖宿主是否额外安装 sharp。
  */
 export async function computeDHash(buf) {
-    // 应急开关(2026-09-13 主人踩过 sharp 拖挂宿主): 设 DSH_QQBOT_NODHASH=1 即可彻底停用 dHash 计算,
-    // 去重自动退化为逐字节 sha1(库里已有 dhash 的老记录不受影响)。启动前设一次即可, 不改任何配置。
+    // 应急开关：设 DSH_QQBOT_NODHASH=1 即可彻底停用 dHash 计算。
     if (process.env.DSH_QQBOT_NODHASH === '1')
         return undefined;
     try {
-        if (!process.env.VIPS_WARNING)
-            process.env.VIPS_WARNING = '0'; // 抑制 libvips 非致命告警刷屏
-        const mod = (await import('sharp'));
-        const sharp = (mod.default ?? mod);
-        const out = await sharp(buf).resize(9, 8, { fit: 'fill' }).raw()
-            .toBuffer({ resolveWithObject: true });
-        const data = out?.data;
-        const ch = out?.info?.channels ?? 3;
-        if (!data || data.length < 9 * 8)
+        const img = await Jimp.read(buf);
+        img.resize({ w: 9, h: 8 });
+        const data = img.bitmap.data;
+        const ch = 4;
+        if (!data || data.length < 9 * 8 * ch)
             return undefined;
-        // 自己算灰度(不调 grayscale(), 避开那条 GLib 警告)
         const gray = (i) => {
             const o = i * ch;
-            if (ch >= 3)
-                return 0.299 * (data[o] ?? 0) + 0.587 * (data[o + 1] ?? 0) + 0.114 * (data[o + 2] ?? 0);
-            return data[o] ?? 0;
+            return 0.299 * (data[o] ?? 0) + 0.587 * (data[o + 1] ?? 0) + 0.114 * (data[o + 2] ?? 0);
         };
         let bits = '';
         for (let y = 0; y < 8; y++) {

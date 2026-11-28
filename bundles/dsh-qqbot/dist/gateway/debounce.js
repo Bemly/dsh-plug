@@ -261,7 +261,7 @@ injectRules) {
         rec.__interjectSkip = 'no-agent';
         return false;
     }
-    if (typeof a.inject !== 'function') {
+    if (typeof a.inject !== 'function' && typeof a.steer !== 'function') {
         rec.__interjectSkip = 'no-inject';
         return false;
     }
@@ -364,6 +364,7 @@ export function injectSynthetic(scope, peerId, text, opts, owner) {
 }
 export function debounceLayer(config, manager, logger, cooldownAt) {
     const windows = new Map();
+    const dispatchChains = new Map();
     /**
      * 调试日志（排查"插话退化成排队"）：
      *  开关 = 设置项 `behavior.debounce.debug`（热更生效，改设置即开即用），
@@ -410,6 +411,39 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
             w.timer = null;
         }
     }
+    function scheduleFlush(key, w, delayMs) {
+        clearTimer(w);
+        w.timer = setTimeout(() => void flush(key, w), Math.max(0, delayMs));
+        w.timer.unref?.();
+    }
+    function restoreBatch(key, w, delayMs) {
+        const current = windows.get(key);
+        if (current && current !== w) {
+            w.entries.push(...current.entries);
+            if (current.quoteByMsg)
+                w.quoteByMsg = new Map([...(w.quoteByMsg ?? []), ...current.quoteByMsg]);
+            if (current.quote)
+                w.quote = current.quote;
+            clearTimer(current);
+        }
+        windows.set(key, w);
+        scheduleFlush(key, w, delayMs);
+    }
+    function enqueueDispatch(key, w, task) {
+        const previous = dispatchChains.get(key) ?? Promise.resolve();
+        const run = previous.catch(() => { }).then(() => {
+            if (windows.get(key) !== w)
+                return;
+            return task();
+        });
+        dispatchChains.set(key, run);
+        const done = () => {
+            if (dispatchChains.get(key) === run)
+                dispatchChains.delete(key);
+        };
+        void run.then(done, done);
+        return run;
+    }
     /** 尝试派发一批(窗口内全部消息 → AI 一次综合回复)。
      *  群普通(无@)受 60s 冷却约束: 未过冷却 → 窗口保留、重排计时器, 冷却结束再整批按时间序派发。
      *  @ 消息(窗口含@)/私聊: 随时派发。 */
@@ -418,26 +452,24 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
             return;
         w.flushing = true;
         try {
-            await flushLocked(key, w);
+            await enqueueDispatch(key, w, () => flushLocked(key, w));
         }
         finally {
             w.flushing = false;
         }
     }
     async function flushLocked(key, w) {
+        clearTimer(w);
+        if (windows.get(key) !== w)
+            return;
+        windows.delete(key);
         const pre = w.entries;
         dbg(`flush 进入 key=${key} n=${pre.length} dbgOn=${dbgEnabled()}`);
-        if (pre.length === 0) {
-            clearTimer(w);
-            windows.delete(key);
+        if (pre.length === 0)
             return;
-        }
         const f0 = pre[0];
-        if (!f0) {
-            clearTimer(w);
-            windows.delete(key);
+        if (!f0)
             return;
-        }
         const fKind = String(f0.msg.kind ?? '');
         const hasMention = pre.some(e => e.wasMentioned);
         // ★ 2026-10-12：窗口里只要有一条被**入站扩展强制入站**（`ctx.forceWake()`），
@@ -490,7 +522,6 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                             imageHint: config.imageHint !== false,
                         })) {
                             clearTimer(w);
-                            windows.delete(key);
                             // 与正常派发同款: 清群历史缓存 —— 免得这批消息这轮插过、下轮又被当 [历史] 打包一遍
                             if (fKind === 'group') {
                                 try {
@@ -511,9 +542,7 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                     const waitedMs = Date.now() - since;
                     if (waitedMs < BUSY_MAX_WAIT_MS) {
                         w.turnDeferred = true; // 本次窗口因回合忙被 defer → 派发时带系统时间提示
-                        clearTimer(w);
-                        w.timer = setTimeout(() => void flush(key, w), 800); // 回合中: 800ms 后重查(等到回合结束或超时)
-                        w.timer.unref?.();
+                        restoreBatch(key, w, 800);
                         dbg(`flush 回合忙 defer(等 turn/end, 已等 ${Math.round(waitedMs / 1000)}s) key=${key} n=${pre.length}`);
                         return; // 窗口保留, 不派发
                     }
@@ -537,18 +566,14 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                 const lastAt = cooldownAt.get(gid) ?? 0;
                 const passedMs = nowMs - lastAt;
                 if (passedMs < freeSec * 1000) {
-                    clearTimer(w);
                     const retryMs = Math.max(500, freeSec * 1000 - passedMs);
-                    w.timer = setTimeout(() => void flush(key, w), retryMs);
-                    w.timer.unref?.();
+                    restoreBatch(key, w, retryMs);
                     dbg(`flush 冷却中 defer ${Math.round(retryMs / 1000)}s key=${key} n=${pre.length}`);
                     return; // 窗口保留, 不派发
                 }
             }
         }
-        clearTimer(w);
-        windows.delete(key);
-        const entries = w.entries;
+        const entries = pre;
         if (entries.length === 0)
             return;
         // QQ 官方推送可能乱序: 派发前统一按服务器时间戳升序排(旧→新)

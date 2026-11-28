@@ -403,25 +403,35 @@ export class OutboundBuffer {
         if (this.flushing || !this.buffer.trim())
             return;
         this.flushing = true;
+        const consume = (sent) => {
+            if (this.buffer.startsWith(sent))
+                this.buffer = this.buffer.slice(sent.length);
+        };
         try {
-            if (this.writer) {
-                await this.writer.finish();
-                // 流式成功（未降级）→ 直接返回
-                if (!this.writer.shouldFallback)
-                    return;
+            while (this.buffer.trim()) {
+                const pending = this.buffer;
+                if (this.writer && !this.writer.finished) {
+                    await this.writer.finish();
+                    if (!this.writer.shouldFallback) {
+                        consume(pending);
+                        continue;
+                    }
+                }
+                // 降级：静态发送（writer 不存在 or 流式失败）→ 富媒体感知发送
+                // ★ 2026-11-19 issue #72：这条路径**不经** OutboundRouter.send()，必须自己洗一遍。
+                const outText = this.stripFn ? this.stripFn(pending) : pending;
+                if (!outText.trim()) {
+                    consume(pending);
+                    continue;
+                }
+                await sendRichOutbound(this.bot, this.record.replyTarget, outText, this.limit, this.cwd, (m) => this.logger.error(m), this.resolveTarget, this.chunkTarget, this.onBlockSent, this.refLookup, undefined, { source: 'assistant/message', ...(this.extCaps ?? {}) });
+                consume(pending);
             }
-            // 降级：静态发送（writer 不存在 or 流式失败）→ 富媒体感知发送
-            // ★ 2026-11-19 issue #72：这条路径**不经** OutboundRouter.send()，必须自己洗一遍。
-            const outText = this.stripFn ? this.stripFn(this.buffer) : this.buffer;
-            if (!outText.trim())
-                return; // 洗完全是空（只剩时间头/占位符）→ 这条不发
-            await sendRichOutbound(this.bot, this.record.replyTarget, outText, this.limit, this.cwd, (m) => this.logger.error(m), this.resolveTarget, this.chunkTarget, this.onBlockSent, this.refLookup, undefined, { source: 'assistant/message', ...(this.extCaps ?? {}) });
         }
         catch (err) {
             this.logger.error(`im-qqbot: flush failed: ${err instanceof Error ? err.message : String(err)}`);
         }
         finally {
-            this.buffer = '';
             this.flushing = false;
         }
     }

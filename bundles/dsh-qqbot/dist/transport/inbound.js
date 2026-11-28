@@ -244,6 +244,8 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
             //   主人连发 4 张图，QQ/中间件把它们并成**一条**入站 —— `msg.attachments` 只带最后那张，
             //   前 3 张只剩 `[图片: xxx]` 躺在 history 里 ⇒ 不补录就永远只拼到 1 张。
             //   历史条目自己带 senderName，逐张按原主分别记。
+            const _historyRefs = [];
+            const _historyUrls = [];
             for (const _h of (mwState.history ?? [])) {
                 if (!_h.content || _h.messageId === msg.messageId)
                     continue;
@@ -255,10 +257,32 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                 while ((_m = _re.exec(_txt))) {
                     const _raw = _m[1].trim();
                     const _by = String(_h.senderName || _h.senderId || _aggSender);
-                    if (/^https?:\/\//i.test(_raw))
-                        _add(resolveImageLocalPath(_raw, _stickerDir), _by, _raw);
-                    else
-                        _add(_raw, _by);
+                    const _local = /^https?:\/\//i.test(_raw)
+                        ? resolveImageLocalPath(_raw, _stickerDir)
+                        : _raw;
+                    _historyRefs.push({ raw: _raw, by: _by, local: _local });
+                    if (!_local && /^https?:\/\//i.test(_raw) && !_historyUrls.includes(_raw))
+                        _historyUrls.push(_raw);
+                }
+            }
+            if (_historyUrls.length > 0) {
+                const _historyFake = _historyUrls.map((u, i) => ({ url: u, content_type: 'image/jpeg', filename: `history-img-${i}.jpg` }));
+                const _historyGot = await prepareImagesForDispatch(_historyFake, msg, config, logger);
+                const _historyPaths = new Map();
+                for (let i = 0; i < _historyUrls.length; i++) {
+                    if (_historyGot[i])
+                        _historyPaths.set(_historyUrls[i], _historyGot[i]);
+                }
+                for (const ref of _historyRefs) {
+                    const _p = ref.local ?? _historyPaths.get(ref.raw);
+                    if (_p)
+                        _add(_p, ref.by, /^https?:\/\//i.test(ref.raw) ? ref.raw : '');
+                }
+            }
+            else {
+                for (const ref of _historyRefs) {
+                    if (ref.local)
+                        _add(ref.local, ref.by, /^https?:\/\//i.test(ref.raw) ? ref.raw : '');
                 }
             }
             // 再录本条消息自己的图
@@ -468,6 +492,10 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
     }
     catch (err) {
         logger.debug(`ensureGroupRules error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!manager.isActiveRecord(record)) {
+        logger.debug(`会话已失效，停止本条入站: scope=${scope} peerId=${peerId}`);
+        return;
     }
     // ── 构建 UserMessage → followup / (nothink) append 不唤醒 ──
     // ⚠️ 2026-09-13 修(主人问"你看到了吗"): 图片预检提示是在**下面的评分段**才追加到 agentBody 的,
@@ -1121,7 +1149,7 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
     //   ② 还没 followup（能改 message）。nothink / 低分 append 那几条路都不碰 ——
     //   它们没唤醒，塞图纯属白烧 token。
     try {
-        if (config.imageAggregate?.enabled === true) {
+        if (config.imageAggregate?.enabled === true && manager.isActiveRecord(record)) {
             const aggBlocks = await buildAggregateBlocks(`${scope}:${peerId}`, record.agent, logger);
             if (aggBlocks && aggBlocks.length > 0) {
                 const prev = message.content ?? content;
@@ -1142,6 +1170,10 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
         });
     }
     catch { /* ignore */ }
+    if (!manager.isActiveRecord(record)) {
+        logger.debug(`会话已失效，不投递 followup: scope=${scope} peerId=${peerId}`);
+        return;
+    }
     record.agent.followup(message);
     logger.debug(`→ followup sent: key=${scope}:${peerId}`);
     // 群消息回复后清空历史缓存（避免下次 @ 时重复组包，对齐 openclaw-qqbot dispatch）

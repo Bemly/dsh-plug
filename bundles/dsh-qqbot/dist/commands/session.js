@@ -52,20 +52,32 @@ function targetOf(cmdCtx) {
 /** `/bot-new` fork 超时：宿主卡住时 startNewSession 可能长时间不返回 → QQ 侧永远等不到回复。 */
 const FORK_TIMEOUT_MS = Math.max(1000, Number(process.env.QQBOT_FORK_TIMEOUT_MS) || 20_000);
 /** 超时返回哨兵字符串 'timeout'（不抛）——让用户拿到人话而不是异常。 */
-function forkWithTimeout(promise) {
-    return Promise.race([
-        promise,
-        new Promise((resolve) => setTimeout(() => resolve('timeout'), FORK_TIMEOUT_MS)),
-    ]);
+async function forkWithTimeout(run) {
+    const controller = new AbortController();
+    let timer;
+    try {
+        return await Promise.race([
+            run(controller.signal),
+            new Promise((resolve) => {
+                timer = setTimeout(() => {
+                    controller.abort();
+                    resolve('timeout');
+                }, FORK_TIMEOUT_MS);
+            }),
+        ]);
+    }
+    finally {
+        clearTimeout(timer);
+    }
 }
 /** /bot-reset /bot-clear — 重置当前会话 */
 export function resetCommand({ manager }) {
     return {
         name: ['bot-reset', 'bot-clear'],
         description: '重置当前会话（清除上下文）',
-        handler: (cmdCtx) => {
+        handler: async (cmdCtx) => {
             const { scope, peerId } = scopePeerOf(cmdCtx);
-            void manager.remove(scope, peerId);
+            await manager.reset(scope, peerId);
             return '会话已重置 ✓';
         },
     };
@@ -80,7 +92,7 @@ export function newCommand({ manager }) {
         handler: async (cmdCtx) => {
             const { scope, peerId } = scopePeerOf(cmdCtx);
             const { target, triggererId } = targetOf(cmdCtx);
-            const r = await forkWithTimeout(manager.startNewSession(scope, peerId, false, undefined, { replyTarget: target, senderId: triggererId }));
+            const r = await forkWithTimeout((signal) => manager.startNewSession(scope, peerId, false, undefined, { replyTarget: target, senderId: triggererId }, signal));
             if (r === 'timeout')
                 return '开新会话超时（宿主可能卡住），请稍后再试或先随便聊一句再 /bot-new';
             if (r === 'forked')

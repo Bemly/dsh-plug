@@ -67,3 +67,8 @@ git diff --cached | grep -nE 'sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|npm_[A-Za-z
 - `qqbot:session-kind` 每个 sessionId 整个会话只注入一次并持久化，不做内容比较。
 - 公开 `.d.ts` 引用的类型文件必须存在；`build/test/check:package` 脚本必须可执行。
 - Jimp 是插件正式依赖，使用静态导入；缺依赖应在安装或启动时直接暴露。
+- dHash 也必须使用随包 Jimp，不能静默依赖宿主 `sharp`。
+- debounce 同一 key 必须串行派发；批次摘出后等待期间的新消息要保留在新窗口，不能被旧批次删除。
+- `/bot-reset` 必须轮换 sessionId，禁止 resume 原持久化上下文。
+- 聚合构建按会话串行；不支持解码的 raw 单图不得永久阻塞后续多图。
+- 极端宽高比图片先补白再进入 uvpack，渲染统一等比 contain；不得改切分树、模拟退火、token 预算和编号规则。

@@ -29,8 +29,30 @@ setImageAggregateHooks({
     }),
 });
 
-async function makePng(path, width = 32, height = 32, color = 0xffffffff) {
+async function makePng(path, width = 32, height = 32, color = 0xffffffff, pattern = '') {
     const img = new Jimp({ width, height, color });
+    if (pattern === 'vertical') {
+        for (let y = 0; y < height; y++)
+            for (let x = 0; x < Math.floor(width / 2); x++)
+                img.setPixelColor(0x000000ff, x, y);
+    }
+    else if (pattern === 'horizontal') {
+        for (let y = 0; y < Math.floor(height / 2); y++)
+            for (let x = 0; x < width; x++)
+                img.setPixelColor(0x000000ff, x, y);
+    }
+    else if (pattern === 'checker') {
+        for (let y = 0; y < height; y++)
+            for (let x = 0; x < width; x++)
+                if ((x + y) % 2 === 0)
+                    img.setPixelColor(0x000000ff, x, y);
+    }
+    else if (pattern === 'diagonal') {
+        for (let y = 0; y < height; y++)
+            for (let x = 0; x < width; x++)
+                if (x === y)
+                    img.setPixelColor(0x000000ff, x, y);
+    }
     const buf = await img.getBuffer('image/png');
     await writeFile(path, buf);
 }
@@ -143,8 +165,8 @@ test('多图聚合保持预解码顺序且不再读盘', async () => {
     const second = join(dir, 'second.png');
     const key = `test:${dir}`;
     try {
-        await makePng(first, 64, 32);
-        await makePng(second, 32, 64, 0xff0000ff);
+        await makePng(first, 64, 32, 0xffffffff, 'checker');
+        await makePng(second, 32, 64, 0xff0000ff, 'diagonal');
         const prepared = await prepareAggregateImages([
             { path: first, sender: 'a' },
             { path: second, sender: 'b' },

@@ -34,10 +34,12 @@ export async function renderCompositeBuffer(
     for (const p of placements) {
         const src = jimpImgs[p.idx];
         const im = src.clone();
-        if (im.bitmap.width !== p.w || im.bitmap.height !== p.h) {
-            im.resize({ w: p.w, h: p.h });
-        }
-        canvas.composite(im, p.x, p.y);
+        const scale = Math.min(p.w / im.bitmap.width, p.h / im.bitmap.height);
+        const w = Math.max(1, Math.min(p.w, Math.round(im.bitmap.width * scale)));
+        const h = Math.max(1, Math.min(p.h, Math.round(im.bitmap.height * scale)));
+        if (im.bitmap.width !== w || im.bitmap.height !== h)
+            im.resize({ w, h });
+        canvas.composite(im, p.x + Math.floor((p.w - w) / 2), p.y + Math.floor((p.h - h) / 2));
 
         if (label) {
             const text = String(p.idx + 1);

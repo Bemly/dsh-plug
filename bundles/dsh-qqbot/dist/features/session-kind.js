@@ -16,7 +16,7 @@
  * （`source.kind = 'qqbot:session-kind'`；带 `qqbot:` 前缀是维护手册 §11.21 的硬要求，
  * 否则 dock 聊天视图会把注入内容当成对方说的话）。不拼进真实用户消息的 content。
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 /** 群名缓存：gid → name */
 const groupNameCache = new Map();
@@ -27,42 +27,72 @@ const botKey = (botId) => (String(botId || '').trim() || '_') + '|';
 const userNameCache = new Map();
 /** 在途请求（避免同一目标并发打点） */
 const inflight = new Set();
-const injectedSessions = new Set();
-let injectedFile = '';
+const injectedRegistries = new Map();
 
-export function initSessionKindRegistry(dataRoot) {
+function registryFile(dataRoot) {
+    return join(dataRoot, '.qqbot', 'session-kind-injected.json');
+}
+
+function registryOf(dataRoot, create = true) {
+    if (!dataRoot)
+        return undefined;
+    const file = registryFile(dataRoot);
+    const cached = injectedRegistries.get(file);
+    if (cached) {
+        if (cached.dirty)
+            persistRegistry(file, cached);
+        return cached;
+    }
+    if (!create)
+        return undefined;
+    const registry = { file, sessions: new Set(), dirty: false };
+    injectedRegistries.set(file, registry);
     try {
-        if (!dataRoot)
-            return;
-        injectedFile = join(dataRoot, '.qqbot', 'session-kind-injected.json');
-        if (!existsSync(injectedFile))
-            return;
-        const arr = JSON.parse(readFileSync(injectedFile, 'utf8'));
-        if (Array.isArray(arr)) {
-            for (const id of arr) {
-                if (typeof id === 'string' && id)
-                    injectedSessions.add(id);
+        if (existsSync(file)) {
+            const arr = JSON.parse(readFileSync(file, 'utf8'));
+            if (Array.isArray(arr)) {
+                for (const id of arr) {
+                    if (typeof id === 'string' && id)
+                        registry.sessions.add(id);
+                }
             }
         }
     }
     catch { /* 台账坏了就当空 */ }
+    return registry;
 }
 
-export function needsSessionKindInjection(sessionId) {
-    return !!sessionId && !injectedSessions.has(sessionId);
-}
-
-export function markSessionKindInjected(sessionId) {
-    if (!sessionId || injectedSessions.has(sessionId))
-        return;
-    injectedSessions.add(sessionId);
-    if (!injectedFile)
-        return;
+function persistRegistry(file, registry) {
     try {
-        mkdirSync(dirname(injectedFile), { recursive: true });
-        writeFileSync(injectedFile, JSON.stringify([...injectedSessions]), 'utf8');
+        mkdirSync(dirname(file), { recursive: true });
+        const tmp = `${file}.${process.pid}.tmp`;
+        writeFileSync(tmp, JSON.stringify([...registry.sessions]), 'utf8');
+        renameSync(tmp, file);
+        registry.dirty = false;
+        return true;
     }
-    catch { /* 持久化失败不影响本次注入 */ }
+    catch {
+        registry.dirty = true;
+        return false;
+    }
+}
+
+export function initSessionKindRegistry(dataRoot) {
+    registryOf(dataRoot);
+}
+
+export function needsSessionKindInjection(dataRoot, sessionId) {
+    const registry = registryOf(dataRoot);
+    return !!sessionId && !!registry && !registry.sessions.has(sessionId);
+}
+
+export function markSessionKindInjected(dataRoot, sessionId) {
+    const registry = registryOf(dataRoot);
+    if (!sessionId || !registry || registry.sessions.has(sessionId))
+        return;
+    registry.sessions.add(sessionId);
+    registry.dirty = true;
+    persistRegistry(registry.file, registry);
 }
 /** 成功缓存 30 分钟（群名/用户名很少变）；失败只缓存 60 秒，别把一次失败钉死 */
 const TTL_OK_MS = 30 * 60 * 1000;

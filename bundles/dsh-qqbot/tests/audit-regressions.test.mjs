@@ -29,7 +29,9 @@ test('合并转发下载保留四轮进阶且不再有120秒 race', async () => 
 test('debounce flush 有并发锁', async () => {
     const source = await readFile(new URL('../dist/gateway/debounce.js', import.meta.url), 'utf8');
     assert.ok(source.includes('if (w.flushing)'));
-    assert.ok(source.includes('await flushLocked(key, w)'));
+    assert.ok(source.includes('enqueueDispatch(key, w, () => flushLocked(key, w))'));
+    assert.ok(source.includes('dispatchChains'));
+    assert.ok(source.includes('windows.delete(key);\n        const pre = w.entries;'));
     assert.ok(source.includes('w.flushing = false'));
 });
 

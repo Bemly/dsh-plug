@@ -70,6 +70,6 @@ export declare function describeSessionKind(dataRoot: string, botId: string, sco
  */
 export declare function buildSessionKindHint(info: SessionKindInfo): string;
 export declare function initSessionKindRegistry(dataRoot: string): void;
-export declare function needsSessionKindInjection(sessionId: string): boolean;
-export declare function markSessionKindInjected(sessionId: string): void;
+export declare function needsSessionKindInjection(dataRoot: string, sessionId: string): boolean;
+export declare function markSessionKindInjected(dataRoot: string, sessionId: string): void;
 //# sourceMappingURL=session-kind.d.ts.map

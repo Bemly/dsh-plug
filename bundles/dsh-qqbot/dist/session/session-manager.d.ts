@@ -13,6 +13,8 @@ export declare class SessionManager {
     private sessions;
     private readonly evictor;
     private readonly modelResolver;
+    private creating;
+    private sessionGenerations;
     /** QQ 通道发送能力(由 bootstrap 注入)；仅作为 qqChannel service 暴露给通道工具，不在此注册工具 */
     private channelSender;
     /** 最近一次 setup 收到的 agent ctx(工具自愈用；getOrCreate 完成后读走并清空) */
@@ -91,7 +93,7 @@ export declare class SessionManager {
     startNewSession(scope: ChatScope, peerId: string, inherit?: boolean, presetId?: string, fallback?: {
         replyTarget?: ReplyTarget;
         senderId?: string;
-    }): Promise<'forked' | 'rotated' | 'failed'>;
+    }, signal?: AbortSignal): Promise<'forked' | 'rotated' | 'failed'>;
     /** 当前会话生效 preset: 会话覆盖(/new 指定) > config.preset */
     private effectivePreset;
     /** 当前会话实际生效的人格(展示用): 会话记录 agentPreset(已挂载) > effectivePreset */
@@ -144,6 +146,7 @@ export declare class SessionManager {
     getOrCreate(scope: ChatScope, peerId: string, senderId: string, replyTarget: ReplyTarget, opts?: {
         forceNew?: boolean;
     }): Promise<SessionRecord>;
+    private getOrCreateLocked;
     /**
      * 2026-09-11: 把 QQ 侧 override 路由应用到 agent.options。
      * 仅当 QQ 侧 /bot-model 明确设过 override 时调用(QQ 设置优先, 持久生效);
@@ -272,11 +275,13 @@ export declare class SessionManager {
     findByAgent(agent: DshAgent): SessionRecord | undefined;
     /** 按会话键找活跃会话(group/c2c); 无则 undefined(会话被回收/未建立) */
     findByPeer(scope: ChatScope, peerId: string): SessionRecord | undefined;
+    isActiveRecord(record: SessionRecord): boolean;
     /**
      * 定时/主动注入: 向某会话塞一条新消息(像收到新消息, AI 带上下文处理并回复到 QQ)。
      * 会话当前不在(被回收/未建立)→ 返回 false, 由调用方决定(计数/跳过)。
      */
     injectToPeer(scope: ChatScope, peerId: string, text: string, sourceKind?: string): Promise<boolean>;
+    reset(scope: ChatScope, peerId: string): Promise<void>;
     remove(scope: ChatScope, peerId: string): Promise<void>;
     disposeAll(): Promise<void>;
     get size(): number;

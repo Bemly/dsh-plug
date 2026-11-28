@@ -11,13 +11,7 @@ export declare function extractQqFileId(input: string): string;
  * 感知哈希 dHash(2026-09-13 主人定"又快又准"的图片去重):
  *   图片 → 缩成 9×8 灰度 → 逐行比较相邻像素明暗 → 64 位指纹(16 位 hex)。
  * 看的是**画面结构**而不是字节 → QQ 重压缩/改尺寸/转格式过的同一张图也能认出来。
- * 复用**宿主已装的 sharp**(零新增依赖); sharp 不可用 → 返回 undefined(调用方退化为逐字节 sha1 判重)。
- *
- * ⚠️ 2026-09-13 修(主人报启动刷屏 GLib-GObject-CRITICAL "value 32 ... property 'space' of type
- *    VipsInterpretation"): 根因是调了 sharp 的 `.grayscale()` —— 它会让 libvips 去设
- *    image.space=b-w, 某些 libvips/shar​p 版本组合下这个赋值触发 GLib critical 警告(不影响结果, 但刷屏)。
- *    改为 `.raw()` 直接拿 RGB 原始像素, **自己按亮度公式算灰度**(Y=0.299R+0.587G+0.114B),
- *    既绕开那次色彩空间赋值, 也少一步内部转换。同时设 VIPS_WARNING=0 兜底抑制 libvips 的非致命告警。
+ * 与聚合共用插件正式依赖 Jimp，不依赖宿主额外安装 sharp。
  */
 export declare function computeDHash(buf: Buffer): Promise<string | undefined>;
 /** 两个 dHash 的汉明距离(0~64); 任一为空或长度不等 → 999(视为完全不同) */
