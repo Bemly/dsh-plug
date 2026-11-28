@@ -4,29 +4,32 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { Jimp, loadFont } from 'jimp';
-import { SANS_16_WHITE, SANS_32_WHITE } from 'jimp/fonts';
 
 let font16Promise = null;
 let font32Promise = null;
 
-function getFonts() {
+async function getFonts() {
+    const [{ loadFont }, { SANS_16_WHITE, SANS_32_WHITE }] = await Promise.all([
+        import('jimp'),
+        import('jimp/fonts'),
+    ]);
     if (!font16Promise) font16Promise = loadFont(SANS_16_WHITE);
     if (!font32Promise) font32Promise = loadFont(SANS_32_WHITE);
     return Promise.all([font16Promise, font32Promise]);
 }
 
 /**
- * 渲染合成图并写入 outPath，返回文件字节数
+ * 渲染合成图并返回 JPEG Buffer
  * @param {Array<Jimp>} jimpImgs
  * @param {object} result pack() 返回结果
  * @param {object} opts
  */
-export async function renderComposite(
+export async function renderCompositeBuffer(
     jimpImgs,
     result,
-    { outPath, quality = 90, bg = 0xffffffff, label = true } = {}
+    { quality = 90, bg = 0xffffffff, label = true } = {}
 ) {
+    const { Jimp } = await import('jimp');
     const { canvas: c, placements } = result;
     const canvas = new Jimp({ width: c.W, height: c.H, color: bg });
     const [font16, font32] = label ? await getFonts() : [null, null];
@@ -60,8 +63,22 @@ export async function renderComposite(
         }
     }
 
+    return canvas.getBuffer('image/jpeg', { quality });
+}
+
+/**
+ * 渲染合成图并写入 outPath，返回文件字节数
+ * @param {Array<Jimp>} jimpImgs
+ * @param {object} result pack() 返回结果
+ * @param {object} opts
+ */
+export async function renderComposite(
+    jimpImgs,
+    result,
+    { outPath, quality = 90, bg = 0xffffffff, label = true } = {}
+) {
+    const buf = await renderCompositeBuffer(jimpImgs, result, { quality, bg, label });
     mkdirSync(dirname(outPath), { recursive: true });
-    const buf = await canvas.getBuffer('image/jpeg', { quality });
     writeFileSync(outPath, buf);
     return buf.length;
 }

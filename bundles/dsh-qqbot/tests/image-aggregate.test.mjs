@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -26,6 +26,16 @@ setImageAggregateHooks({
             bytes: data.length,
         },
     }),
+});
+
+test('聚合渲染复用 uvpack 的 Buffer 接口', async () => {
+    const aggregate = await readFile(new URL('../dist/features/image-aggregate.js', import.meta.url), 'utf8');
+    const render = await readFile(new URL('../dist/features/uvpack/render.mjs', import.meta.url), 'utf8');
+    assert.ok(aggregate.includes("import { renderCompositeBuffer } from './uvpack/render.mjs'"));
+    assert.ok(render.includes('export async function renderCompositeBuffer'));
+    assert.ok(!aggregate.includes('renderPacked'));
+    assert.ok(!aggregate.includes('checkCanvas'));
+    assert.ok(!aggregate.includes('loggerFallback'));
 });
 
 test('聚合缓冲可注入单图且不会重复入队', async () => {

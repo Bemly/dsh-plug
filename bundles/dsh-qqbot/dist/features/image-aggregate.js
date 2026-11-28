@@ -1,62 +1,15 @@
 /**
- * 图片聚合 v2（2026-11-26 重写）—— 单图直给；多图合成**一张**，自适应横竖排版。
- *
- * 与 v1 的区别（主人 2026-11-26 定的新规矩）：
- *  1. **不再滚动缓冲、不再 3 张截断**：单条消息里的多图、或合并消息里的多图，
- *     全部合成一张。缓冲/sent 去重保留，只防"同一张图反复烧 token"，不限制张数。
- *  2. **不再输出任何人可见的标记文字**：删掉 `[图片聚合] …` 和 `（↑ xxx 发的图）`。
- *     历史图瘦身改由 magpie-image-slim v0.2 完成，它认通用 image-slim 占位符格式。
- *  3. **打标结果随图入上下文**：入站时把表情库的 desc/tags 写成**固定文本**，
- *     历史轮次 slim 掉图片块后仍保留这段文本 —— 缓存前缀稳定，且模型知道图内容。
- *  4. **长边上限 2560px，只缩不放**（主人实测 1120 tokens 预算）。
- *     自适应排版：横排 / 竖排 / 网格，取"最贴合整体宽高比"的布局。
- *  5. 只有当前模型**声明了 image 输入**才走这条；纯文本模型跳过。
- *  6. 拼接异步，失败静默，绝不阻断入站主链。
+ * 图片聚合：单图直给，多图使用 uv-pack-lab 合成一张。
+ * 按图片内容哈希去重；只注入图片块，路径句柄由 DSH 宿主生成。
  */
 import { existsSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 // ★ 2026-11-27 主人定：算法换成 uv-pack-lab 的「弹性切分树 + 模拟退火 + 1120-Token 预算」。
-//   这三个文件从 /Users/bemly/Projects/uv-pack-lab/src/ **逐字节原样拷贝**，逻辑一字未改。
-//   pack() 用 mode:'auto' + preset:'standard'(P=64,T=1120)，输出天然对齐 token 网格、不额外降采样。
+// packer/tokenBudget 保持 uv-pack-lab 原样；render 增加 Buffer 输出接口供 DSH 复用。
+// pack() 使用 mode:'auto' + preset:'standard'(P=64,T=1120)。
 import { pack } from './uvpack/packer.mjs';
-import { checkCanvas } from './uvpack/tokenBudget.mjs';
-/**
- * 渲染合成图（含每张图的数字角标），逻辑照抄 uv-pack-lab/src/render.mjs 的 renderComposite：
- * 角标文字 = String(p.idx + 1)，大图用 SANS_32、小图用 SANS_16，黑色半透明底 + 左上角偏移。
- * 唯一区别：不写文件，直接返回 JPEG buffer（dsh-botqq 要走 saveImage() 交给宿主）。
- * ★ 这是集成层适配，不是算法改动；uvpack/ 下三个文件保持原样。
- */
-async function renderPacked(Jimp, loadFont, jimpImgs, result, quality = 90) {
-    const { canvas: c, placements } = result;
-    const canvas = new Jimp({ width: c.W, height: c.H, color: 0xffffffff });
-    let fonts = null;
-    try {
-        const fm = await import('jimp/fonts');
-        const [f16, f32] = await Promise.all([loadFont(fm.SANS_16_WHITE), loadFont(fm.SANS_32_WHITE)]);
-        fonts = { f16, f32 };
-    }
-    catch { /* 字体不可用 → 跳过角标，不影响合成本身 */ }
-    for (const p of placements) {
-        const im = jimpImgs[p.idx].clone();
-        if (im.bitmap.width !== p.w || im.bitmap.height !== p.h)
-            im.resize({ w: p.w, h: p.h });
-        canvas.composite(im, p.x, p.y);
-        if (fonts) {
-            const text = String(p.idx + 1);
-            const useLarge = Math.min(p.w, p.h) >= 400;
-            const font = useLarge ? fonts.f32 : fonts.f16;
-            const padX = useLarge ? 10 : 6, padY = useLarge ? 6 : 4;
-            const charW = useLarge ? 20 : 10, textH = useLarge ? 32 : 16;
-            const badgeW = Math.min(p.w, text.length * charW + padX * 2);
-            const badgeH = Math.min(p.h, textH + padY * 2);
-            const badge = new Jimp({ width: badgeW, height: badgeH, color: 0x000000b8 });
-            canvas.composite(badge, p.x + 4, p.y + 4);
-            canvas.print({ font, x: p.x + 4 + padX, y: p.y + 4 + padY, text });
-        }
-    }
-    return await canvas.getBuffer('image/jpeg', { quality });
-}
+import { renderCompositeBuffer } from './uvpack/render.mjs';
 let jimpMod;
 async function loadJimp() {
     if (jimpMod)
@@ -235,14 +188,7 @@ function loadSentIndex() {
 export function clearAggImages(key) {
     buffers.delete(key);
 }
-/**
- * 自适应排版：在候选列数里挑"网格宽高比最接近图片平均宽高比"的布局。
- * 原则：只缩不放，长边交给 canvas 收敛；布局只决定横/竖/网格的形状。
- */
-/**
- * 把若干张图合成**一张**：MaxRects 矩形装箱（纹理图集做法），
- * 每张按原始宽高比动态落位，不再套等大格子。长边 ≤ MAX_EDGE。
- */
+/** 将多张图片按 uv-pack-lab 布局合成一张 JPEG。 */
 export async function stitchAggImages(items) {
     if (items.length === 0)
         return undefined;
@@ -267,19 +213,12 @@ export async function stitchAggImages(items) {
     }
     if (loaded.length === 0)
         return undefined;
-    // ★ 用 uv-pack-lab 原样算法：mode=auto + standard(1120-Token)，
-    //   画布按 token 网格生成（P=64 整数倍），输出天然和谷歌对齐、不额外降采样。
+    // uv-pack-lab：auto 模式，在 1120-token 预算内选择画布与布局。
     const result = pack(
         loaded.map((x) => ({ w: x.w, h: x.h })),
         { mode: 'auto', preset: 'standard' }
     );
-    const token = checkCanvas(result.canvas.W, result.canvas.H, 'standard');
-    if (!token.ok) {
-        // 理论上不会发生（pack 自身就在候选集里选）；兜底保护，不烧坏模型输入
-        loggerFallback(`[图片聚合] pack 输出越界 ${result.canvas.W}x${result.canvas.H}: ${token.reasons.join('; ')}`);
-        return undefined;
-    }
-    const buf = await renderPacked(Jimp, jimp.loadFont, loaded.map((x) => x.img), result, 90);
+    const buf = await renderCompositeBuffer(loaded.map((x) => x.img), result, { quality: 90 });
     const c = result.canvas;
     return {
         data: new Uint8Array(buf),
@@ -288,10 +227,6 @@ export async function stitchAggImages(items) {
         used: loaded.map((u) => u.src),
         layout: `${c.cols}x${c.rows}=${c.tiles}t ${result.stats.mode} ${c.W}x${c.H}`,
     };
-}
-/** 拼接兜底日志（无 logger 上下文时静默到 console） */
-function loggerFallback(line) {
-    try { console.warn(line); } catch { /* ignore */ }
 }
 /**
  * 真正干活：模型支持读图时，把待注入的图变成 content blocks。
