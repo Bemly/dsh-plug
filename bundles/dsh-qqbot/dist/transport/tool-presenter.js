@@ -31,11 +31,17 @@ export function formatToolResult(name, rawArgs, data, toolsRegistry, agent) {
             return rendered;
     }
     // 3. fallback raw text
-    const block = data.message.content[0];
-    const result = block !== undefined && block.type === 'tool-result' ? textOf(block.content) : '';
+    const result = textOf(toolResultContent(data));
     if (!result)
         return null;
     return `🔧 \`${name}\` 完成\n${truncate(result)}`;
+}
+function toolResultBlocks(data) {
+    const blocks = Array.isArray(data?.message?.content) ? data.message.content : [];
+    return blocks.filter((block) => block?.type === 'tool-result');
+}
+function toolResultContent(data) {
+    return toolResultBlocks(data).flatMap((block) => Array.isArray(block.content) ? block.content : []);
 }
 /** 调用工具自定义 presentResult，失败/不可用时返回 undefined */
 function presentResultView(name, rawArgs, data, toolsRegistry, agent) {
@@ -45,11 +51,11 @@ function presentResultView(name, rawArgs, data, toolsRegistry, agent) {
         const tool = toolsRegistry.get(name, agent);
         if (tool?.presentResult === undefined)
             return undefined;
-        const block = data.message.content[0];
-        const content = block !== undefined && block.type === 'tool-result' ? block.content : [];
+        const blocks = toolResultBlocks(data);
+        const content = blocks.flatMap((block) => Array.isArray(block.content) ? block.content : []);
         return tool.presentResult(JSON.parse(rawArgs), {
             content,
-            isError: block?.isError === true,
+            isError: blocks[0]?.isError === true,
             ...(data.meta !== undefined ? { meta: data.meta } : {}),
         });
     }

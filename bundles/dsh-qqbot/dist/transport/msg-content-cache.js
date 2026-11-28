@@ -24,6 +24,17 @@ function fileOf(dataRoot) {
 function indexKey(peerKey, msgIdx) {
     return peerKey + '\u0000' + msgIdx;
 }
+function entryOf(r) {
+    return {
+        ...(r.t ? { t: r.t } : {}),
+        ...(Array.isArray(r.imgs) && r.imgs.length ? { imgs: r.imgs } : {}),
+        ...(r.m ? { m: r.m } : {}),
+        ...(r.s ? { s: r.s } : {}),
+        ...(r.n ? { n: r.n } : {}),
+        ...(r.k ? { k: r.k } : {}),
+        ...(r.me ? { me: true } : {}),
+    };
+}
 function load(dataRoot) {
     const file = fileOf(dataRoot);
     let key = 'missing';
@@ -50,15 +61,7 @@ function load(dataRoot) {
                 if (!r || !r.p || !r.i)
                     continue;
                 list.push(r);
-                index.set(indexKey(r.p, r.i), {
-                    ...(r.t ? { t: r.t } : {}),
-                    ...(Array.isArray(r.imgs) && r.imgs.length ? { imgs: r.imgs } : {}),
-                    ...(r.m ? { m: r.m } : {}),
-                    ...(r.s ? { s: r.s } : {}),
-                    ...(r.n ? { n: r.n } : {}),
-                    ...(r.k ? { k: r.k } : {}),
-                    ...(r.me ? { me: true } : {}),
-                });
+                index.set(indexKey(r.p, r.i), entryOf(r));
             }
             catch { /* 坏行跳过 */ }
         }
@@ -94,8 +97,11 @@ export function rememberMsgContent(dataRoot, peerKey, msgIdx, rec) {
             // 超上限 → 重写成尾部 MAX_LINES 条（内存里已有的直接重建）
             // 用 list 重写(保留每行 at 与顺序); 旧实现按 index 重建会把 at 丢成 0, 按时间窗扫描会全判过期。
             const keep = list.slice(-MAX_LINES);
+            const nextIndex = new Map();
+            for (const row of keep)
+                nextIndex.set(indexKey(row.p, row.i), entryOf(row));
             writeFileSync(file, keep.map((r) => JSON.stringify(r)).join(NL) + NL, 'utf8');
-            cache.set(file, { key: 'dirty', index, lines: keep.length, list: keep });
+            cache.set(file, { key: 'dirty', index: nextIndex, lines: keep.length, list: keep });
             return;
         }
         cache.set(file, { key: 'dirty', index, lines: nextLines, list });

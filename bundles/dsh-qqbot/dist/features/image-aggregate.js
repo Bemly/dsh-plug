@@ -1,36 +1,329 @@
-/**
- * 图片聚合：单图直给，多图使用 uv-pack-lab 合成一张。
- * 按图片内容哈希去重；只注入图片块，路径句柄由 DSH 宿主生成。
- */
-import { existsSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-// ★ 2026-11-27 主人定：算法换成 uv-pack-lab 的「弹性切分树 + 模拟退火 + 1120-Token 预算」。
-// packer/tokenBudget 保持 uv-pack-lab 原样；render 增加 Buffer 输出接口供 DSH 复用。
-// pack() 使用 mode:'auto' + preset:'standard'(P=64,T=1120)。
+import { Jimp } from 'jimp';
+import { computeDHash, dhashDistance, extractQqFileId } from './sticker-store.js';
 import { pack } from './uvpack/packer.mjs';
 import { renderCompositeBuffer } from './uvpack/render.mjs';
-let jimpMod;
-async function loadJimp() {
-    if (jimpMod)
-        return jimpMod;
-    try {
-        jimpMod = (await import('jimp'));
-        return jimpMod;
-    }
-    catch {
-        return undefined;
-    }
-}
-/** 长边硬上限（px）：只缩不放 */
-export const MAX_EDGE = 2560;
+
+export const MAX_AGGREGATE_IMAGES = 100;
+const MAX_EDGE = 2560;
+const SENT_KEEP = 4096;
+const MAX_BUFFER_SESSIONS = 64;
+const MAX_SENT_SESSIONS = 512;
+
 const buffers = new Map();
 const sentFingerprints = new Map();
-const SENT_KEEP = 128;
 let sentIndexFile = '';
 const OUR_ATTACH = new Set();
 let ourAttachFile = '';
 const OUR_ATTACH_KEEP = 2000;
+let probeImageInput;
+let saveImage;
+
+function touchMap(map, key, value, limit) {
+    map.delete(key);
+    map.set(key, value);
+    while (map.size > limit) {
+        const oldest = map.keys().next().value;
+        map.delete(oldest);
+    }
+}
+
+function bufferOf(key) {
+    const current = buffers.get(key);
+    if (current) {
+        touchMap(buffers, key, current, MAX_BUFFER_SESSIONS);
+        return current;
+    }
+    const arr = [];
+    touchMap(buffers, key, arr, MAX_BUFFER_SESSIONS);
+    return arr;
+}
+
+function sentSetOf(key) {
+    const current = sentFingerprints.get(key);
+    if (current) {
+        touchMap(sentFingerprints, key, current, MAX_SENT_SESSIONS);
+        return current;
+    }
+    const set = new Set();
+    touchMap(sentFingerprints, key, set, MAX_SENT_SESSIONS);
+    return set;
+}
+
+function mediaTypeOf(buf, path) {
+    if (buf.length >= 12) {
+        if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
+            return 'image/png';
+        if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)
+            return 'image/jpeg';
+        if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38)
+            return 'image/gif';
+        if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+            && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50)
+            return 'image/webp';
+    }
+    const lower = String(path ?? '').toLowerCase();
+    if (lower.endsWith('.png'))
+        return 'image/png';
+    if (lower.endsWith('.webp'))
+        return 'image/webp';
+    if (lower.endsWith('.gif'))
+        return 'image/gif';
+    return 'image/jpeg';
+}
+
+function keysOf(item) {
+    const keys = [item.fp];
+    if (item.fileid)
+        keys.push(`q:${item.fileid}`);
+    if (item.dhash)
+        keys.push(`d:${item.dhash}`);
+    return keys;
+}
+
+function matchesStored(item, stored) {
+    if (stored === item.fp)
+        return true;
+    if (item.fileid && stored === `q:${item.fileid}`)
+        return true;
+    return !!(item.dhash && stored.startsWith('d:')
+        && dhashDistance(item.dhash, stored.slice(2)) <= 5);
+}
+
+function duplicateInSet(set, item) {
+    for (const stored of set) {
+        if (matchesStored(item, stored))
+            return true;
+    }
+    return false;
+}
+
+function duplicateInArray(arr, item) {
+    return arr.some((other) => keysOf(other).some((key) => keysOf(item).includes(key))
+        || (item.dhash && other.dhash && dhashDistance(item.dhash, other.dhash) <= 5));
+}
+
+export async function prepareAggregateImages(items, logger) {
+    const prepared = [];
+    for (const item of (Array.isArray(items) ? items : []).slice(0, MAX_AGGREGATE_IMAGES)) {
+        try {
+            if (!item?.path || !existsSync(item.path))
+                continue;
+            const buf = readFileSync(item.path);
+            const img = await Jimp.read(buf);
+            const w = img.bitmap.width;
+            const h = img.bitmap.height;
+            if (!w || !h)
+                continue;
+            const fp = createHash('sha256').update(buf).digest('hex');
+            const dhash = await computeDHash(buf);
+            const fileid = extractQqFileId(item.url ?? '');
+            prepared.push({
+                key: item.key ?? '',
+                path: item.path,
+                url: item.url ?? '',
+                sender: item.sender || '某人',
+                at: Date.now(),
+                sent: false,
+                img,
+                w,
+                h,
+                buf,
+                mediaType: mediaTypeOf(buf, item.path),
+                fp,
+                dhash,
+                fileid,
+            });
+        }
+        catch (err) {
+            logger?.warn?.(`[图片聚合] 预解码失败，不入聚合: ${item?.path ?? ''} ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+    return prepared;
+}
+
+export function pushPreparedAggImage(key, item) {
+    if (!item)
+        return 0;
+    if (duplicateInSet(sentSetOf(key), item))
+        return buffers.get(key)?.length ?? 0;
+    const arr = bufferOf(key);
+    if (duplicateInArray(arr, item))
+        return arr.length;
+    arr.push({ ...item, key });
+    return arr.length;
+}
+
+export async function pushAggImage(key, path, sender, url = '') {
+    const prepared = await prepareAggregateImages([{ path, sender, url }]);
+    return pushPreparedAggImage(key, prepared[0]);
+}
+
+export function pendingAggImages(key) {
+    const arr = buffers.get(key);
+    if (!arr)
+        return [];
+    touchMap(buffers, key, arr, MAX_BUFFER_SESSIONS);
+    return arr.filter((item) => !item.sent);
+}
+
+export function markAggSent(items) {
+    const byKey = new Map();
+    for (const item of items) {
+        if (!item?.key)
+            continue;
+        if (!byKey.has(item.key))
+            byKey.set(item.key, new Set());
+        byKey.get(item.key).add(item);
+    }
+    for (const [key, sent] of byKey) {
+        const arr = buffers.get(key);
+        if (!arr)
+            continue;
+        const kept = arr.filter((item) => !sent.has(item));
+        if (kept.length)
+            touchMap(buffers, key, kept, MAX_BUFFER_SESSIONS);
+        else
+            buffers.delete(key);
+    }
+}
+
+export function rememberAggSentPaths(key, items) {
+    if (!key || !items?.length)
+        return;
+    const set = sentSetOf(key);
+    for (const item of items) {
+        if (typeof item === 'string') {
+            set.add(item);
+            continue;
+        }
+        for (const stored of keysOf(item))
+            set.add(stored);
+    }
+    while (set.size > SENT_KEEP) {
+        const first = set.values().next().value;
+        set.delete(first);
+    }
+    persistSentIndex();
+}
+
+function persistSentIndex() {
+    if (!sentIndexFile)
+        return;
+    try {
+        const out = {};
+        for (const [key, set] of sentFingerprints)
+            out[key] = [...set];
+        writeFileSync(sentIndexFile, JSON.stringify(out), 'utf8');
+    }
+    catch { /* 去重表写入失败不影响消息 */ }
+}
+
+function loadSentIndex() {
+    if (!sentIndexFile || !existsSync(sentIndexFile))
+        return;
+    try {
+        const raw = JSON.parse(readFileSync(sentIndexFile, 'utf8'));
+        for (const [key, arr] of Object.entries(raw ?? {})) {
+            if (Array.isArray(arr))
+                touchMap(sentFingerprints, key, new Set(arr.filter((x) => typeof x === 'string')), MAX_SENT_SESSIONS);
+        }
+    }
+    catch { /* 坏表当空 */ }
+}
+
+export function clearAggImages(key) {
+    buffers.delete(key);
+}
+
+export async function stitchAggImages(items) {
+    if (items.length < 2 || items.some((item) => !item.img))
+        return undefined;
+    const result = pack(
+        items.map((item) => ({ w: item.w, h: item.h })),
+        { mode: 'auto', preset: 'standard' },
+    );
+    const buf = await renderCompositeBuffer(items.map((item) => item.img), result, { quality: 90 });
+    const c = result.canvas;
+    return {
+        data: new Uint8Array(buf),
+        width: c.W,
+        height: c.H,
+        used: items,
+        layout: `${c.cols}x${c.rows}=${c.tiles}t ${result.stats.mode} ${c.W}x${c.H}`,
+    };
+}
+
+export async function buildAggregateBlocks(key, agent, logger) {
+    const items = pendingAggImages(key).slice(0, MAX_AGGREGATE_IMAGES);
+    if (items.length === 0)
+        return [];
+    if (!probeImageInput || !saveImage) {
+        logger?.debug?.('[图片聚合] 宿主钩子未注入，跳过');
+        return [];
+    }
+    let capable;
+    try {
+        capable = await probeImageInput(agent);
+    }
+    catch (err) {
+        logger?.debug?.(`[图片聚合] 模型能力探测失败: ${err instanceof Error ? err.message : String(err)}`);
+        return [];
+    }
+    if (capable !== true) {
+        logger?.debug?.('[图片聚合] 当前模型不声明 image 输入，跳过');
+        return [];
+    }
+
+    if (items.length === 1) {
+        const one = items[0];
+        try {
+            let buf = one.buf;
+            let mediaType = one.mediaType;
+            if (Math.max(one.w, one.h) > MAX_EDGE) {
+                const img = one.img.clone();
+                const scale = MAX_EDGE / Math.max(one.w, one.h);
+                img.resize({
+                    w: Math.max(1, Math.round(one.w * scale)),
+                    h: Math.max(1, Math.round(one.h * scale)),
+                });
+                buf = await img.getBuffer('image/jpeg', { quality: 88 });
+                mediaType = 'image/jpeg';
+            }
+            const saved = await saveImage(new Uint8Array(buf), mediaType);
+            if (!saved?.attachment)
+                return [];
+            rememberAggSentPaths(key, [one]);
+            markAggSent([one]);
+            logger?.debug?.(`[图片聚合] 单图直给: ${one.path}`);
+            return [{ type: 'image', attachment: saved.attachment }];
+        }
+        catch (err) {
+            logger?.warn?.(`[图片聚合] 单图注入失败: ${err instanceof Error ? err.message : String(err)}`);
+            return [];
+        }
+    }
+
+    const stitched = await stitchAggImages(items);
+    if (!stitched)
+        return [];
+    try {
+        const saved = await saveImage(stitched.data, 'image/jpeg');
+        if (!saved?.attachment)
+            return [];
+        rememberAggSentPaths(key, stitched.used);
+        markAggSent(stitched.used);
+        logger?.debug?.(`[图片聚合] 合成 ${stitched.used.length} 张 → ${stitched.width}x${stitched.height} (${stitched.layout})`);
+        return [{ type: 'image', attachment: saved.attachment }];
+    }
+    catch (err) {
+        logger?.warn?.(`[图片聚合] 存图失败: ${err instanceof Error ? err.message : String(err)}`);
+        return [];
+    }
+}
+
 export function initAggregateRegistry(dataRoot) {
     try {
         if (!dataRoot)
@@ -41,311 +334,39 @@ export function initAggregateRegistry(dataRoot) {
         if (!existsSync(ourAttachFile))
             return;
         const arr = JSON.parse(readFileSync(ourAttachFile, 'utf8'));
-        if (Array.isArray(arr))
-            for (const id of arr)
+        if (Array.isArray(arr)) {
+            for (const id of arr) {
                 if (typeof id === 'string' && id)
                     OUR_ATTACH.add(id);
+            }
+        }
     }
     catch { /* 台账坏了就当空 */ }
 }
+
 export function noteOurAttachment(id) {
     try {
-        const v = String(id ?? '');
-        if (!v)
+        const value = String(id ?? '');
+        if (!value)
             return;
-        OUR_ATTACH.add(v);
-        if (OUR_ATTACH.size > OUR_ATTACH_KEEP) {
-            const drop = OUR_ATTACH.size - OUR_ATTACH_KEEP;
-            let n = 0;
-            for (const k of OUR_ATTACH) {
-                if (n >= drop)
-                    break;
-                OUR_ATTACH.delete(k);
-                n += 1;
-            }
+        OUR_ATTACH.add(value);
+        while (OUR_ATTACH.size > OUR_ATTACH_KEEP) {
+            const first = OUR_ATTACH.values().next().value;
+            OUR_ATTACH.delete(first);
         }
-        if (ourAttachFile) {
-            try {
-                writeFileSync(ourAttachFile, JSON.stringify([...OUR_ATTACH]), 'utf8');
-            }
-            catch { /* ignore */ }
-        }
+        if (ourAttachFile)
+            writeFileSync(ourAttachFile, JSON.stringify([...OUR_ATTACH]), 'utf8');
     }
     catch { /* ignore */ }
 }
+
 export function isOurAttachment(id) {
-    const v = String(id ?? '');
-    return !!v && OUR_ATTACH.has(v);
+    return !!String(id ?? '') && OUR_ATTACH.has(String(id));
 }
-let probeImageInput;
-let saveImage;
+
 export function setImageAggregateHooks(hooks) {
     if (hooks.probeImageInput)
         probeImageInput = hooks.probeImageInput;
     if (hooks.saveImage)
         saveImage = hooks.saveImage;
-}
-function bufferOf(key) {
-    let arr = buffers.get(key);
-    if (!arr) {
-        arr = [];
-        buffers.set(key, arr);
-    }
-    return arr;
-}
-/**
- * 图片内容指纹（2026-11-26 v2.1 修）：
- *
- * 为什么不能只用路径去重 —— 同一张表情包被重复发送时，QQ 每次给的是不同 URL/不同下载路径
- * （有时还换文件名），`sentPaths` 里比路径永远比不中 ⇒ 同一张图被反复注入：
- * 每条新消息都多一份「图片块 + 打标文本」，历史前缀被不断推后，缓存几乎全废。
- * 实测：同一 sha256 的图在会话里被注入 3 次，打标文本重复 7 处。
- *
- * 改用「内容哈希」当去重键：同一张图无论换几次路径/文件名，只注入一次。
- * 顺带把去重表持久化（见 sentIndexFile），DSH 重启后仍然有效。
- */
-function fingerprintOf(path) {
-    try {
-        const buf = readFileSync(path);
-        return createHash('sha256').update(buf).digest('hex');
-    }
-    catch {
-        return '';
-    }
-}
-/**
- * 把一条消息里的图片塞进缓冲。v2.1：按**内容哈希**去重（不再只看路径）。
- */
-export function pushAggImage(key, path, sender, _max) {
-    if (!path || !existsSync(path))
-        return 0;
-    const fp = fingerprintOf(path);
-    if (!fp)
-        return bufferOf(key).length;
-    // 已注入过的内容（同图换路径也能拦住）
-    if (sentFingerprints.get(key)?.has(fp))
-        return bufferOf(key).length;
-    const arr = bufferOf(key);
-    if (arr.some((i) => i.fp === fp))
-        return arr.length;
-    arr.push({ path, fp, sender: sender || '某人', at: Date.now(), sent: false });
-    return arr.length;
-}
-export function pendingAggImages(key) {
-    return bufferOf(key).filter((i) => !i.sent);
-}
-export function markAggSent(items) {
-    for (const i of items)
-        i.sent = true;
-}
-/**
- * 记住这些图已经注入过（按内容哈希）。持久化，跨重启有效。
- */
-export function rememberAggSentPaths(key, items) {
-    if (!items || items.length === 0)
-        return;
-    let set = sentFingerprints.get(key);
-    if (!set) {
-        set = new Set();
-        sentFingerprints.set(key, set);
-    }
-    for (const it of items) {
-        const fp = typeof it === 'string' ? it : it?.fp;
-        if (fp)
-            set.add(fp);
-    }
-    while (set.size > SENT_KEEP) {
-        const first = set.values().next().value;
-        set.delete(first);
-    }
-    persistSentIndex();
-}
-/** 把去重表落盘（失败静默：纯粹是优化，不影响主链） */
-function persistSentIndex() {
-    if (!sentIndexFile)
-        return;
-    try {
-        const out = {};
-        for (const [k, set] of sentFingerprints)
-            out[k] = [...set];
-        writeFileSync(sentIndexFile, JSON.stringify(out), 'utf8');
-    }
-    catch { /* ignore */ }
-}
-/** 启动时读回去重表 */
-function loadSentIndex() {
-    if (!sentIndexFile || !existsSync(sentIndexFile))
-        return;
-    try {
-        const raw = JSON.parse(readFileSync(sentIndexFile, 'utf8'));
-        for (const [k, arr] of Object.entries(raw ?? {})) {
-            if (Array.isArray(arr))
-                sentFingerprints.set(k, new Set(arr.filter((x) => typeof x === 'string')));
-        }
-    }
-    catch { /* 坏文件当空 */ }
-}
-export function clearAggImages(key) {
-    buffers.delete(key);
-}
-/** 将多张图片按 uv-pack-lab 布局合成一张 JPEG。 */
-export async function stitchAggImages(items) {
-    if (items.length === 0)
-        return undefined;
-    const jimp = await loadJimp();
-    if (!jimp)
-        return undefined;
-    const { Jimp } = jimp;
-    const loaded = [];
-    for (const it of items) {
-        try {
-            if (!existsSync(it.path))
-                continue;
-            const img = await Jimp.read(it.path);
-            const w = img.bitmap.width, h = img.bitmap.height;
-            if (w <= 0 || h <= 0)
-                continue;
-            loaded.push({ img, src: it, w, h });
-        }
-        catch {
-            /* 单张读不了就跳过 */
-        }
-    }
-    if (loaded.length === 0)
-        return undefined;
-    // uv-pack-lab：auto 模式，在 1120-token 预算内选择画布与布局。
-    const result = pack(
-        loaded.map((x) => ({ w: x.w, h: x.h })),
-        { mode: 'auto', preset: 'standard' }
-    );
-    const buf = await renderCompositeBuffer(loaded.map((x) => x.img), result, { quality: 90 });
-    const c = result.canvas;
-    return {
-        data: new Uint8Array(buf),
-        width: c.W,
-        height: c.H,
-        used: loaded.map((u) => u.src),
-        layout: `${c.cols}x${c.rows}=${c.tiles}t ${result.stats.mode} ${c.W}x${c.H}`,
-    };
-}
-/**
- * 真正干活：模型支持读图时，把待注入的图变成 content blocks。
- *
- * 2026-11-26 v2.2（主人定）：**只注入 ImageBlock，不再附带任何文本**。
- * 图片的本地路径由 DSH 宿主自己生成（dsh-llm-pi-ai 的 requestImageHandleText：
- * `Image "xxx" (sha256:…); … Normalized copy (read-only…): "/path/…"`），
- * 那段文本每轮随 image block 现生成、内容恒定，模型可据此 read_image。
- * 我们自己再写一份打标/路径只会重复烧 token，且打标是异步的（入站时常常还没打完，
- * 曾出现"未打标图片"）。所以这里彻底不写文本。
- * - 单图：原图直给（长边 >2560 才缩）。
- * - 多图：合成一张。
- */
-export async function buildAggregateBlocks(key, agent, logger) {
-    const items = pendingAggImages(key);
-    if (items.length === 0)
-        return [];
-    if (!probeImageInput || !saveImage) {
-        logger?.debug?.('[图片聚合v2] 宿主钩子没注入（没重启 dsh？），跳过');
-        return [];
-    }
-    let capable;
-    try {
-        capable = await probeImageInput(agent);
-    }
-    catch (e) {
-        logger?.debug?.(`[图片聚合v2] 模型能力探测失败，跳过: ${e instanceof Error ? e.message : String(e)}`);
-        return [];
-    }
-    if (capable !== true) {
-        logger?.debug?.('[图片聚合v2] 当前模型不声明 image 输入，跳过');
-        return [];
-    }
-    // 每张图的打标结果（入站时固定下来）
-    if (items.length === 1) {
-        const one = items[0];
-        try {
-            let buf = readFileSync(one.path);
-            const jimp = await loadJimp();
-            if (jimp) {
-                try {
-                    const img = await jimp.Jimp.read(one.path);
-                    const w = img.bitmap.width, h = img.bitmap.height;
-                    const longest = Math.max(w, h);
-                    if (longest > MAX_EDGE && w > 0 && h > 0) {
-                        const scale = MAX_EDGE / longest;
-                        img.resize({ w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) });
-                        buf = await img.getBuffer('image/jpeg', { quality: 88 });
-                    }
-                }
-                catch { /* 不支持解码的格式保留原图字节，仍可直接注入 */ }
-            }
-            if (buf.length === 0)
-                return [];
-            const saved = await saveImage(new Uint8Array(buf), mediaTypeOf(one.path));
-            if (!saved || !saved.attachment)
-                return [];
-            markAggSent([one]);
-            rememberAggSentPaths(key, [one]);
-            logger?.debug?.(`[图片聚合v2] 单图直给: ${one.path}`);
-            return [
-                { type: 'image', attachment: saved.attachment },
-            ];
-        }
-        catch (e) {
-            logger?.warn?.(`[图片聚合v2] 单图注入失败: ${e instanceof Error ? e.message : String(e)}`);
-            return [];
-        }
-    }
-    const stitched = await stitchAggImages(items);
-    if (!stitched)
-        return [];
-    let saved;
-    try {
-        saved = await saveImage(stitched.data, 'image/jpeg');
-    }
-    catch (e) {
-        logger?.warn?.(`[图片聚合v2] 存图失败，跳过: ${e instanceof Error ? e.message : String(e)}`);
-        return [];
-    }
-    if (!saved || !saved.attachment)
-        return [];
-    markAggSent(stitched.used);
-    rememberAggSentPaths(key, stitched.used);
-    logger?.debug?.(`[图片聚合v2] 合成 ${stitched.used.length} 张 → ${stitched.width}x${stitched.height} (${stitched.layout})`);
-    return [
-        { type: 'image', attachment: saved.attachment },
-    ];
-}
-/** 媒体类型：先看真实字节，后缀兜底 */
-function mediaTypeOf(path) {
-    try {
-        const fd = openSync(path, 'r');
-        try {
-            const head = Buffer.alloc(12);
-            const n = readSync(fd, head, 0, 12, 0);
-            if (n >= 12) {
-                if (head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47)
-                    return 'image/png';
-                if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff)
-                    return 'image/jpeg';
-                if (head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x38)
-                    return 'image/gif';
-                if (head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46
-                    && head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50)
-                    return 'image/webp';
-            }
-        }
-        finally {
-            closeSync(fd);
-        }
-    }
-    catch { /* 读不到就走后缀兜底 */ }
-    const p = path.toLowerCase();
-    if (p.endsWith('.png'))
-        return 'image/png';
-    if (p.endsWith('.webp'))
-        return 'image/webp';
-    if (p.endsWith('.gif'))
-        return 'image/gif';
-    return 'image/jpeg';
 }

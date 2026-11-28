@@ -668,7 +668,6 @@ async function installLiveSettings(ctx, live, logger, nsOverride) {
         //   本地小模型这块**原来没进 live 同步** → 面板/设置页保存后要重启宿主才生效。
         //   功效: 价值评分模式(off/log/block)、门槛、单会话 overrides 现在改完即时生效。
         localModel: live.localModel,
-        groupPrompt: live.groupPrompt,
         schedule: live.schedule,
         groupAdmin: live.groupAdmin,
         enableApprovals: live.enableApprovals,
@@ -764,8 +763,6 @@ async function installLiveSettings(ctx, live, logger, nsOverride) {
                 live.localModel = next.localModel;
                 setRagOvmsTarget(live.localModel); // 同上: settings 服务路径也要让 OVMS 目标热生效
             }
-            if (typeof next.groupPrompt === 'string')
-                live.groupPrompt = next.groupPrompt;
             if (next.schedule)
                 live.schedule = next.schedule;
             if (next.groupAdmin)
@@ -784,7 +781,7 @@ async function installLiveSettings(ctx, live, logger, nsOverride) {
             //    (实测症状: dock 保存后 /botplay 报"还没有装配任何互动事件")。
             if (Array.isArray(next.botplayEvents) && next.botplayEvents.length > 0)
                 live.botplayEvents = next.botplayEvents;
-            logger.info('[im-qqbot] 设置已同步(live): dataRoot/behavior/sticker/injectRules/imageHint/imageOffload/imageAggregate/messageReference/extMetaTool/webTurnSilent/localModel/groupPrompt/schedule/groupAdmin/approvals/botplayEvents');
+            logger.info('[im-qqbot] 设置已同步(live): dataRoot/behavior/sticker/injectRules/imageHint/imageOffload/imageAggregate/messageReference/extMetaTool/webTurnSilent/localModel/schedule/groupAdmin/approvals/botplayEvents');
         }
         catch (err) {
             logger.warn?.(`im-qqbot: 设置同步失败: ${err instanceof Error ? err.message : String(err)}`);

@@ -325,14 +325,16 @@ export interface EditableConfig {
     imageAggregate?: {
         /** 总开关(默认关) */
         enabled?: boolean;
-        /** 聚合数量上限(1~8, 默认 4): 环形缓冲, 最新的排最下面, 旧的排最上面 */
-        max?: number;
+        /** 固定支持 2~100 张图片 */
     };
     /** 引用消息总开关(默认 true): 开=入站消息带短消息号(台账索引) + 引用消息附原文 + 注入引用指令, 出站支持 [rf:短号] 标签 */
     messageReference?: boolean;
     /** 智能回复(省 token): 复用 conan RAG/OVMS; OVMS 故障时跳过，不做本地兜底 */
     localModel?: {
         enabled?: boolean;
+        ovmsEndpoint?: string;
+        ovmsModel?: string;
+        ovmsTimeoutMs?: number;
         /**
          * **附件唤醒开关**（2026-09-15 主人定）：按附件类型决定"是否无视分数直接唤醒"。
          *
@@ -361,8 +363,6 @@ export interface EditableConfig {
             valueMinScore?: number;
         }>;
     };
-    /** 群聊常驻守则(默认含表情包礼仪; QQ 通道级注入, 跨 preset 不碰 persona) */
-    groupPrompt?: string;
     /** 定时唤醒任务(M3) */
     schedule: ScheduleConfig;
     /** QQ 远程审批开关(live 热生效: 对"保存后的新审批请求"即时生效, 无需重启) */
@@ -387,28 +387,13 @@ export interface EditableConfig {
     botplayEvents: BotplayEventConfig[];
 }
 /**
- * 群聊默认常驻守则(表情包礼仪, P2 品味层)。
- * 由 qqbot 通道注入 agentBody(scope=group 时), 所有走 QQ 的 preset 通用, 不修改任何 persona。
- */
-export declare const DEFAULT_GROUP_PROMPT: string;
-/**
- * 通道固定注入上下文(2026-09-09): 与可编辑群守则(groupPrompt)无关、无条件注入每个 QQ 会话,
- * 保证任何 AI/任何预设都会收到 QQ 通道的基础使用规则(即使群守则被清空/覆盖)。
- */
-export declare const FIXED_CHANNEL_CONTEXT: string;
-/**
  * 数学公式 / 彩色字提示（2026-11-20 主人要，配置项 `latexHint` 控制，默认关）。
  *
  * **内容固定**，所以跟群守则同频、共用同一套去重（拼进 rules，指纹自然跟着变）。
  * 只有清空上下文 / 开关切换时才重注 —— 不是小传那种"每轮都可能变"的东西。
  */
 export declare const LATEX_HINT_BLOCK: string;
-/**
- * 引用消息能力说明(2026-09-13 主人定; 短消息号版): 开启 messageReference 时随群守则一起注入。
- * 教 AI ①入站消息带短"消息号"(如 #0913a) ②出站用 [rf:消息号] 引用对方。
- */
-export declare const REFERENCE_CONTEXT: string;
-/** Web 设置页可编辑项的 schema(behavior/sticker.gates/injectRules/groupPrompt/schedule) */
+/** Web 设置页可编辑项的 schema(behavior/sticker.gates/injectRules/schedule) */
 export declare const EditableConfigSchema: Schema<EditableConfig>;
 export interface ImQQBotConfig {
     /** QQ Bot AppID */
@@ -429,8 +414,6 @@ export interface ImQQBotConfig {
     settingsNs?: string;
     /** 是否启用群消息 @mention 门控 */
     requireMention: boolean;
-    /** 群聊常驻守则(默认=表情包礼仪, 通道级注入; 空=关闭) */
-    groupPrompt?: string;
     /** 私聊额外 system prompt */
     directPrompt?: string;
     /** 单条消息最大长度（QQ 限制约 5000 字符） */
@@ -537,14 +520,16 @@ export interface ImQQBotConfig {
     imageAggregate?: {
         /** 总开关(默认关) */
         enabled?: boolean;
-        /** 聚合数量上限(1~8, 默认 4) */
-        max?: number;
+        /** 固定支持 2~100 张图片 */
     };
     /** 引用消息总开关(默认 true): 开=入站消息带短消息号(台账索引) + 引用消息附原文 + 注入引用指令, 出站支持 [rf:短号] 标签 */
     messageReference?: boolean;
     /** 本地小模型(省 token): 开=本地先筛(价值评分/语义搜索), 模型缺失自动关闭 */
     localModel?: {
         enabled?: boolean;
+        ovmsEndpoint?: string;
+        ovmsModel?: string;
+        ovmsTimeoutMs?: number;
         /**
          * **附件唤醒开关**（2026-09-15 主人定）：按附件类型决定"是否无视分数直接唤醒"。
          *

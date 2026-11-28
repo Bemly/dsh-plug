@@ -69,5 +69,7 @@ export declare function describeSessionKind(dataRoot: string, botId: string, sco
  * 只陈述当前渠道、名字与 openid 尾号，不附加行为指令。
  */
 export declare function buildSessionKindHint(info: SessionKindInfo): string;
-export declare function needsSessionKindHint(inBatch: boolean, inSurface: boolean): boolean;
+export declare function initSessionKindRegistry(dataRoot: string): void;
+export declare function needsSessionKindInjection(sessionId: string): boolean;
+export declare function markSessionKindInjected(sessionId: string): void;
 //# sourceMappingURL=session-kind.d.ts.map

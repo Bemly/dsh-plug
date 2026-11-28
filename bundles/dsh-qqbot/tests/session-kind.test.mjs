@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
-import { buildSessionKindHint, needsSessionKindHint } from '../dist/features/session-kind.js';
+import {
+    buildSessionKindHint,
+    initSessionKindRegistry,
+    markSessionKindInjected,
+    needsSessionKindInjection,
+} from '../dist/features/session-kind.js';
 
 test('群聊会话类型提示只保留一行事实', () => {
     assert.equal(
@@ -17,15 +24,27 @@ test('私聊会话类型提示只保留一行事实', () => {
     );
 });
 
-test('会话类型提示只注入一次', () => {
-    assert.equal(needsSessionKindHint(false, false), true);
-    assert.equal(needsSessionKindHint(true, false), false);
-    assert.equal(needsSessionKindHint(false, true), false);
-    assert.equal(needsSessionKindHint(true, true), false);
+test('会话类型按 sessionId 整个会话只注入一次并持久化', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-botqq-kind-'));
+    try {
+        initSessionKindRegistry(dir);
+        const sessionId = 'session-once-test';
+        assert.equal(needsSessionKindInjection(sessionId), true);
+        markSessionKindInjected(sessionId);
+        assert.equal(needsSessionKindInjection(sessionId), false);
+        assert.equal(needsSessionKindInjection('session-new-test'), true);
+        const saved = JSON.parse(await readFile(join(dir, '.qqbot', 'session-kind-injected.json'), 'utf8'));
+        assert.ok(saved.includes(sessionId));
+    }
+    finally {
+        await rm(dir, { recursive: true, force: true });
+    }
 });
 
-test('session-manager 不再按群名变化重复注入', async () => {
+test('session-manager 不再注入 group-rules，也不做会话类型内容比较', async () => {
     const source = await readFile(new URL('../dist/session/session-manager.js', import.meta.url), 'utf8');
-    assert.ok(source.includes('needsSessionKindHint(_kindInBatch, _kindInSurface)'));
-    assert.ok(!source.includes('_lastHintText.includes(info.name)'));
+    assert.ok(!source.includes('qqbot:group-rules'));
+    assert.ok(!source.includes('needsSessionKindHint'));
+    assert.ok(source.includes('needsSessionKindInjection(sessionId)'));
+    assert.ok(source.includes('markSessionKindInjected(sessionId)'));
 });

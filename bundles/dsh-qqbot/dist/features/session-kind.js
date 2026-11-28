@@ -16,8 +16,8 @@
  * （`source.kind = 'qqbot:session-kind'`；带 `qqbot:` 前缀是维护手册 §11.21 的硬要求，
  * 否则 dock 聊天视图会把注入内容当成对方说的话）。不拼进真实用户消息的 content。
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 /** 群名缓存：gid → name */
 const groupNameCache = new Map();
 /** 缓存 key 必须带 **bot 身份(appId)** —— 同一进程里可能跑多个实例(im-qqbot-2/3)，
@@ -27,6 +27,43 @@ const botKey = (botId) => (String(botId || '').trim() || '_') + '|';
 const userNameCache = new Map();
 /** 在途请求（避免同一目标并发打点） */
 const inflight = new Set();
+const injectedSessions = new Set();
+let injectedFile = '';
+
+export function initSessionKindRegistry(dataRoot) {
+    try {
+        if (!dataRoot)
+            return;
+        injectedFile = join(dataRoot, '.qqbot', 'session-kind-injected.json');
+        if (!existsSync(injectedFile))
+            return;
+        const arr = JSON.parse(readFileSync(injectedFile, 'utf8'));
+        if (Array.isArray(arr)) {
+            for (const id of arr) {
+                if (typeof id === 'string' && id)
+                    injectedSessions.add(id);
+            }
+        }
+    }
+    catch { /* 台账坏了就当空 */ }
+}
+
+export function needsSessionKindInjection(sessionId) {
+    return !!sessionId && !injectedSessions.has(sessionId);
+}
+
+export function markSessionKindInjected(sessionId) {
+    if (!sessionId || injectedSessions.has(sessionId))
+        return;
+    injectedSessions.add(sessionId);
+    if (!injectedFile)
+        return;
+    try {
+        mkdirSync(dirname(injectedFile), { recursive: true });
+        writeFileSync(injectedFile, JSON.stringify([...injectedSessions]), 'utf8');
+    }
+    catch { /* 持久化失败不影响本次注入 */ }
+}
 /** 成功缓存 30 分钟（群名/用户名很少变）；失败只缓存 60 秒，别把一次失败钉死 */
 const TTL_OK_MS = 30 * 60 * 1000;
 const TTL_FAIL_MS = 60 * 1000;
@@ -202,8 +239,5 @@ export function buildSessionKindHint(info) {
     }
     const namePart = info.name ? `对方「${info.name}」` : '对方昵称未取到';
     return `[当前会话] 渠道=QQ 私聊 · ${namePart} · 用户 openid 尾号 ${tail(info.peerId)}`;
-}
-export function needsSessionKindHint(inBatch, inSurface) {
-    return !inBatch && !inSurface;
 }
 //# sourceMappingURL=session-kind.js.map

@@ -13,7 +13,7 @@ export const IMAGE_DOWNLOAD_ATTEMPTS = Object.freeze([
 ]);
 
 // 2026-11-26 v2.1：去掉"每条消息只取 3 张"的截断，多图全部采集由 image-aggregate 合成一张。
-const MAX_PER_MSG = 64;
+const MAX_PER_MSG = 100;
 const FAILURE_COOLDOWN_MS = 5 * 60_000;
 const GLOBAL_MAX_INFLIGHT = 32;
 const captureTasks = new Map();
@@ -179,7 +179,7 @@ export async function prepareImagesForDispatch(attachments, msg, config, logger)
         tasks.push(captureOne(url, image.content_type, msg, config, logger));
     }
     const paths = await Promise.all(tasks);
-    return paths.filter(Boolean);
+    return paths;
 }
 
 export function stickerCapture(config, logger) {

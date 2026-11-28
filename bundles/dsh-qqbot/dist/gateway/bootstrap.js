@@ -18,7 +18,7 @@ import { setImageAggregateHooks, initAggregateRegistry, noteOurAttachment } from
 import { configureStickerStore } from '../features/sticker-store.js';
 import { initStickerGate, bindStickerGates, flushStickerGate, getStickerGate, StickerGateDenied } from '../features/sticker-gate.js';
 import { startScheduler } from '../features/scheduler.js';
-import { rememberUserName, prefetchUserName, prefetchGroupName } from '../features/session-kind.js';
+import { rememberUserName, prefetchUserName, prefetchGroupName, initSessionKindRegistry } from '../features/session-kind.js';
 import { startJoinRequestPolling } from '../features/poll-join-requests.js';
 import { configureScheduleStore, getScheduleStore } from '../features/schedule-store.js';
 import { initContextlessStore, traceContextless, describeStorePath } from '../features/contextless-store.js';
@@ -244,6 +244,7 @@ export async function bootstrapGateway(ctx, agents, config, logger, hooks) {
         });
         try {
             initAggregateRegistry(dataRootOf(config));
+            initSessionKindRegistry(dataRootOf(config));
         }
         catch { /* 台账初始化失败不影响主链 */ }
         logger.info?.('im-qqbot: 已注入图片聚合的模型探测/存图能力');

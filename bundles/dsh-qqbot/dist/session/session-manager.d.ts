@@ -17,8 +17,6 @@ export declare class SessionManager {
     private channelSender;
     /** 最近一次 setup 收到的 agent ctx(工具自愈用；getOrCreate 完成后读走并清空) */
     private lastSetupCtx;
-    /** 群守则热更新: 每次 system prompt 渲染现读 settings.yaml(SettingsReader fresh 模式) */
-    private liveSettingsReader;
     /** 注入 QQ 通道发送能力(供通道工具)；bootstrap 调用 */
     /**
      * 取本实例的**真发送器**（bootstrap 里那个 QQBotSender：sendMedia / sendTuwenCard /
@@ -231,8 +229,6 @@ export declare class SessionManager {
      *  每个实例在 patch 里配自己的 cwd + settingsNs, 即自动分流;
      *  其他实例/项目(web、别的 cwd)的 agent 一律不注入, 避免群守则污染非本 bot 会话。 */
     private nsForCwd;
-    /** 群守则热更新: 现读 settings.yaml 对应 ns 的 groupPrompt; 读失败仅回退本实例 ns 的内存 config。 */
-    private readLiveGroupPromptForNs;
     /**
      * 群守则/固定规则 pre-step 直注(幂等): 每次消息入站调用, 全局只装一次注入器。
      *

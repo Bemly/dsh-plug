@@ -3,7 +3,7 @@ import { dataRootOf, stickerDirOf } from './data-root.js';
 import { handleInbound, buildQuotePart } from '../transport/inbound.js';
 import { getHistoryStore, historyGroupKey, clearGroupHistory } from '../features/history-store.js';
 import { lookupImagePath } from '../features/image-path-cache.js';
-import { pushAggImage } from '../features/image-aggregate.js';
+import { prepareAggregateImages, pushPreparedAggImage } from '../features/image-aggregate.js';
 import { applyInjectRules } from '../transport/inject-rules.js';
 import { inferMediaKind } from '../transport/media-kind.js';
 import { prepareImagesForDispatch } from '../middleware/sticker-capture.js';
@@ -297,6 +297,7 @@ injectRules) {
     //   这里补一手：插话的图同样落进缓冲，等下一次正常唤醒时跟着长图一起进上下文（不会丢）。
     try {
         if (agg?.enabled) {
+            const candidates = [];
             for (const e of entries) {
                 const m = e.msg;
                 const key = m.kind === 'group' ? `group:${String(m.groupOpenid ?? '')}` : `c2c:${String(m.senderId ?? '')}`;
@@ -308,7 +309,6 @@ injectRules) {
                         continue;
                     const url = String(a?.url ?? '');
                     let p = url ? lookupImagePath(url) : undefined;
-                    // 兜底：缓存没命中时，从「附件摘要」同款逻辑再解析一次（那条路会走图库台账反查）
                     if (!p) {
                         const note = attachmentNote([raw], e.processed);
                         const mm = /\[图片:\s*([^\]]+)\]/.exec(note);
@@ -317,9 +317,12 @@ injectRules) {
                             p = cand;
                     }
                     if (p)
-                        pushAggImage(key, p, by, agg.max);
+                        candidates.push({ key, path: p, sender: by, url });
                 }
             }
+            const prepared = await prepareAggregateImages(candidates, logger);
+            for (const item of prepared)
+                pushPreparedAggImage(item.key, item);
         }
     }
     catch { /* 聚合缓冲失败不影响插话 */ }
@@ -411,6 +414,17 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
      *  群普通(无@)受 60s 冷却约束: 未过冷却 → 窗口保留、重排计时器, 冷却结束再整批按时间序派发。
      *  @ 消息(窗口含@)/私聊: 随时派发。 */
     async function flush(key, w) {
+        if (w.flushing)
+            return;
+        w.flushing = true;
+        try {
+            await flushLocked(key, w);
+        }
+        finally {
+            w.flushing = false;
+        }
+    }
+    async function flushLocked(key, w) {
         const pre = w.entries;
         dbg(`flush 进入 key=${key} n=${pre.length} dbgOn=${dbgEnabled()}`);
         if (pre.length === 0) {
@@ -471,7 +485,6 @@ export function debounceLayer(config, manager, logger, cooldownAt) {
                             return '';
                         } })(), {
                             enabled: _aggCfg?.enabled === true,
-                            max: typeof _aggCfg?.max === 'number' ? _aggCfg.max : 4,
                         }, {
                             rules: config.injectRules,
                             imageHint: config.imageHint !== false,

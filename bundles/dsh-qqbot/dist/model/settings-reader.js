@@ -68,19 +68,6 @@ export class SettingsReader {
         const ga = nsBlock?.groupAdmin;
         return ga && typeof ga === 'object' ? ga : undefined;
     }
-    /**
-     * 从 settings.yaml 的 <ns> 段读取群守则 groupPrompt(热更新用)。
-     * fresh=true 时绕过缓存现读磁盘(每次 system prompt 渲染调用, 使 Web 改完即时生效);
-     * 返回 undefined = 无该 ns / 无 groupPrompt / 空串。
-     */
-    readGroupPrompt(ns, fresh = false) {
-        const settings = this.loadSettings(fresh);
-        if (!settings)
-            return undefined;
-        const nsBlock = settings[ns];
-        const gp = nsBlock?.groupPrompt;
-        return typeof gp === 'string' && gp.trim() ? gp.trim() : undefined;
-    }
     loadSettings(fresh = false) {
         if (!fresh && this.settingsCache !== undefined)
             return this.settingsCache;

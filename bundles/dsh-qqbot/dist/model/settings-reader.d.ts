@@ -21,12 +21,6 @@ export declare class SettingsReader {
      * 返回 undefined = settings.yaml 无该 ns 或 ns 无 groupAdmin。
      */
     readGroupAdmin(ns: string): Record<string, unknown> | undefined;
-    /**
-     * 从 settings.yaml 的 <ns> 段读取群守则 groupPrompt(热更新用)。
-     * fresh=true 时绕过缓存现读磁盘(每次 system prompt 渲染调用, 使 Web 改完即时生效);
-     * 返回 undefined = 无该 ns / 无 groupPrompt / 空串。
-     */
-    readGroupPrompt(ns: string, fresh?: boolean): string | undefined;
     private loadSettings;
 }
 //# sourceMappingURL=settings-reader.d.ts.map

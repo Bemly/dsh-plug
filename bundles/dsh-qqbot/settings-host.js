@@ -4645,7 +4645,7 @@ export function apply(ctx) {
       const src = data.source && typeof data.source === 'object' ? data.source : {};
       // ⚠️ 2026-10-01 修(主人截图: 整段 `<system-reminder>` 系统提示词漏进了 dock 聊天界面):
       //   `user/message` 在 dsh 会话里**不只承载真人发言** —— 插件/宿主的运行时注入也走它:
-      //     · 固定通道规则 + 群守则 → source.kind `qqbot:group-rules`(session-manager 拼的 <system-reminder>)
+      //     · 会话类型标注            → source.kind `qqbot:session-kind`
       //     · QQ 审批提醒            → source.kind `plugin:qqbot-approval`
       //     · 上下文压缩检查点        → source.kind `compact-checkpoint`
       //     · 其它插件/扩展工具       → source.kind `plugin:<name>`

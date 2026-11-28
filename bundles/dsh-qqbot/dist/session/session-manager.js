@@ -17,9 +17,8 @@ import { rootOf } from '../shared/root-ctx.js';
 import { absCwdOf } from '../util/abs-path.js';
 import { describeExtCommandReload, describeExtInboundReload, describeExtOutboundReload, reloadExtCommands, reloadExtInbound, reloadExtOutbound } from '../features/ext-reload.js';
 import { SessionId } from '@deepseek-ai/dsh-session';
-import { FIXED_CHANNEL_CONTEXT, REFERENCE_CONTEXT } from '../config.js';
 import { LATEX_HINT_BLOCK } from '../config.js';
-import { describeSessionKind, buildSessionKindHint, needsSessionKindHint } from '../features/session-kind.js';
+import { describeSessionKind, buildSessionKindHint, needsSessionKindInjection, markSessionKindInjected } from '../features/session-kind.js';
 import { takePendingMemo, recallLines } from '../features/people-memo.js';
 import { isContextlessActive, contextlessSmartOf, contextlessMemoMaxOf, contextlessWindowOf, getContextless, listContextless, describeStorePath } from '../features/contextless-store.js';
 import { contextlessSegmentOf, contextlessSegmentKeepOf, contextlessSegmentScoreMinOf } from '../features/contextless-store.js';
@@ -31,7 +30,6 @@ import { trimHistoryForContextless } from '../features/contextless-trim.js';
 import { memoForInject, setMemoMaxItems } from '../features/context-memo.js';
 import { traceContextless } from '../features/contextless-store.js';
 import { dataRootOf, stickerDirOf } from '../gateway/data-root.js';
-import { SettingsReader } from '../model/settings-reader.js';
 import { ModelResolver } from '../model/model-resolver.js';
 import { IdleEvictor } from './idle-evictor.js';
 import { markTurnAborted } from '../gateway/debounce.js';
@@ -90,8 +88,6 @@ export class SessionManager {
     channelSender;
     /** 最近一次 setup 收到的 agent ctx(工具自愈用；getOrCreate 完成后读走并清空) */
     lastSetupCtx;
-    /** 群守则热更新: 每次 system prompt 渲染现读 settings.yaml(SettingsReader fresh 模式) */
-    liveSettingsReader;
     /** 注入 QQ 通道发送能力(供通道工具)；bootstrap 调用 */
     /**
      * 取本实例的**真发送器**（bootstrap 里那个 QQBotSender：sendMedia / sendTuwenCard /
@@ -280,7 +276,9 @@ export class SessionManager {
             return;
         }
         // fork 旧会话历史作为 seed → 子会话保留上下文继续聊(换模型不丢记忆)
-        await this.forkCurrentSession(key, record, route, true);
+        const forked = await this.forkCurrentSession(key, record, route, true);
+        if (!forked)
+            return;
         // fork 后 record.sessionId = childId；override 挂到新会话(会话级绑定)
         this.modelResolver.setOverride(key, record.sessionId, route);
         this.logger.info(`model pref saved (forked): key=${key} sid=${record.sessionId} → ${route.provider}/${route.model}`);
@@ -336,7 +334,9 @@ export class SessionManager {
         //   表现就是"所有会话都换成了某一个会话的模型"。改成优先读实际生效模型(getEffectiveModel)。
         const route = this.getEffectiveModel(scope, peerId)
             ?? this.modelResolver.getEffectiveRoute(key, record.sessionId);
-        await this.forkCurrentSession(key, record, route, inherit);
+        const forked = await this.forkCurrentSession(key, record, route, inherit);
+        if (!forked)
+            return 'failed';
         // 顺手记进 override（绑到 fork 后的新 sessionId）—— 不然下次 fork / 重启还会掉回默认
         if (route) {
             try {
@@ -474,11 +474,8 @@ export class SessionManager {
     async forkCurrentSession(key, record, route, inherit) {
         const sessionsService = this.getSessionsService();
         if (!sessionsService) {
-            this.logger.warn(`fork unavailable, fallback to dispose: key=${key}`);
-            this.sessions.delete(key);
-            record.agent.cancel({ kind: 'user' });
-            await record.handle.dispose().catch(() => { });
-            return;
+            this.logger.warn(`fork unavailable, keep current session: key=${key}`);
+            return false;
         }
         let seed;
         if (inherit) {
@@ -486,11 +483,8 @@ export class SessionManager {
                 seed = sessionsService.fork(record.agent.session).events;
             }
             catch (err) {
-                this.logger.warn(`fork failed, fallback to dispose: key=${key} err=${err instanceof Error ? err.message : String(err)}`);
-                this.sessions.delete(key);
-                record.agent.cancel({ kind: 'user' });
-                await record.handle.dispose().catch(() => { });
-                return;
+                this.logger.warn(`fork failed, keep current session: key=${key} err=${err instanceof Error ? err.message : String(err)}`);
+                return false;
             }
         }
         const childId = SessionId(randomUUID());
@@ -542,6 +536,7 @@ export class SessionManager {
             void archiveSessionDurably(this.ctx, preForkSessionId, this.logger);
         }
         this.logger.info(`forked session: key=${key} → ${childId} ${seed ? '(继承历史)' : '(全新空档, 旧会话存档为 parent)'} route=${route ? `${route.provider}/${route.model}` : 'session-own'}`);
+        return true;
     }
     clearModelOverride(scope, peerId) {
         const key = this.sessionKey(scope, peerId);
@@ -1264,20 +1259,8 @@ export class SessionManager {
             return ns;
         return '';
     }
-    /** 群守则热更新: 现读 settings.yaml 对应 ns 的 groupPrompt; 读失败仅回退本实例 ns 的内存 config。 */
-    readLiveGroupPromptForNs(ns) {
-        try {
-            const reader = (this.liveSettingsReader ??= new SettingsReader());
-            const gp = reader.readGroupPrompt(ns, true);
-            if (gp)
-                return gp;
-        }
-        catch { /* 读失败回退内存 */ }
-        const selfNs = String(this.config.settingsNs ?? '').trim() || 'im-qqbot';
-        return ns === selfNs ? (this.config.groupPrompt?.trim() || '') : '';
-    }
     /**
-     * 群守则/固定规则 pre-step 直注(幂等): 每次消息入站调用, 全局只装一次注入器。
+     * 会话提示 pre-step 直注：小传、智能提示、会话类型等独立事件。
      *
      * 2026-09-11 考古定稿(参考 deepseek-harness/packages/context/agent-instructions):
      *  - dsh 0.1.5 的 persona 是 complete section → assemble 只保留 persona,
@@ -1807,9 +1790,6 @@ export class SessionManager {
                 catch (e) {
                     this.logger?.debug?.('[contextless] 消费 pending 异常(已忽略): ' + (e instanceof Error ? e.message : String(e)));
                 }
-                const rules = this.readLiveGroupPromptForNs(ns);
-                // 引用消息指令(2026-09-13 主人定): 开关关闭时不注入
-                const refCtx = this.config.messageReference === false ? '' : REFERENCE_CONTEXT;
                 // 群友小传(2026-09-13 主人定): 复用这条**已验证**的 pre-step 注入通道 ——
                 //   ctx.systemPrompt.context() 那条在新宿主上没生效(无日志), 走这里最稳(群守则就是这么注入的)。
                 //   TTL 90s: inbound 算好的那一行过期就自动不再注入。
@@ -1937,60 +1917,6 @@ export class SessionManager {
                 catch (e) {
                     this.logger?.debug?.('[contextless] 组装智能提示异常(已忽略): ' + (e instanceof Error ? e.message : String(e)));
                 }
-                // ★ 2026-10-26 修（性能 bug，外部作者 wuwo1979 实测上报）：
-                //   去重指纹原来用 CTX_SMART_REMINDER，但该串**只在 contextlessSmart 开启时才进 body**
-                //   （默认 false）⇒ 谓词连"自己刚注入的那条"都判不中 ⇒ skipGroupRules 永不置位
-                //   ⇒ 每个 pre-step 都重注整段群守则(~1910 字符)，副本作为 user/message 留在 surface
-                //   里被长期重放，每步都在白烧 token。
-                //   改用**群守则内容指纹**判重：内容没变就不再注；群守则改了会自动重注一次。
-                const rulesFp = (rules.trim() || FIXED_CHANNEL_CONTEXT.trim()).slice(0, 60);
-                let skipGroupRules = false; // 群守则已在上下文里 → 只跳过它，不影响智能提示注入
-                // ★ 2026-10-01 正解：把「话题判断 + 备忘」拼进群守则这条 body —— 与它**共用同一套去重**
-                //   （下面的 inBatch + surface 历史比对）。人家先前的独立注入靠 step/turn/时间窗判重，
-                //   在"同回合多次请求"下全部失效（surface 要回合结束才提交），实测份数 2→3→5 只增不减。
-                // ★ 2026-10-02（主人定）：把智能提示当成**第二个群守则** —— 拼进 body、共用它的去重。
-                //   备忘会逐轮变化，所以下面的去重只比对固定部分（CTX_SMART_REMINDER），不受备忘影响。
-                // ⚠️ 2026-11-10 修：memoLine **不能拼进 body** —— body 会被"群守则已在上下文里"的去重整体跳过
-                //   （skipGroupRules），于是小传从此再也注不进去。小传单独成块，自己判自己的重。
-                const body = [FIXED_CHANNEL_CONTEXT.trim(), refCtx.trim(), rules.trim()].filter(Boolean).join('\n\n');
-                if (!body)
-                    return decision;
-                const text = `<system-reminder>\n${body}\n</system-reminder>`;
-                const desired = {
-                    role: 'user',
-                    id: randomUUID(),
-                    content: [{ type: 'text', text }],
-                    source: { kind: 'qqbot:group-rules', form: 'instructions', ns },
-                };
-                // 去重(靠 KV cache): 本次 messages 已含同 ns+同内容 → 不重复
-                const inBatch = dec.messages.some((m) => {
-                    const mm = m;
-                    // ⚠️ 只比对固定部分（备忘会变），否则每轮都被判成'新内容'而重复注入
-                    return mm?.source?.kind === 'qqbot:group-rules' && mm.source.ns === ns
-                        && String(mm.content?.[0]?.text ?? '').includes(rulesFp);
-                });
-                // ⚠️ dsh 0.1.6 起 `eventAt / snapshotEvents / ownEvents` 被标记 @deprecated（官方措辞：
-                //    "既有逻辑可暂不迁移，但不允许新增调用"）。此处是 2026-09 就存在的**既有只读遍历**，
-                //    故按官方说明保留；后续若要迁移，方向是 surface 投影 / 异步事件流。
-                //    判空写法保证在旧宿主(无 eventAt)上也安全降级。
-                if (!inBatch && agent?.session?.surface?.nodes && agent.session.eventAt) {
-                    // 会话 surface 历史已有同 ns+同内容 → 靠 KV cache, 不重复注入
-                    for (const seq of agent.session.surface.nodes) {
-                        const ev = agent.session.eventAt(seq);
-                        if (ev?.type === 'user/message'
-                            && ev.data?.source?.kind === 'qqbot:group-rules'
-                            && ev.data.source.ns === ns
-                            && String(ev.data.content?.[0]?.text ?? '').includes(rulesFp)) {
-                            // ⚠️ 2026-10-01：原来这里直接 return decision —— 但群守则每轮都在，
-                            //   于是从第二回合起整轮注入都被吞掉（智能提示也跟着丢，实测"话题判断"事件恒为 0）。
-                            //   改为：只跳过群守则这一条，继续往下走（ctxSmartText 照常注入）。
-                            skipGroupRules = true;
-                            break;
-                        }
-                    }
-                }
-                if (inBatch)
-                    skipGroupRules = true; // 同上：只跳过群守则那条
                 // ⚠️ 2026-09-27 撤除：「无上下文模式」不能在这个钩子里实现 —— 这里 payload/decision 的 messages 是
                 //   "本步从收件箱取出的新消息"（见 dsh-agent runtime-types: "messages removed from the inbox for this step"），
                 //   不是"发给模型的完整上下文"。在此裁剪只会把用户刚发的话删掉（实测：模型只收到 system-reminder 后空转 abort）。
@@ -2261,29 +2187,20 @@ export class SessionManager {
                 })();
                 if (this.config.sessionKindHint !== false && _kindParts) {
                     const KIND = 'qqbot:session-kind';
-                    const info = describeSessionKind(dataRootOf(this.config), String(this.config.appId ?? ''), _kindParts.scope, _kindParts.peerId, recMemo ? recMemo.peerName : undefined);
-                    const _kindInBatch = dec.messages.some((m) => m?.source?.kind === KIND);
-                    let _kindInSurface = false;
-                    if (!_kindInBatch && agent?.session?.surface?.nodes && agent.session.eventAt) {
-                        for (const seq of agent.session.surface.nodes) {
-                            const ev = agent.session.eventAt(seq);
-                            if (ev?.type === 'user/message' && ev.data?.source?.kind === KIND) {
-                                _kindInSurface = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (needsSessionKindHint(_kindInBatch, _kindInSurface)) {
+                    const sessionId = String(agent?.session?.id ?? '');
+                    if (sessionId && needsSessionKindInjection(sessionId)) {
+                        const info = describeSessionKind(dataRootOf(this.config), String(this.config.appId ?? ''), _kindParts.scope, _kindParts.peerId, recMemo ? recMemo.peerName : undefined);
                         extraAll.push({
                             role: 'user',
                             id: randomUUID(),
                             content: [{ type: 'text', text: `<system-reminder>` + String.fromCharCode(10) + buildSessionKindHint(info) + String.fromCharCode(10) + `</system-reminder>` }],
                             source: { kind: KIND, form: 'instructions', ns },
                         });
+                        markSessionKindInjected(sessionId);
                         this.logger?.info?.(`[会话类型] 注入 kind=${info.kind}${info.name ? ` name=「${info.name}」` : ' name=(未取到)'} key=${_kindKey}`);
                     }
                 }
-                const entered = [..._baseMsgs.slice(0, _at2), ...(skipGroupRules ? [] : [desired]), ...extraAll, ..._baseMsgs.slice(_at2)];
+                const entered = [..._baseMsgs.slice(0, _at2), ...extraAll, ..._baseMsgs.slice(_at2)];
                 return { ...dec, messages: entered };
             }
             catch {

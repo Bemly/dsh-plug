@@ -117,6 +117,12 @@ export declare class StickerStore {
         id?: string;
         error?: string;
     }>;
+    /** 已下载字节入库；并发下载只让胜者调用一次。 */
+    captureBuffer(buf: Buffer | Uint8Array, input: CaptureInput, contentType?: string, url?: string): Promise<{
+        status: 'new' | 'dup' | 'error';
+        id?: string;
+        error?: string;
+    }>;
     /** 安全下载：仅 HTTPS + SSRF + 上限 + 超时 */
     private download;
     /** 从本地已有文件入库（后续升级/负样本用） */

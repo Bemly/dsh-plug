@@ -130,15 +130,6 @@ window.__ModuleLoader__.load({
           cs.map(function (c) { return h('div', { key: 'c:' + c.id, style: item, onMouseDown: function (ev) { ev.preventDefault(); pick(c) }, onMouseEnter: function (e) { e.currentTarget.style.background = T.cardHi }, onMouseLeave: function (e) { e.currentTarget.style.background = 'transparent' } }, '💬 ' + (c.name || c.id)) })) : null)
     }
 
-    // 群聊守则"恢复默认"用: 与主包 dsh-qqbot config.ts 的 DEFAULT_GROUP_PROMPT 保持一致。
-    // ⚠️ 若改主包默认文本, 必须同步改这里(唯一同步点)。
-    var DEFAULT_GROUP_PROMPT = [
-      '【表情包礼仪】你有一座本地表情包库(群友存的图,带标签)。想用表情包回应时先调 list_stickers 搜库,命中后再用 send_media 发出,别发没把握的图。',
-      '只在群里正热闹、情绪正浓时,才在回复末尾附 0~1 张:满屏哈哈/笑死(爆笑)、大家"确实/我也是"(共鸣)、有人抛梗你能接住(接梗)、有人当面夸你(被夸)、轻度吐槽可以接治愈/滑稽图。',
-      '绝不发:冷场没人接话、正事/技术问答/找资源、吵架互怼中、对方难过或聊严肃事、私聊。',
-      '出手前自检,缺一不发:①库里有 9 成贴切的图;②发出来群友会心一笑;③这轮没发过、今天这群没刷过图。',
-      '把图删掉话照样完整;一次最多一张;发离谱/冒犯/色气/羞辱人的图=人设崩塌,永远不许。',
-    ].join('\n')
 
     function nv(v) { return typeof v === 'number' && isFinite(v) ? v : 0 }
     function sv(v) { return typeof v === 'string' ? v : '' }
@@ -273,24 +264,6 @@ window.__ModuleLoader__.load({
     // wide: 宽输入框         rows: textarea 行数            options: radio 选项
     var FGROUPS = [
       {
-        id: 'prompt', icon: '①', title: '群里她要一直记住的守则',
-        desc: '每轮回复都会带上的一段提醒(所有 QQ 群都生效)。默认是"表情包礼仪"。'
-          + '这里也能直接写人设/性格要求 —— 改完点下方「保存」立刻生效, 不用去改 cordis.patch.yml'
-          + '(想整体换人格仍可在下面「Agent 预设」里换 preset)。'
-          + '想让她不主动发图, 把这里清空即可(留空=没守则, 不会自动填回)。',
-        fields: [
-          { k: 'groupPrompt', kw: '守则 人设 人格 提示词 提醒 每轮 遵守 规则 prompt', t: 'area', label: '', rows: 5, def: DEFAULT_GROUP_PROMPT },
-          {
-            t: 'custom', render: function (ctx) {
-              return h('button', {
-                className: 'qqs-btn', style: { padding: '2px 10px', fontSize: 12 },
-                onClick: function () { ctx.set('groupPrompt', DEFAULT_GROUP_PROMPT) },
-              }, '恢复默认守则(表情包礼仪, 点下方「保存」生效)')
-            }
-          },
-        ],
-      },
-      {
         id: 'rate', icon: '②', title: '多久回一次消息',
         desc: '控制她回复的速度。全填 0 = 来一条回一条(不限制)。',
         fields: [
@@ -391,8 +364,7 @@ window.__ModuleLoader__.load({
           ] },
           { k: 'toolErrorSilentPattern', kw: '报错 工具 正则 拦截 过滤 静默 超时 TOOL_TIMEOUT', t: 'str', wide: true, label: '上面的「正则」模式用: 匹配 渲染后的 ❌ 文本(不区分大小写, 命中就静默、其余照常发)。例: TOOL_TIMEOUT|执行失败。留空=不拦截', def: '' },
           { k: 'latexHint', kw: 'latex 数学 公式 彩色 颜色 上色 富文本 math', t: 'bool', label: '数学公式提示(默认关): 勾上后系统提示词里提醒模型「QQ 支持 LaTeX」，可以输出行内公式 $E=mc^2$、居中公式 $$…$$、彩色字 $\\textcolor{#E74C3C}{\\text{重点}}$。⚠️ 只在支持 LaTeX 的客户端生效，旧版 QQ 会显示成源码', def: false },
-          { k: 'imageAggregate.enabled', kw: '图片 聚合 拼接 多图 长图 缩略', t: 'bool', label: '图片聚合(默认关): 连续收到的几张图竖向拼成一张长图, 随那条唤醒的消息一起进上下文(只对能读图的模型生效)', def: false },
-          { k: 'imageAggregate.max', kw: '图片 聚合 数量 上限 几张', t: 'num', label: '聚合数量上限(1~8): 环形缓冲, 最新的排最下面、最旧的排最上面; 已经聚合过的图不再重复聚合', def: 4 },
+          { k: 'imageAggregate.enabled', kw: '图片 聚合 拼接 多图 长图 缩略', t: 'bool', label: '图片聚合(默认关): 2~100 张图片合成一张，随唤醒消息一起进上下文(只对能读图的模型生效)', def: false },
           { k: 'messageReference', kw: '引用 消息号 原文 rf 回复某条', t: 'bool', label: '引用消息(默认开): 入站消息带短消息号(本地台账索引,省token) + 引用消息附原文; AI 用 [rf:短号] 引用对方消息', def: true },
         ],
       },
@@ -1136,7 +1108,6 @@ window.__ModuleLoader__.load({
       // 读取后只做**必要的类型规整**(渲染安全), 其余原样保留 ⇒ diff 才准
       function tidy(v) {
         var o = cloneCfg(v) || {}
-        if (typeof o.groupPrompt !== 'string') o.groupPrompt = DEFAULT_GROUP_PROMPT
         if (o.outboundMode === 'active' || typeof o.outboundMode !== 'string') o.outboundMode = 'adaptive'
         if (o.questionsMode !== 'blocking') o.questionsMode = 'async'
         return o
@@ -1939,12 +1910,10 @@ window.__ModuleLoader__.load({
           latexHint: typeof v.latexHint === 'boolean' ? v.latexHint : undefined,
           imageAggregate: {
             enabled: !!(v.imageAggregate && v.imageAggregate.enabled),
-            max: (v.imageAggregate && typeof v.imageAggregate.max === 'number') ? v.imageAggregate.max : 4,
           },
           messageReference: v.messageReference !== false,
               diagLog: v.diagLog === true,
           schedule: { targets: targets() },
-          groupPrompt: typeof v.groupPrompt === 'string' ? v.groupPrompt : DEFAULT_GROUP_PROMPT,
         }
         fetch(UPDATE, {
           method: 'POST', headers: { 'content-type': 'application/json' },

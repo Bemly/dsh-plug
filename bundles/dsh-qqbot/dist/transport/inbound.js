@@ -18,9 +18,7 @@ import { createValueScorer, appendScoreLog, OTHER_MENTION_PENALTY } from '../fea
 import { getStickerStore, computeDHash } from '../features/sticker-store.js';
 import { lookupImagePath, rememberImagePath } from '../features/image-path-cache.js';
 import { prepareImagesForDispatch } from '../middleware/sticker-capture.js';
-/** 合并转发（聊天记录）正文图片的下载总预算：超过就先用手上已有的图，别把入站无限拖住 */
-const MERGE_FORWARD_DOWNLOAD_MS = 120_000;
-import { pushAggImage, buildAggregateBlocks, pendingAggImages } from '../features/image-aggregate.js';
+import { prepareAggregateImages, pushPreparedAggImage, pendingAggImages, buildAggregateBlocks } from '../features/image-aggregate.js';
 import { noteSegmentScore } from '../features/segment-score.js';
 import { extractFaceImageUrls, slimQuoteText } from './quote-text.js';
 import { lookupMsgContent, rememberMsgContent } from './msg-content-cache.js';
@@ -186,16 +184,15 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
     try {
         if (config.imageAggregate?.enabled === true) {
             const _aggKey = `${scope}:${peerId}`;
-            const _aggMax = typeof config.imageAggregate.max === 'number' ? config.imageAggregate.max : 4;
             const _aggSender = String(msg.senderName || msg.senderId || '某人');
             const _stickerDir = stickerDirOf(config);
             const _items = [];
             const _seen = new Set();
-            const _add = (p, by) => {
+            const _add = (p, by, url = '') => {
                 if (!p || _seen.has(p) || !existsSync(p))
                     return;
                 _seen.add(p);
-                _items.push({ p, by });
+                _items.push({ p, by, url });
             };
             // ★★ 2026-11-27 主人要求：**合并转发（聊天记录）里的图也要进聚合**。
             //   QQ 把合并转发展开成**纯文本**（`[附件N] 类型:图片 … 本地路径:/x` 或 `URL:https://…`），
@@ -225,26 +222,18 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                             _urls.push(_u);
                     }
                     if (_urls.length > 0) {
-                        const _need = _urls.filter((u) => !lookupImagePath(u, logger));
-                        if (_need.length > 0) {
-                            logger.info(`[图片聚合] 合并转发正文发现 ${_urls.length} 张图，待下载 ${_need.length} 张`);
-                            const _fake = _need.map((u, i) => ({ url: u, content_type: 'image/jpeg', filename: `ff-img-${i}.jpg` }));
-                            let _timer;
-                            const _got = await Promise.race([
-                                prepareImagesForDispatch(_fake, msg, config, logger),
-                                new Promise((resolve) => { _timer = setTimeout(() => resolve([]), MERGE_FORWARD_DOWNLOAD_MS); }),
-                            ]);
-                            if (_timer)
-                                clearTimeout(_timer);
-                            let _ok = 0;
-                            for (const _p of (_got || [])) {
-                                if (_p) {
-                                    _add(_p, _aggSender);
-                                    _ok += 1;
-                                }
+                        logger.info(`[图片聚合] 合并转发正文发现 ${_urls.length} 张图，开始四轮进阶下载`);
+                        const _fake = _urls.map((u, i) => ({ url: u, content_type: 'image/jpeg', filename: `ff-img-${i}.jpg` }));
+                        const _got = await prepareImagesForDispatch(_fake, msg, config, logger);
+                        let _ok = 0;
+                        for (let i = 0; i < _urls.length; i++) {
+                            const _p = _got[i];
+                            if (_p) {
+                                _add(_p, _aggSender, _urls[i]);
+                                _ok += 1;
                             }
-                            logger.info(`[图片聚合] 合并转发下载完成: ${_ok}/${_need.length}`);
                         }
+                        logger.info(`[图片聚合] 合并转发下载完成: ${_ok}/${_urls.length}`);
                     }
                 }
                 catch (e) {
@@ -267,7 +256,7 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                     const _raw = _m[1].trim();
                     const _by = String(_h.senderName || _h.senderId || _aggSender);
                     if (/^https?:\/\//i.test(_raw))
-                        _add(resolveImageLocalPath(_raw, _stickerDir), _by);
+                        _add(resolveImageLocalPath(_raw, _stickerDir), _by, _raw);
                     else
                         _add(_raw, _by);
                 }
@@ -281,15 +270,19 @@ export async function handleInbound(rawMsg, manager, config, logger, state) {
                 const _fn = String(_a?.filename ?? '');
                 const _d = _fn ? downloaded.find((x) => x.filename === _fn) : undefined;
                 if (_d?.localPath && existsSync(_d.localPath)) {
-                    _add(_d.localPath, _aggSender);
+                    _add(_d.localPath, _aggSender, _url);
                     continue;
                 }
                 // ② 图库台账反查（表情包/历史图都走这条路）
                 if (_url)
-                    _add(resolveImageLocalPath(_url, _stickerDir), _aggSender);
+                    _add(resolveImageLocalPath(_url, _stickerDir), _aggSender, _url);
             }
-            for (const _it of _items)
-                pushAggImage(_aggKey, _it.p, _it.by, _aggMax);
+            const _prepared = await prepareAggregateImages(
+                _items.map((it) => ({ path: it.p, sender: it.by, url: it.url })),
+                logger,
+            );
+            for (const _it of _prepared)
+                pushPreparedAggImage(_aggKey, _it);
             // ★ 2026-11-27 主人定：正文的「如图序号N」和合成图角标**必须同源**。
             //   角标号 = pack() 的 placements[i].idx + 1 = 该图在 pendingAggImages 里的位置 + 1。
             //   这里在入缓冲完成后建一张 URL→位置表，正文替换时直接查它 —— 不再另用
@@ -1303,8 +1296,9 @@ function buildUserContent(msg, state, logger) {
                     let slim = text;
                     const _ordered = [...allUrls].sort((x, y) => y.length - x.length);
                     for (const u of _ordered) {
-                        const _n = (state.aggUrlIndex && Number(state.aggUrlIndex[u])) || (allUrls.indexOf(u) + 1);
-                        slim = slim.split(u).join('[如图序号' + _n + ']');
+                        const _n = state.aggUrlIndex && Number(state.aggUrlIndex[u]);
+                        if (_n)
+                            slim = slim.split(u).join('[如图序号' + _n + ']');
                     }
                     kept = slim;
                     parts.push(kept);

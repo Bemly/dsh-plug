@@ -8,38 +8,6 @@
  */
 import Schema from '@deepseek-ai/schemastery';
 /**
- * 群聊默认常驻守则(表情包礼仪, P2 品味层)。
- * 由 qqbot 通道注入 agentBody(scope=group 时), 所有走 QQ 的 preset 通用, 不修改任何 persona。
- */
-export const DEFAULT_GROUP_PROMPT = [
-    '【表情包礼仪】你有一座本地表情包库(群友存的图,带标签)。想用表情包回应时先调 list_stickers 搜库,命中后再用 send_media 发出,别发没把握的图。',
-    '只在群里正热闹、情绪正浓时,才在回复末尾附 0~1 张:满屏哈哈/笑死(爆笑)、大家"确实/我也是"(共鸣)、有人抛梗你能接住(接梗)、有人当面夸你(被夸)、轻度吐槽可以接治愈/滑稽图。',
-    '绝不发:冷场没人接话、正事/技术问答/找资源、吵架互怼中、对方难过或聊严肃事、私聊。',
-    '出手前自检,缺一不发:①库里有 9 成贴切的图;②发出来群友会心一笑;③这轮没发过、今天这群没刷过图。',
-    '把图删掉话照样完整;一次最多一张;发离谱/冒犯/色气/羞辱人的图=人设崩塌,永远不许。',
-    '【提问卡片(ask_user_question)·QQ】在 QQ 会话里调用 ask_user_question 提问:选项会以按钮卡片发出,可点权限默认只绑「当前对话发起者本人」(群聊=刚与你对话的那位群友,私聊=对方),只有 TA 能点、别人点了会被拒,不会误答;同一问题会同步出现在 Web 浮层,任一端作答即结算、另一端自动失效。**可以显式指定某位群友来答(指定权限)**:把 `<@对方openid>` **或 `<@对方昵称>`** 直接写进本次提问的 question(或 header)文本里(例如 question 写成「<@对方openid> 要帮你找这个游戏吗?」或「<@请输入文本> 要帮你找这个游戏吗?」),卡片权限就会精确绑给该群友——只有 TA 能点。昵称写法 2026-09-24 起支持(走本地群成员台账解析,即在群里发过言/申请过入群的人;查不到或多人同名有歧义时不指定,请改用 32 位 openid);question/header 里没写 `<@...>` 标注、但唯一提到某位群友昵称时同样算点名。也可以先按【@ 人的方法】点名 TA 再提问(效果等同)。不确定该问谁、或想让对方自己答时才不写(保持默认给当前对话者)。',
-].join('\n');
-/**
- * 通道固定注入上下文(2026-09-09): 与可编辑群守则(groupPrompt)无关、无条件注入每个 QQ 会话,
- * 保证任何 AI/任何预设都会收到 QQ 通道的基础使用规则(即使群守则被清空/覆盖)。
- */
-export const FIXED_CHANNEL_CONTEXT = [
-    '【@ 人的方法】当你要对特定某人说话，在回复文本里直接写 <@对方openid>（无斜杠）就能在 QQ 群里 @ 到对方（高亮显示），例如 <@0123456789ABCDEF0123456789ABCDEF> 起床啦。如果别人@你，你用 @对方 回复；也可以主动 @别人。 **@全体成员**：在回复正文里写 <qqbot-at-everyone />（半角尖括号，QQ 官方语法）就会被渲染成真正的「@全体成员」。⚠️ 这是打扰全群的动作 —— 只在主人明确要求、或有紧急公告要发时才用；普通聊天、回答某个人的问题一律不要用。',
-    '【提问卡片·指定回答者】调用 ask_user_question 时，若要**只有某人**能回答，必须在该问题的 header 或 question 文本里写 <@对方的32位openid>（无斜杠）。只写 <@昵称> 仅在"该昵称在群成员台账里唯一命中"时才生效（台账=在群里发过言的人），否则会退化成全员可点；拿不到 openid 时宁可不写（默认只绑"刚和你对话的那位"）。卡片上还会带一个「🙋 我来回答」按钮：**所有人都能点，点一次即把回答权转移给点击者**，用于问错人/被问的人不在的场景。',
-    // ★ 2026-10-13 主人指出（真机踩到）：原句把"两端加方括号"当**括号注释**写在后面，
-    //   模型很容易漏掉方括号 ⇒ 写出来是裸文本 `MEDIA:image|D:\...`，富媒体不生效、还会原样发给群友。
-    //   改法：把**带方括号的完整写法**直接写进语法行 + 给一条示例，让"方括号必须出现"无法忽略。
-    '【富媒体】你在 QQ 里能真的发图/文件/语音/视频 —— 语法**必须带英文方括号**（漏了方括号=不生效，会当普通文字发出去）：',
-    '  · 发图：[MEDIA:image|本地绝对路径或 http(s) 网址]　例：[MEDIA:image|D:\\pics\\cat.png]',
-    '  · 发文件/语音/视频同理：[MEDIA:file|路径]　[MEDIA:voice|路径]　[MEDIA:video|路径]',
-    '  · 撤回自己刚发的消息：单独输出一行 [RECALL]',
-    // ★ 2026-10-29（issue #28）：群消息是「记录」，不是等模型接的剧本。
-    //   闸门把回合劈成两段后（待回消息被挤到中间），最容易出现"续写聊天记录/代写群友台词"，
-    //   出站又不清洗，编出来的 `[小明] xxx` 会原样发进群，看起来像群里真有人说话。
-    '【输出契约】你只写**自己这一条**要说的话：不要扮演群友、不要替别人写台词、不要输出 `[昵称] …` 形式的对话行、不要续写聊天记录。群消息是别人说过的话（记录），不是等你去接着演的剧本。调完 reply_gate 放行之后尤其如此 —— 只回答当前那条，别把后面的对话一起编出来。',
-    '  这些标记本身不会显示给群友（发出去的只有媒体本身）。',
-].join('\n');
-/**
  * 数学公式 / 彩色字提示（2026-11-20 主人要，配置项 `latexHint` 控制，默认关）。
  *
  * **内容固定**，所以跟群守则同频、共用同一套去重（拼进 rules，指纹自然跟着变）。
@@ -52,23 +20,6 @@ export const LATEX_HINT_BLOCK = [
     '- 彩色字：$\\textcolor{#E74C3C}{\\text{重点}}$',
     '只在写公式、列关键数据、需要视觉强调时用；日常闲聊别用。',
     '有些客户端（旧版 QQ）不渲染，会把它显示成源码。',
-].join('\n');
-/**
- * 引用消息能力说明(2026-09-13 主人定; 短消息号版): 开启 messageReference 时随群守则一起注入。
- * 教 AI ①入站消息带短"消息号"(如 #0913a) ②出站用 [rf:消息号] 引用对方。
- */
-export const REFERENCE_CONTEXT = [
-    `【发图组·正文直接发图】DSH 支持在回复正文里直接写 markdown 图片，前端会照样渲染成图；本插件也会把它原样转发到 QQ（本地路径自动上传，不需要任何工具）。`,
-    `· 一张图：![说明 #宽px #高px](地址) —— 本地路径可省尺寸（插件读文件头自动补）；**外链图必须写**（缺了 QQ 不渲染），不想算就写 #0px #0px（自适应原比例）。`,
-    `· 图组（小剧场/分镜）：一行一张、连续几行，中间可夹一句当前情说明，QQ 侧会按顺序渲染成一屏。`,
-    `· 本地路径（D:/… 或 D:\… 或 file:///…）：插件自动上传成 qqbot-media 引用；单机器人上限 100 张，满了自动删最早的。`,
-    `· http(s) 图片原样保留（QQ 直接加载）；已是 qqbot-media:// 的引用原样透传。`,
-    `· 配表情包最顺手：list_stickers 搜到图 → 把它的本地路径写进正文 → 图组出来，比连发 send_media 更像翻漫画。`,
-    `· 失败策略：正文里图传不上去会原样留在文字里（不阻断本条），不会吞掉你的文字。`,
-    '【引用消息】本群已开启引用能力(可在设置关闭): 每条入站消息都带一个"消息号"(形如 #0913a, 很短)。',
-    '想让自己的回复"引用"某条消息: 在回复正文里写 [rf:消息号](两端加英文方括号), 如 [rf:0913a] —— 这条回复就会以"引用"形式发出, 对方能看到你引用了他那条消息。消息号就是入站消息标签里 # 后面那一小串。',
-    // 注(2026-09-13 主人定): 样例库的用法**不写进守则**(常驻注入会每轮占 token) ——
-    // 面板「让ai写」按钮本身就是**注入一条消息**, 路径/格式/做法全写在那条消息里, 零常驻开销。
 ].join('\n');
 // ── 共享字段子 schema(主 ConfigSchema 与 EditableConfigSchema 复用) ──
 /** 智能回复: 复用 conan RAG 的 OVMS 语义服务; OVMS 故障时本次跳过，不做本地兜底 */
@@ -325,7 +276,7 @@ const groupAdminSchema = Schema.object({
     pollJoinRequests: { enabled: false, intervalMin: 5, minCount: 2, wakeLlm: true, hubNotify: true, notifyGroup: false, wakeGroup: false },
     autoRecall: { enabled: false, mode: 'keep', keywords: [], kinds: [], muteSeconds: 0, dryRun: false },
 }).description('QQ 群管理');
-/** Web 设置页可编辑项的 schema(behavior/sticker.gates/injectRules/groupPrompt/schedule) */
+/** Web 设置页可编辑项的 schema(behavior/sticker.gates/injectRules/schedule) */
 export const EditableConfigSchema = Schema.object({
     dataRoot: Schema.string().description('插件数据根目录(可选; 缺省=cwd): 表情包/.qqbot/.qqbot-extensions 统一挂其下, 与工作区其他文件分离'),
     behavior: behaviorSchema,
@@ -353,12 +304,10 @@ export const EditableConfigSchema = Schema.object({
     outboundLastCtxFallback: Schema.boolean().default(false).description('出站扩展未指定 target 时是否回落到最近活跃会话(issue #78, 默认关=拒发)。开启=旧行为, 多会话并发会串台'),
     imageOffload: Schema.boolean().default(false).description('历史图片不重发(默认关): 开启后会在 DSH 会话历史里删图；当前由 Magpie image-slim 在出站时处理，避免丢元数据导致缓存重建'),
     imageAggregate: Schema.object({
-        enabled: Schema.boolean().default(false).description('图片聚合(默认关): 把连续收到的几张图竖向拼成一张长图, 随唤醒消息一起进上下文(只对支持读图的模型生效)'),
-        max: Schema.number().default(4).description('聚合数量上限 1~8(默认 4): 环形缓冲, 最新的排最下面, 最旧的排最上面; 已聚合过的图不再重复聚合'),
-    }).description('图片聚合(issue #40): 多图 → 一张长图, 省 token 又让 AI 一次看全'),
+        enabled: Schema.boolean().default(false).description('图片聚合(默认关): 2~100 张图片合成一张，随唤醒消息一起进上下文(只对支持读图的模型生效)'),
+    }).description('图片聚合(issue #40): 2~100 张图 → 一张长图, 省 token 又让 AI 一次看全'),
     messageReference: Schema.boolean().default(true).description('引用消息(默认开): 入站消息带短消息号 + 引用消息附原文 + 注入引用指令; 出站支持 [rf:短号] 标签引用对方消息'),
     localModel: localModelSchema,
-    groupPrompt: Schema.string().default(DEFAULT_GROUP_PROMPT).description('群聊常驻守则(默认含表情包礼仪;可清空关闭)'),
     schedule: scheduleSchema,
     enableApprovals: Schema.boolean().default(false).description('QQ 远程审批: dsh 权限申请发到 QQ, 用 /approve CODE 放行(保存后对新请求生效)'),
     extMetaTool: Schema.boolean().default(true).description('扩展工具按需取用(默认开): 全局只挂一个 gain_qq_tools 元工具, 非 QQ 会话需要时自己领取(省 token); 关掉=所有 expose:all 扩展工具全量全局注册(老行为)'),
@@ -379,7 +328,6 @@ const ConfigSchemaRaw = Schema.object({
     dataRoot: Schema.string().description('插件数据根目录(可选; 缺省=cwd): 表情包/.qqbot/.qqbot-extensions 统一挂其下, 与工作区其他文件分离'),
     settingsNs: Schema.string().description('Web 设置命名空间(多账号时每实例唯一, 默认 im-qqbot)'),
     requireMention: Schema.boolean().default(true).description('群聊是否需要@bot触发'),
-    groupPrompt: Schema.string().default(DEFAULT_GROUP_PROMPT).description('群聊常驻守则(默认表情包礼仪, 可清空关闭)'),
     directPrompt: Schema.string().description('私聊额外system prompt'),
     textChunkLimit: Schema.number().default(4500).description('单条消息最大字符数'),
     c2cShowBotAvatar: Schema.boolean().default(false).description('私聊出站首行显示机器人头像（官方私聊没有头像，群里才有；默认关）'),
@@ -453,9 +401,8 @@ const ConfigSchemaRaw = Schema.object({
     outboundLastCtxFallback: Schema.boolean().default(false).description('出站扩展未指定 target 时是否回落到最近活跃会话(issue #78, 默认关=拒发)。开启=旧行为, 多会话并发会串台'),
     imageOffload: Schema.boolean().default(false).description('历史图片不重发(默认关): 开启后会在 DSH 会话历史里删图；当前由 Magpie image-slim 在出站时处理，避免丢元数据导致缓存重建'),
     imageAggregate: Schema.object({
-        enabled: Schema.boolean().default(false).description('图片聚合(默认关): 把连续收到的几张图竖向拼成一张长图, 随唤醒消息一起进上下文(只对支持读图的模型生效)'),
-        max: Schema.number().default(4).description('聚合数量上限 1~8(默认 4): 环形缓冲, 最新的排最下面, 最旧的排最上面; 已聚合过的图不再重复聚合'),
-    }).description('图片聚合(issue #40): 多图 → 一张长图, 省 token 又让 AI 一次看全'),
+        enabled: Schema.boolean().default(false).description('图片聚合(默认关): 2~100 张图片合成一张，随唤醒消息一起进上下文(只对支持读图的模型生效)'),
+    }).description('图片聚合(issue #40): 2~100 张图 → 一张长图, 省 token 又让 AI 一次看全'),
     messageReference: Schema.boolean().default(true).description('引用消息(默认开): 入站消息带短消息号 + 引用消息附原文 + 注入引用指令; 出站支持 [rf:短号] 标签引用对方消息'),
     localModel: localModelSchema,
     schedule: scheduleSchema,
