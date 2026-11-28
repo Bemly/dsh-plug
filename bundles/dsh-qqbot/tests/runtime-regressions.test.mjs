@@ -159,3 +159,27 @@ test('「默认(跳过)」会清空宿主上的旧 reasoningEffort', async () =>
     mgr.applyModelRoute(oldAgent, { provider: 'p', model: 'm', clearEffort: true }, 'test');
     assert.equal(oldAgent.options.reasoningEffort, undefined);
 });
+
+test('宿主重启后未报强度时不会抹掉已存偏好', async () => {
+    const source = await readFile(new URL('./dist/session/session-manager.js', root), 'utf8');
+    const start = source.indexOf('    adoptHostModel(');
+    const end = source.indexOf('\n    /**', start);
+    assert.ok(start > 0 && end > start);
+    const ctx = { console };
+    vm.runInNewContext(`class M { ${source.slice(start, end)} } globalThis.M = M;`, ctx);
+    const mgr = new ctx.M();
+    mgr.logger = { info() {}, warn() {} };
+    mgr.sessions = new Map();
+    mgr.lastHostModel = new Map();
+    mgr.sessionKey = () => 'k';
+    mgr.currentSessionId = () => 'sid';
+    const writes = [];
+    mgr.modelResolver = {
+        getEffectiveRoute: () => ({ provider: 'p', model: 'm', effort: 'high' }),
+        setOverride: (k, sid, route) => writes.push(route),
+    };
+    // 宿主 resume 后只有 provider/model，没有 strength（重启第一轮的典型形态）
+    const agent = { model: { current: () => ({ provider: 'p', model: 'm' }) } };
+    assert.equal(mgr.adoptHostModel('group', 'peer', agent), false);
+    assert.deepEqual(writes, []);
+});

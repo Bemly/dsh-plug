@@ -1113,7 +1113,10 @@ export class SessionManager {
             this.lastHostModel.set(key, hostKey);
             const sameRoute = !!stored && stored.provider === cur.provider && stored.model === cur.model;
             const sameEffort = (stored?.effort ?? '') === (hostEffort ?? '');
-            if (sameRoute && sameEffort)
+            // ★ 2026-11-28 审计：重启后宿主可能先用自己的默认档 resume，再被我们 apply ——
+            //   此时 cur 没有 reasoningEffort，若按"不一致就采纳"，会把偏好里的 high 抹成默认，
+            //   表现为"思考强度重启丢失"。宿主没给值 ≠ 用户选了默认，别拿它覆盖已有偏好。
+            if (sameRoute && (sameEffort || (!hostEffort && stored?.effort)))
                 return false;
             const route = {
                 provider: cur.provider,
