@@ -105,21 +105,47 @@ function duplicateInArray(arr, item) {
         || (item.dhash && other.dhash && dhashDistance(item.dhash, other.dhash) <= 5));
 }
 
+function hasImageSignature(buf) {
+    if (buf.length < 12)
+        return false;
+    return (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
+        || (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)
+        || (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38)
+        || (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+            && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50);
+}
+
 export async function prepareAggregateImages(items, logger) {
     const prepared = [];
-    for (const item of (Array.isArray(items) ? items : []).slice(0, MAX_AGGREGATE_IMAGES)) {
+    const candidates = (Array.isArray(items) ? items : []).slice(0, MAX_AGGREGATE_IMAGES);
+    for (const item of candidates) {
         try {
             if (!item?.path || !existsSync(item.path))
                 continue;
             const buf = readFileSync(item.path);
-            const img = await Jimp.read(buf);
-            const w = img.bitmap.width;
-            const h = img.bitmap.height;
-            if (!w || !h)
-                continue;
             const fp = createHash('sha256').update(buf).digest('hex');
             const dhash = await computeDHash(buf);
             const fileid = extractQqFileId(item.url ?? '');
+            const mediaType = mediaTypeOf(buf, item.path);
+            let img = null;
+            let w = 0;
+            let h = 0;
+            try {
+                img = await Jimp.read(buf);
+                w = img.bitmap.width;
+                h = img.bitmap.height;
+                if (!w || !h) {
+                    if (candidates.length !== 1)
+                        continue;
+                    img = null;
+                }
+            }
+            catch (err) {
+                if (candidates.length !== 1 || !hasImageSignature(buf)) {
+                    logger?.warn?.(`[图片聚合] 预解码失败，不入聚合: ${item.path} ${err instanceof Error ? err.message : String(err)}`);
+                    continue;
+                }
+            }
             prepared.push({
                 key: item.key ?? '',
                 path: item.path,
@@ -131,14 +157,14 @@ export async function prepareAggregateImages(items, logger) {
                 w,
                 h,
                 buf,
-                mediaType: mediaTypeOf(buf, item.path),
+                mediaType,
                 fp,
                 dhash,
                 fileid,
             });
         }
         catch (err) {
-            logger?.warn?.(`[图片聚合] 预解码失败，不入聚合: ${item?.path ?? ''} ${err instanceof Error ? err.message : String(err)}`);
+            logger?.warn?.(`[图片聚合] 预处理失败，不入聚合: ${item?.path ?? ''} ${err instanceof Error ? err.message : String(err)}`);
         }
     }
     return prepared;

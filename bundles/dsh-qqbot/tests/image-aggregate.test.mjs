@@ -114,6 +114,29 @@ test('解码失败的图片不会进入聚合缓冲', async () => {
     }
 });
 
+test('Jimp 不支持解码的单图保留原字节直给', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-botqq-aggregate-raw-'));
+    const imagePath = join(dir, 'animated.png');
+    const key = `test:${dir}`;
+    try {
+        await writeFile(imagePath, Buffer.concat([
+            Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+            Buffer.from('unsupported-apng'),
+        ]));
+        const prepared = await prepareAggregateImages([{ path: imagePath, sender: 'tester' }]);
+        assert.equal(prepared.length, 1);
+        assert.equal(prepared[0].img, null);
+        pushPreparedAggImage(key, prepared[0]);
+        const blocks = await buildAggregateBlocks(key, {}, console);
+        assert.equal(blocks.length, 1);
+        assert.equal(blocks[0].attachment.name, 'aggregate.jpg');
+    }
+    finally {
+        clearAggImages(key);
+        await rm(dir, { recursive: true, force: true });
+    }
+});
+
 test('多图聚合保持预解码顺序且不再读盘', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'dsh-botqq-aggregate-multi-'));
     const first = join(dir, 'first.png');

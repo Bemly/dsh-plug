@@ -16,7 +16,7 @@ export interface AggImage {
     sender: string;
     at: number;
     sent: boolean;
-    img: unknown;
+    img: unknown | null;
     w: number;
     h: number;
     buf: Uint8Array;
